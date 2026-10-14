@@ -99,7 +99,7 @@ public sealed class FrameFlowVideoViewSingleFrameItemTests
     }
 
     [AvaloniaFact]
-    public void DetachingBeforeTheAllocationLands_ChargesTheWaitingPixelsOnce()
+    public void DetachingBeforeTheAllocationLands_CountsTheWaitingPixelsOnce()
     {
         var (view, sink) = NewAttachedView();
 
@@ -107,16 +107,18 @@ public sealed class FrameFlowVideoViewSingleFrameItemTests
         ((Panel)view.Parent!).Children.Remove(view);
         Dispatcher.UIThread.RunJobs();
 
-        // Nothing drew, so the frame is owed a drop and exactly one accounting entry. The
-        // staging slot must not leave it counted by nobody, nor counted twice.
+        // Nothing drew, so the frame is owed exactly one accounting entry. The staging slot
+        // must not leave it counted by nobody, nor counted twice. The view stopped presenting
+        // before it drew, so it is discarded off screen, not dropped (ADR-0085, decision 2).
         Assert.Equal(0, view.RenderedFrameCount);
         var snapshot = sink.GetDiagnostics();
         Assert.Equal(0, snapshot.FramesPresented);
-        Assert.Equal(1, snapshot.FramesDropped);
+        Assert.Equal(0, snapshot.FramesDropped);
+        Assert.Equal(1, sink.FramesDiscardedOffScreen);
     }
 
     [AvaloniaFact]
-    public void DetachingWithBothACopyAndPixelsWaiting_ChargesTwoDrops()
+    public void DetachingWithBothACopyAndPixelsWaiting_CountsTwoFrames()
     {
         var (view, sink) = NewAttachedView();
 
@@ -136,8 +138,9 @@ public sealed class FrameFlowVideoViewSingleFrameItemTests
         Assert.Equal(1, view.RenderedFrameCount);
 
         var snapshot = sink.GetDiagnostics();
-        Assert.Equal(2, snapshot.FramesDropped);
-        Assert.Equal(3, snapshot.FramesPresented + snapshot.FramesDropped);
+        Assert.Equal(0, snapshot.FramesDropped);
+        Assert.Equal(2, sink.FramesDiscardedOffScreen);
+        Assert.Equal(3, snapshot.FramesPresented + sink.FramesDiscardedOffScreen);
     }
 
     [AvaloniaFact]

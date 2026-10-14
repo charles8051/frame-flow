@@ -260,11 +260,14 @@ public partial class MainWindow : Window
         _onScreen?.Dispose();
         _model?.Dispose();
 
+        // The view keeps its own sink until it is disposed, so it goes once the graph has stopped.
+        await VideoView.DisposeAsync();
+
         _closed = true;
         Dispatcher.UIThread.Post(Close);
     }
 
-    // After the view has released its sink, which logs as it goes.
+    // After the view has disposed its sink in OnClosing: both log as they go.
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);

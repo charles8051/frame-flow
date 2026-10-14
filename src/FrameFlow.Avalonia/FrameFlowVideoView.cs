@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using FrameFlow.Avalonia.Core;
 using FrameFlow.Media;
 using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
@@ -37,10 +39,13 @@ namespace FrameFlow.Avalonia;
 /// UI thread      swap (_front, _back) → InvalidateVisual → Render → DrawImage(_front)
 /// </code>
 /// <para>
-/// The UI thread never touches pixel data. At 1080p60 the copy is ~8.3 MB per frame; doing
-/// it in <see cref="Render"/> spent most of the ~16 ms present budget on memcpy and made the
-/// view miss ticks under load, which shed frames all the way back to the decoder. The
-/// producer thread can afford it, and is where ADR-0016 put it.
+/// The UI thread copies no pixels frame by frame. At 1080p60 the copy is ~8.3 MB per frame;
+/// doing it in <see cref="Render"/> spent most of the ~16 ms present budget on memcpy and made
+/// the view miss ticks under load, which shed frames all the way back to the decoder. The
+/// producer thread can afford it, and is where ADR-0016 put it. The UI thread copies pixels in
+/// two places only, neither per frame: once per size change, the blit of the frame that asked
+/// for new bitmaps into them; and once per attach or rebind, the copy of a frame the sink kept
+/// while the view did not present it (ADR-0085), which may stage pixels for that blit.
 /// </para>
 /// <para>
 /// Redraws are driven by frame arrival rather than a free-running timer, so a paused or
@@ -50,8 +55,20 @@ namespace FrameFlow.Avalonia;
 /// <b>Pixel format:</b> expects BGRA32 packed data in <see cref="CpuFrameData.PlaneY"/>,
 /// which maps directly to Avalonia's <c>PixelFormat.Bgra8888</c> with no conversion.
 /// </para>
+/// <para>
+/// <b>Lifecycle (ADR-0085).</b> The view keeps one sink for its whole life: its own, which the
+/// first <see cref="EnsureSink"/> or attach makes, or one assigned through <see cref="Sink"/>. It
+/// presents that sink while it is in the visual tree, and copies nothing before its first attach.
+/// Leaving the tree stops presenting and keeps the sink, so a player built with it keeps working.
+/// While the view does not present, before its first attach as after a detach, the sink keeps
+/// only its newest frame, and only while a player holds its claim (see
+/// <see cref="AvaloniaVideoSink"/>). The picture the view drew last stays in its own bitmaps, which
+/// hold none of the player's frames, so it is drawn again when the view rejoins the tree. The
+/// rejoin then presents a frame the sink kept, if any, and goes on with the same sink. Only
+/// <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
+/// </para>
 /// </remarks>
-public sealed partial class FrameFlowVideoView : Control, IVideoSurface
+public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncDisposable
 {
     private static readonly Meter ViewMeter = new("FrameFlow.Avalonia.VideoView", "1.0.0");
     private static readonly Counter<long> FramesRenderedCounter = ViewMeter.CreateCounter<long>(
@@ -92,7 +109,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     // the bitmap it just allocated.
     //
     // Held under _lock and accounted exactly once like every other frame: presented when the
-    // blit reaches the swap, dropped when a newer frame supersedes it or a detach strands it.
+    // blit reaches the swap, dropped when a newer frame supersedes it, and discarded off screen
+    // when the view stops presenting its sink first.
     private byte[]? _staged;
     private bool _stagedPending;
     private int _stagedStride;
@@ -100,7 +118,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private int _stagedHeight;
     private TimeSpan _stagedPts;
     private TimelineId _stagedTimeline;
-    private SinkBinding? _stagedBinding;
+    private AvaloniaVideoSink? _stagedSink;
 
     // How each buffer's frame is meant to be shown (#542). They travel with the pixels: staged,
     // copied into _back, and swapped with _front. Under _lock.
@@ -108,30 +126,20 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private (SampleAspectRatio Shape, VideoRotation Rotation) _backGeometry;
     private (SampleAspectRatio Shape, VideoRotation Rotation) _frontGeometry;
 
+    // The sink the view holds: its own or a caller's, as the lifecycle's target says. UI thread only.
     private AvaloniaVideoSink? _sink;
 
-    // True when the sink was created by the view via EnsureSink
-    // and must be disposed when the view detaches. False when the user assigned
-    // a sink externally — in that case the caller owns disposal.
-    private bool _sinkIsOwned;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "The caller's factory: the view logs through it and does not own it.")]
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private int _renderedFrameCount;
 
-    /// <summary>
-    /// One sink's attachment to this view. Every producer callback and every swap it posts
-    /// carries the binding it was raised under, so work in flight across a detach or a sink
-    /// swap is attributed to the sink that produced it — or discarded, never misfiled onto a
-    /// replacement.
-    /// </summary>
-    private sealed class SinkBinding(AvaloniaVideoSink sink)
-    {
-        public readonly AvaloniaVideoSink Sink = sink;
-
-        /// <summary>Set under <c>_lock</c> when the attachment ends. Read under it too.</summary>
-        public bool Detached;
-    }
-
-    private SinkBinding? _binding;
+    // Where the view is in its life, its binding number with it; the pure core decides every
+    // move (ADR-0085). Only the UI thread moves it, and only under _lock, so a copy on the
+    // producer thread compares the number it was raised under with this one under the same lock
+    // (decision 5). The UI thread reads it without the lock. Nothing reads it without a lock off
+    // the UI thread, so the view publishes no snapshot.
+    private SurfaceLifecycle _lifecycle = SurfaceLifecycle.Initial;
 
     // True while _back holds a copied frame the UI thread has not swapped to the front yet.
     // Guarded by _lock. Copying over a pending back buffer is correct (latest-wins), but the
@@ -144,14 +152,14 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private TimeSpan _backPts;
     private TimelineId _backTimeline;
 
-    // The binding that produced the frame sitting in _back, so the swap credits the sink that
+    // The sink that produced the frame sitting in _back, so the swap credits the sink that
     // actually made it. Guarded by _lock, and only meaningful while _backPending.
-    private SinkBinding? _backBinding;
+    private AvaloniaVideoSink? _backSink;
 
     // True while a swap is queued on the dispatcher. Guarded by _lock.
     //
     // View-level, and the queued delegate takes no binding: it publishes whatever is in the
-    // back buffer when it runs, crediting _backBinding. That is what keeps the queue bounded
+    // back buffer when it runs, crediting _backSink. That is what keeps the queue bounded
     // at one across sink churn — a per-binding claim bounded the queue per binding but not
     // across replacements, and made a stale delegate able to strand its successor's frame.
     // There is no stale delegate here; there is one, and it always services current state.
@@ -165,14 +173,53 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     public int RenderedFrameCount => Volatile.Read(ref _renderedFrameCount);
 
     /// <summary>
-    /// Gets or sets the <see cref="AvaloniaVideoSink"/> that supplies frames to this view.
+    /// Runs on the UI thread as soon as a transition has moved the binding number, before the rest
+    /// of its work. For tests: it stands in for a producer thread that delivers a frame at that
+    /// moment.
+    /// </summary>
+    internal Action? TransitionPublished { get; set; }
+
+    /// <summary>
+    /// The bitmap <see cref="Render"/> draws, or <see langword="null"/> when it draws none. For
+    /// tests: the headless backend records no bitmap draws.
+    /// </summary>
+    internal WriteableBitmap? Picture
+    {
+        get
+        {
+            lock (_lock)
+                return _front;
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the <see cref="AvaloniaVideoSink"/> that supplies frames to this view: its
+    /// own, which <see cref="EnsureSink"/> or the first attach creates and the view disposes, or
+    /// one a caller assigned, which the caller owns and the view never disposes.
     /// </summary>
     /// <remarks>
-    /// Setting this property assigns an externally-owned sink — the view will
-    /// not dispose it on detach. If left unset, calling <see cref="EnsureSink"/>
-    /// (or attaching the view to the visual tree) constructs an internal sink
-    /// that the view will dispose when it detaches.
+    /// <para>
+    /// The view keeps its sink across a detach and presents it again when it rejoins the visual
+    /// tree, whoever owns it (ADR-0085, decision 2), so this does not read <see langword="null"/>
+    /// after a detach. Assigning another sink disposes the view's own or lets go of a caller's, as
+    /// <see cref="DisposeAsync"/> does. After <see cref="DisposeAsync"/> this reads
+    /// <see langword="null"/>. Assigning <see langword="null"/> stops the view presenting until a
+    /// sink is assigned or made again; the picture it drew last stays.
+    /// </para>
+    /// <para>
+    /// The assignment first claims the outgoing sink, as a player does, so that no player can be
+    /// built against it while it is replaced, and releases the claim once it is disposed or let go.
+    /// A caller's sink the view lets go of keeps a frame only for a player that holds its claim.
+    /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// A player or pass holds the outgoing sink, and would be left feeding a sink no view presents.
+    /// The message names the holder, and nothing has changed. Dispose that player first.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// A sink is assigned after <see cref="DisposeAsync"/>: nothing would present it or end its
+    /// binding.
+    /// </exception>
     public AvaloniaVideoSink? Sink
     {
         get => _sink;
@@ -180,13 +227,51 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         {
             if (ReferenceEquals(_sink, value))
                 return;
-            EndBinding();
-            DisposeOwnedSinkIfAny();
-            _sink = value;
-            _sinkIsOwned = false;
-            if (_sink is not null)
-                BeginBinding(_sink);
+
+            var transition = _lifecycle.Assign(value is not null);
+            ObjectDisposedException.ThrowIf(transition.Refused, this);
+
+            // Before anything changes, and released once the outgoing sink is disposed or let go
+            // (ADR-0085, decision 2).
+            using var claim = ClaimOutgoingSink();
+
+            Complete(Apply(transition, value));
         }
+    }
+
+    // How the view's own claim names it, in the error a build gets while the view replaces its sink.
+    private const string ReplacingClaimant = "a FrameFlowVideoView replacing its sink";
+
+    /// <summary>
+    /// Claims the sink the <see cref="Sink"/> setter replaces, as a player would: while the view
+    /// holds the claim no build can take the sink, and when a player already holds it, the
+    /// assignment stops here. Returns the lease, or <see langword="null"/> when there is no
+    /// outgoing sink or its owner has disposed it.
+    /// </summary>
+    private IDisposable? ClaimOutgoingSink()
+    {
+        if (_sink is not IClaimableSink outgoing)
+            return null;
+
+        IDisposable? lease;
+        try
+        {
+            lease = outgoing.TryClaim(ReplacingClaimant);
+        }
+        catch (ObjectDisposedException)
+        {
+            // A caller's sink that its owner disposed while the view held it presents nothing,
+            // whoever still feeds it, so there is nothing for a claim to protect.
+            return null;
+        }
+
+        return lease
+            ?? throw new InvalidOperationException(
+                $"The video sink {nameof(AvaloniaVideoSink)} is held by "
+                    + $"{outgoing.Claimant ?? "a player or pass"}. Replacing it would leave that player "
+                    + "feeding a sink no view presents: await DisposeAsync on the player or pass built "
+                    + "against it before assigning Sink."
+            );
     }
 
     /// <summary>
@@ -235,26 +320,26 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     }
 
     /// <summary>
-    /// Ensures the view has a video sink ready to receive frames. If <see cref="Sink"/>
-    /// is already set, this is a no-op. Otherwise, an <see cref="AvaloniaVideoSink"/> is
-    /// constructed that logs through <see cref="LoggerFactory"/>, including a factory assigned
-    /// after this call; it is owned by the view and disposed when it detaches from the visual tree.
+    /// Returns the sink this view presents: the view's own, which the first call makes, or one
+    /// assigned through <see cref="Sink"/>. It is the same sink for the view's whole life, across
+    /// trips out of the visual tree, unless <see cref="Sink"/> is assigned (ADR-0085, decision 2).
+    /// The view's own sink logs through <see cref="LoggerFactory"/>, including a factory assigned
+    /// after this call, and the view disposes it in <see cref="DisposeAsync"/>, and only there.
     /// </summary>
     /// <returns>The view's current <see cref="AvaloniaVideoSink"/> instance.</returns>
     /// <remarks>
     /// Callers that need a sink reference before the view attaches (e.g. fluent
-    /// player builders) should invoke this method to materialize the sink eagerly.
+    /// player builders) should invoke this method to materialize the sink eagerly. The view
+    /// presents nothing until it is attached: until then the sink keeps its newest frame for a
+    /// player that holds its claim, and the first attach presents it (ADR-0085, decision 3).
     /// </remarks>
+    /// <exception cref="ObjectDisposedException"><see cref="DisposeAsync"/> has run.</exception>
     public AvaloniaVideoSink EnsureSink()
     {
-        if (_sink is not null)
-            return _sink;
-
-        var sink = new AvaloniaVideoSink(_sinkLogger);
-        _sink = sink;
-        _sinkIsOwned = true;
-        BeginBinding(sink);
-        return sink;
+        var ensure = _lifecycle.EnsureOwned();
+        ObjectDisposedException.ThrowIf(ensure.Refused, this);
+        Complete(Apply(ensure));
+        return _sink!;
     }
 
     // ── IVideoSurface ─────────────────────────────────────────────
@@ -263,6 +348,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     Control IVideoSurface.Control => this;
     IVideoSink IVideoSurface.AttachSink(ILoggerFactory loggerFactory)
     {
+        ObjectDisposedException.ThrowIf(_lifecycle.IsDisposed, this);
         LoggerFactory = loggerFactory;
         return EnsureSink();
     }
@@ -272,121 +358,279 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     {
         base.OnAttachedToVisualTree(e);
 
+        // A disposed view makes, binds and presents nothing, and its attach is not an error.
+        if (_lifecycle.IsDisposed)
+            return;
+
+        Complete(Apply(_lifecycle.Attach()));
+
         // Materialize an internal sink when no caller has assigned one.
         // Gives consumers a zero-ceremony "drop the view in XAML and it
-        // just works" experience.
-        if (_sink is null)
-            EnsureSink();
+        // just works" experience. The same one on every later attach.
+        EnsureSink();
     }
 
     /// <inheritdoc />
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        // Stop the producer calling into a detached view before anything else.
-        EndBinding();
-
-        DisposeOwnedSinkIfAny();
+        // Stops presenting and keeps the sink. A step that throws does not stop the others, and
+        // what it threw is logged rather than thrown into the visual tree's detach.
+        if (Fault(Apply(_lifecycle.Detach())) is { } fault)
+            LogDetachFailed(_logger, fault);
 
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void DisposeOwnedSinkIfAny()
+    /// <summary>
+    /// Tears the view down for good: it stops presenting, disposes its own sink, even while a
+    /// player still feeds it, which then has every frame disposed on arrival, and lets go of a
+    /// caller's sink without disposing it. It releases its bitmaps, as <see cref="Clear"/> does.
+    /// <see cref="Sink"/> then reads <see langword="null"/>, and <see cref="EnsureSink"/>,
+    /// <see cref="IVideoSurface.AttachSink"/> and assigning a sink throw
+    /// <see cref="ObjectDisposedException"/>. A second call does nothing. Call on the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// Avalonia never disposes a control, so a view that is never disposed keeps its own sink for
+    /// as long as it is referenced (ADR-0085, decision 2).
+    /// </remarks>
+    /// <returns>
+    /// A completed task, or one faulted with what a step threw, such as a frame that failed to
+    /// release, after every step has run.
+    /// </returns>
+    public ValueTask DisposeAsync()
     {
-        if (!_sinkIsOwned)
-            return;
+        if (_lifecycle.IsDisposed)
+            return ValueTask.CompletedTask;
 
-        var sink = _sink;
-        EndBinding();
+        var faults = Apply(_lifecycle.Dispose());
+        Run(ReleaseBuffers, ref faults);
+        LogDisposed(_logger);
+
+        return Fault(faults) is { } fault ? ValueTask.FromException(fault) : ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Moves the view to the state the lifecycle core chose and does the work it named, in the
+    /// core's order (ADR-0085): unbind, stop presenting, dispose or let go of the sink, make or
+    /// take up a sink, bind, start presenting. Stopping, which on this view only takes the sink off
+    /// screen, runs first, before the number moves. UI thread.
+    /// </summary>
+    /// <param name="transition">What the core decided.</param>
+    /// <param name="assigned">The sink a caller assigned, which the borrow step takes up.</param>
+    /// <returns>
+    /// What the steps threw, or <see langword="null"/>. Every step runs even when one before it
+    /// threw: the core has moved on and will not ask for that work again, so a frame that fails to
+    /// release must not leave the sink undisposed or the next sink unbound.
+    /// </returns>
+    /// <exception cref="ObjectDisposedException">The core refused the event: the view is disposed.</exception>
+    private List<Exception>? Apply(SurfaceTransition transition, AvaloniaVideoSink? assigned = null)
+    {
+        ObjectDisposedException.ThrowIf(transition.Refused, this);
+
+        var work = transition.Work;
+        List<Exception>? faults = null;
+
+        // The view stops presenting the held sink, or lets it go: the sink goes off screen first,
+        // before the number moves, which is all stopping takes on this view. A frame arriving in
+        // between is then kept or discarded by the sink's off-screen rule, or copied under the
+        // binding that is ending and let go of by the unbind, and either way counted as discarded
+        // off screen (ADR-0085, decision 2). After the number had moved, the sink would still be on
+        // screen with no callback left to take from it, so a second frame would replace the first
+        // as a drop.
+        if ((work & (SurfaceWork.StopPresenting | SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) != 0)
+            Run(StopPresenting, ref faults);
+
+        // Before the rest of the work, under the lock a copy on the producer thread compares it
+        // under: a callback raised under a binding this ends copies nothing from here on.
+        lock (_lock)
+            _lifecycle = transition.Next;
+
+        TransitionPublished?.Invoke();
+
+        if (work.HasFlag(SurfaceWork.Unbind))
+            Run(UnbindSink, ref faults);
+        if (work.HasFlag(SurfaceWork.DisposeTarget))
+            Run(DisposeSink, ref faults);
+        if (work.HasFlag(SurfaceWork.ForgetTarget))
+            Run(ForgetSink, ref faults);
+        if (work.HasFlag(SurfaceWork.Create))
+            Run(() => TakeUp(new AvaloniaVideoSink(_sinkLogger)), ref faults);
+        if (work.HasFlag(SurfaceWork.Borrow))
+            Run(() => TakeUp(assigned!), ref faults);
+        if (work.HasFlag(SurfaceWork.Bind))
+            Run(BindSink, ref faults);
+        if (work.HasFlag(SurfaceWork.StartPresenting))
+            Run(StartPresenting, ref faults);
+
+        return faults;
+    }
+
+    private static void Run(Action step, ref List<Exception>? faults)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            (faults ??= []).Add(ex);
+        }
+    }
+
+    private static Exception? Fault(List<Exception>? faults) =>
+        faults switch
+        {
+            null => null,
+            [var one] => one,
+            _ => new AggregateException(faults),
+        };
+
+    /// <summary>Throws what a transition a caller asked for threw, once every step has run.</summary>
+    private static void Complete(List<Exception>? faults)
+    {
+        if (Fault(faults) is { } fault)
+            ExceptionDispatchInfo.Throw(fault);
+    }
+
+    // ── The sink steps (ADR-0085, decision 2). UI thread, in Apply's order. ──
+    // The sink the view holds is presented exactly while the view presents: StartPresenting and
+    // StopPresenting set it, and a sink taken up or let go of in between is set to match.
+
+    private void TakeUp(AvaloniaVideoSink sink)
+    {
+        _sink = sink;
+        sink.SetPresented(_lifecycle.Presents);
+    }
+
+    private void DisposeSink()
+    {
+        var sink = _sink!;
         _sink = null;
-        _sinkIsOwned = false;
 
         // AvaloniaVideoSink.DisposeAsync returns a completed ValueTask.
         // Guard with IsCompleted so the analyzer accepts the synchronous
         // GetResult call.
-        if (sink is not null)
-        {
-            var disposeTask = sink.DisposeAsync();
-            if (disposeTask.IsCompleted)
-                disposeTask.GetAwaiter().GetResult();
-            else
-                disposeTask.AsTask().GetAwaiter().GetResult();
-        }
+        var disposeTask = sink.DisposeAsync();
+        if (disposeTask.IsCompleted)
+            disposeTask.GetAwaiter().GetResult();
+        else
+            disposeTask.AsTask().GetAwaiter().GetResult();
     }
 
+    // The sink is already off screen (Apply), so it keeps a frame only while a claim on it stands.
+    // The Sink setter releases its own claim as it returns, which lets go of the frame.
+    private void ForgetSink() => _sink = null;
+
     /// <summary>
-    /// Starts an attachment to <paramref name="sink"/> and points its producer callback at
-    /// this view. UI thread (property setters and visual-tree attach).
+    /// Binds the held sink's arrival callback to this view, under the binding number the
+    /// transition has just set: a callback the sink raises later carries it, and copies nothing
+    /// once the number has moved (ADR-0085, decision 5).
     /// </summary>
-    private void BeginBinding(AvaloniaVideoSink sink)
+    private void BindSink()
     {
-        var binding = new SinkBinding(sink);
-        lock (_lock)
-            _binding = binding;
+        var sink = _sink!;
+        var binding = _lifecycle.Binding;
 
-        sink.FrameArrived = () => OnFrameArrived(binding);
+        // A view that presents as it binds, on a reattach, presents the sink from this point: a
+        // frame arriving before StartPresenting is not one to drop.
+        if (_lifecycle.Presents)
+            sink.SetPresented(true);
+
+        sink.FrameArrived = () => OnFrameArrived(sink, binding);
+
+        // A frame may already be waiting: fed before the sink was bound, or installed in the
+        // instant before the hook went on. No later arrival is guaranteed to come and collect it:
+        // on a paused or ended stream that frame is the one meant to be on screen. A view not
+        // presenting yet leaves it in the sink.
+        if (sink.HasPendingFrame)
+            OnFrameArrived(sink, binding);
     }
 
     /// <summary>
-    /// Ends the current attachment: no further callback does anything, and a frame sitting
-    /// unswapped in the back buffer is charged to the sink that produced it rather than
-    /// vanishing.
+    /// Takes the arrival callback off the held sink, and lets go of what the binding left
+    /// undrawn: a copy waiting for its swap and pixels waiting for their buffers. A callback
+    /// already running holds <see cref="_lock"/> for its whole copy, so it finished before the
+    /// number moved; one that starts later sees the number moved under the same lock, and copies
+    /// nothing.
     /// </summary>
     /// <remarks>
-    /// Marking <c>Detached</c> under <see cref="_lock"/> — which <see cref="OnFrameArrived"/>
-    /// holds for its whole body — is what makes detach safe against a callback already
-    /// running. Clearing <c>FrameArrived</c> alone would not: the delegate can already be on
-    /// the producer's stack, and it would go on copying into buffers this view is about to
-    /// drop.
+    /// The two are different frames and each is counted, against the sink that produced it, as
+    /// discarded off screen, not as a drop: the view stopped presenting that sink before they drew
+    /// (ADR-0085, decision 2). One flag covering both once counted one frame for two.
     /// </remarks>
-    private void EndBinding()
+    private void UnbindSink()
     {
-        SinkBinding? binding;
-        SinkBinding? strandedCopy;
-        SinkBinding? strandedPixels;
+        AvaloniaVideoSink? strandedCopy;
+        AvaloniaVideoSink? strandedPixels;
 
         lock (_lock)
         {
-            binding = _binding;
-            if (binding is null)
-                return;
-
-            binding.Detached = true;
-            _binding = null;
-
-            // A copy waiting for its swap and pixels waiting for their buffers are two
-            // different frames. Both are stranded by the detach and each is owed its own
-            // drop, so they are counted apart: one flag covering both charged one drop for
-            // two frames.
-            strandedCopy = _backPending ? _backBinding ?? binding : null;
+            strandedCopy = _backPending ? _backSink : null;
             _backPending = false;
-            _backBinding = null;
+            _backSink = null;
 
-            strandedPixels = _stagedPending ? _stagedBinding ?? binding : null;
+            strandedPixels = _stagedPending ? _stagedSink : null;
             _stagedPending = false;
-            _stagedBinding = null;
+            _stagedSink = null;
         }
 
-        binding.Sink.FrameArrived = null;
-        strandedCopy?.Sink.RecordPreSwapDrop();
-        strandedPixels?.Sink.RecordPreSwapDrop();
+        _sink!.FrameArrived = null;
+
+        // Outside the lock: the sink belongs to another component.
+        strandedCopy?.RecordDiscardedOffScreen();
+        strandedPixels?.RecordDiscardedOffScreen();
     }
+
+    /// <summary>
+    /// Starts presenting the held sink: it keeps what it is given for the view again, and a frame
+    /// it kept while the view did not present is copied first.
+    /// </summary>
+    /// <remarks>
+    /// That frame is the one meant to be on screen, and no later arrival is sure to come for it:
+    /// the player may be paused or ended, or the item may have one frame (#287). Copied here, on
+    /// the UI thread, once per attach; every other copy stays on the producer thread
+    /// (ADR-0016, decision 1).
+    /// </remarks>
+    private void StartPresenting()
+    {
+        var sink = _sink!;
+        sink.SetPresented(true);
+
+        if (sink.HasPendingFrame)
+            OnFrameArrived(sink, _lifecycle.Binding);
+    }
+
+    /// <summary>
+    /// Stops presenting the held sink: it goes off screen, and from here keeps a frame only for a
+    /// player that holds its claim, and lets go of the one it holds now when no player does.
+    /// <see cref="Apply"/> runs this before it moves the binding number, for a sink it stops
+    /// presenting, disposes or lets go of. The view keeps its bitmaps: they are its own copies and
+    /// hold none of the player's frames, so the picture it drew last is drawn again when it rejoins
+    /// the tree (ADR-0085, decision 2).
+    /// </summary>
+    private void StopPresenting() => _sink!.SetPresented(false);
 
     /// <summary>
     /// Takes the frame the sink just installed and copies it into the back buffer. Runs on
-    /// the presenting (graph) thread — never the UI thread (ADR-0016 Decision 1).
+    /// the presenting (graph) thread — never the UI thread (ADR-0016 Decision 1) — except for
+    /// the sweeps as the view binds and starts presenting.
     /// </summary>
-    /// <param name="binding">
-    /// The attachment this callback was raised under. Everything is read from it rather than
-    /// from <c>_sink</c>, so a callback that outlives a sink swap drains and accounts to the
-    /// sink that actually produced the frame.
+    /// <param name="sink">
+    /// The sink the callback was bound to. Everything is read from it rather than from
+    /// <c>_sink</c>, so the frame is taken from, and accounted to, the sink that produced it.
     /// </param>
-    private void OnFrameArrived(SinkBinding binding)
+    /// <param name="binding">
+    /// The binding number the callback was bound under. A callback that outlives its binding, or
+    /// one raised before the view presents, copies nothing, and the frame stays with the sink,
+    /// which keeps or drops it (ADR-0085, decisions 2, 3 and 5).
+    /// </param>
+    private void OnFrameArrived(AvaloniaVideoSink sink, long binding)
     {
         // The producer must not fault because a presenter could not draw. The sink also
         // catches, but recording the drop needs to happen here where the frame is known.
         try
         {
-            CopyArrivedFrame(binding);
+            CopyArrivedFrame(sink, binding);
         }
         catch (Exception ex)
         {
@@ -394,21 +638,23 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         }
     }
 
-    private void CopyArrivedFrame(SinkBinding binding)
+    private void CopyArrivedFrame(AvaloniaVideoSink sink, long binding)
     {
         bool post = false;
 
-        // Held across the whole body so a detach cannot land mid-copy: EndBinding takes the
-        // same lock to set Detached, so it either wins the race outright or waits here.
+        // Held across the whole body so a detach cannot land mid-copy: a transition moves the
+        // binding number under the same lock, so it either wins the race outright or waits
+        // here. The number is compared here, where the copy commits, not read earlier: a read
+        // acted on later would race the detach (ADR-0085, decision 5).
         lock (_lock)
         {
-            if (binding.Detached)
+            if (binding != _lifecycle.Binding || !_lifecycle.Presents)
                 return;
 
             // Take without counting: whether this frame is presented or dropped is not known
             // until its dimensions are in hand, and every path below records exactly one of
             // the two. RenderPendingFrame would have counted it presented on the way out.
-            var frame = binding.Sink.TakePendingFrame();
+            var frame = sink.TakePendingFrame();
             if (frame is null)
                 return;
 
@@ -421,7 +667,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 var cpu = frame.AsCpu();
                 if (cpu is null)
                 {
-                    binding.Sink.RecordPreSwapDrop();
+                    sink.RecordPreSwapDrop();
                     return;
                 }
 
@@ -432,7 +678,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 // Charged here so it still lands in exactly one bucket.
                 if (data.Width <= 0 || data.Height <= 0)
                 {
-                    binding.Sink.RecordPreSwapDrop();
+                    sink.RecordPreSwapDrop();
                     return;
                 }
 
@@ -449,10 +695,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                     if (_stagedPending)
                     {
                         _stagedPending = false;
-                        _stagedBinding?.Sink.RecordPreSwapDrop();
+                        _stagedSink?.RecordPreSwapDrop();
                     }
 
-                    StagePixelsLocked(data, frame.Pts, frame.Timeline, (frame.SampleAspectRatio, frame.Rotation), binding);
+                    StagePixelsLocked(data, frame.Pts, frame.Timeline, (frame.SampleAspectRatio, frame.Rotation), sink);
                     RequestBuffersForStagedFrame();
                     return;
                 }
@@ -461,7 +707,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 // previous copy in yet, the frame it held never drew — count that one as a
                 // drop. It was never counted presented; that happens at the swap.
                 if (_backPending)
-                    binding.Sink.RecordPreSwapDrop();
+                    sink.RecordPreSwapDrop();
 
                 copyStarted = true;
                 using (var fb = _back.Lock())
@@ -471,7 +717,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 _backPts = frame.Pts;
                 _backTimeline = frame.Timeline;
                 _backGeometry = (frame.SampleAspectRatio, frame.Rotation);
-                _backBinding = binding;
+                _backSink = sink;
                 _backPending = true;
 
                 // At most one queued swap for the view: a later copy just overwrites _back and
@@ -492,7 +738,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 // a throw before the copy leaves an earlier pending frame intact.
                 if (copyStarted)
                     _backPending = false;
-                binding.Sink.RecordPreSwapDrop();
+                sink.RecordPreSwapDrop();
                 throw;
             }
             finally
@@ -516,9 +762,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             //
             // Deliberately not touching _backPending or the drop count. The frame stays
             // pending and is accounted exactly once by whoever reaches it: the next copy
-            // supersedes it and charges the drop, or EndBinding charges it. Clearing it here
+            // supersedes it and charges the drop, or the unbind charges it. Clearing it here
             // would discard a newer copy that landed while this post was failing, and
-            // charging it here would double-count one that EndBinding had already charged.
+            // charging it here would double-count one that the unbind had already charged.
             //
             // Re-post if anything is still waiting: this frame, or a newer one that landed
             // while the post was failing and skipped queuing behind the claim. Releasing the
@@ -565,7 +811,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         TimeSpan pts,
         TimelineId timeline,
         (SampleAspectRatio Shape, VideoRotation Rotation) geometry,
-        SinkBinding binding)
+        AvaloniaVideoSink sink)
     {
         var needed = data.StrideY * data.Height;
         if (_staged is null || _staged.Length < needed)
@@ -580,7 +826,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         _stagedPts = pts;
         _stagedTimeline = timeline;
         _stagedGeometry = geometry;
-        _stagedBinding = binding;
+        _stagedSink = sink;
     }
 
     /// <summary>
@@ -589,34 +835,36 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// Under <see cref="_lock"/>, on the UI thread, immediately after the allocation.
     /// </summary>
     /// <remarks>
-    /// This is the one pixel copy the UI thread does, and it happens once per size change
-    /// rather than per frame — no more than the cost the mismatch branch already accepted
-    /// when it discarded the frame. Every other copy stays on the producer thread, which is
-    /// what ADR-0016 moved it there for.
+    /// This is one of the two pixel copies the UI thread does, and it happens once per size
+    /// change rather than per frame — no more than the cost the mismatch branch already
+    /// accepted when it discarded the frame. The other is the copy of a frame the sink kept
+    /// while the view did not present it, once per attach or rebind (<c>BindSink</c> and
+    /// <c>StartPresenting</c>); when that frame needs new bitmaps it is staged and blitted here
+    /// too, so a first attach can make both. Every other copy stays on the producer thread,
+    /// which is what ADR-0016 moved it there for.
     /// </remarks>
     private bool BlitStagedFrameLocked()
     {
         if (!_stagedPending || _staged is null)
             return false;
 
-        var binding = _stagedBinding;
+        var sink = _stagedSink;
         var stride = _stagedStride;
         var width = _stagedWidth;
         var height = _stagedHeight;
         var pts = _stagedPts;
 
         _stagedPending = false;
-        _stagedBinding = null;
+        _stagedSink = null;
 
         try
         {
-            // A detach between the request and this callback, or an allocation for a newer
-            // size that superseded these pixels: either way they are owed their drop rather
-            // than drawn at the wrong geometry.
-            if (_back is null || binding is null || binding.Detached
-                || _bitmapWidth != width || _bitmapHeight != height)
+            // An allocation for a newer size that superseded these pixels: they are owed their
+            // drop rather than drawn at the wrong geometry. A binding that ended between the
+            // request and this callback has already emptied the slot, under this lock.
+            if (_back is null || sink is null || _bitmapWidth != width || _bitmapHeight != height)
             {
-                binding?.Sink.RecordPreSwapDrop();
+                sink?.RecordPreSwapDrop();
                 return false;
             }
 
@@ -627,7 +875,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _backPts = pts;
             _backTimeline = _stagedTimeline;
             _backGeometry = _stagedGeometry;
-            _backBinding = binding;
+            _backSink = sink;
             _backPending = true;
             return true;
         }
@@ -636,32 +884,36 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             // Same rule as the producer-side copy: a throw partway through leaves _back
             // unpublishable, and these pixels land in exactly one bucket either way.
             _backPending = false;
-            binding?.Sink.RecordPreSwapDrop();
+            sink?.RecordPreSwapDrop();
             throw;
         }
     }
 
     /// <summary>
     /// Publishes the back buffer and asks for a redraw. UI thread only; the swap is the
-    /// ADR-0016 hand-off point, and the only pixel-buffer work the UI thread does.
+    /// ADR-0016 hand-off point, and the only pixel-buffer work the UI thread does per frame. It
+    /// copies pixels only once per size change (the blit) and once per attach or rebind (a frame
+    /// the sink kept).
     /// </summary>
     /// <remarks>
     /// Takes no binding: it publishes whatever the back buffer holds when it runs and credits
-    /// the binding that produced it. A detach or a sink replacement clears <c>_backPending</c>
-    /// and charges the stranded frame, so there is nothing here to publish for a binding that
-    /// has gone — and nothing to misfile onto a replacement.
+    /// the sink that produced it. Every transition that ends a binding (a detach, a sink
+    /// replaced or cleared, a dispose) clears <c>_backPending</c> and charges the stranded frame
+    /// under <see cref="_lock"/>, which this takes too, so what is here is always the current
+    /// binding's: nothing is published, and no <c>FramePresented</c> raised, for a binding that
+    /// has gone, and nothing is misfiled onto a replacement (ADR-0085, decision 5).
     /// </remarks>
     private void SwapAndInvalidate()
     {
         TimeSpan pts;
         TimelineId timeline;
-        SinkBinding? producer;
+        AvaloniaVideoSink? producer;
 
         lock (_lock)
         {
             _swapPosted = false;
 
-            // Nothing to publish: superseded and charged, or cleared by EndBinding.
+            // Nothing to publish: superseded and charged, or cleared as a binding ended.
             if (!_backPending)
                 return;
 
@@ -670,14 +922,14 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _backPending = false;
             pts = _backPts;
             timeline = _backTimeline;
-            producer = _backBinding;
+            producer = _backSink;
         }
 
         // Count the present HERE, not at the copy, and against the sink that produced it. A
         // frame overwritten in the back buffer before this ran never drew and is counted a
         // drop instead, so no frame lands in both counters and FramesPresented means what it
         // says.
-        producer?.Sink.RecordPresented(pts, timeline);
+        producer?.RecordPresented(pts, timeline);
         Interlocked.Increment(ref _renderedFrameCount);
         FramesRenderedCounter.Add(1);
 
@@ -713,7 +965,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                     {
                         _allocationPosted = false;
 
-                        // A detach or a Clear between the request and here empties the slot.
+                        // A binding that ended, or a Clear, between the request and here
+                        // empties the slot.
                         if (_stagedPending)
                             AllocateBuffers(_stagedWidth, _stagedHeight);
 
@@ -738,7 +991,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             // pixels staged would let a later detach or Clear charge the same frame again.
             _allocationPosted = false;
             _stagedPending = false;
-            _stagedBinding = null;
+            _stagedSink = null;
             throw;
         }
     }
@@ -795,43 +1048,66 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// <summary>
     /// Clears the rendered surface and releases bitmap resources.
     /// </summary>
+    /// <remarks>
+    /// The view keeps its bitmaps across a trip out of the visual tree, so that the picture it
+    /// drew last is drawn again when it rejoins (ADR-0085, decision 2). This and
+    /// <see cref="DisposeAsync"/> are what release them.
+    /// </remarks>
     public void Clear()
     {
-        SinkBinding? strandedCopy;
-        SinkBinding? strandedPixels;
+        AvaloniaVideoSink? strandedCopy;
+        AvaloniaVideoSink? strandedPixels;
 
         lock (_lock)
         {
-            _front?.Dispose();
-            _front = null;
-            _back?.Dispose();
-            _back = null;
-            _bitmapWidth = 0;
-            _bitmapHeight = 0;
+            ReleaseBuffersLocked();
 
             // Both a copy waiting for its swap and pixels waiting for their buffers are
             // thrown away here, and each is owed its drop. The copy used to go uncharged:
             // clearing the flag published nothing and counted nothing, which is the one way
             // a frame could leave this view counted by nobody.
-            strandedCopy = _backPending ? _backBinding : null;
+            strandedCopy = _backPending ? _backSink : null;
             _backPending = false;
-            _backBinding = null;
+            _backSink = null;
 
-            strandedPixels = _stagedPending ? _stagedBinding : null;
+            strandedPixels = _stagedPending ? _stagedSink : null;
             _stagedPending = false;
-            _stagedBinding = null;
-
-            // Released with the bitmaps it existed to feed; at 1080p it is 8 MB.
-            _staged = null;
+            _stagedSink = null;
         }
 
-        // Charged outside the lock, as EndBinding does. The sink belongs to another
+        // Charged outside the lock, as the unbind does. The sink belongs to another
         // component, and calling into it while holding this one's lock is how lock orders
         // get crossed.
-        strandedCopy?.Sink.RecordPreSwapDrop();
-        strandedPixels?.Sink.RecordPreSwapDrop();
+        strandedCopy?.RecordPreSwapDrop();
+        strandedPixels?.RecordPreSwapDrop();
 
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+    }
+
+    /// <summary>
+    /// Releases the bitmaps as <see cref="DisposeAsync"/>'s last step, and draws nothing from
+    /// then on. UI thread. The unbind before it has already let go of a copy or pixels the
+    /// binding left undrawn.
+    /// </summary>
+    private void ReleaseBuffers()
+    {
+        lock (_lock)
+            ReleaseBuffersLocked();
+
+        InvalidateVisual();
+    }
+
+    private void ReleaseBuffersLocked()
+    {
+        _front?.Dispose();
+        _front = null;
+        _back?.Dispose();
+        _back = null;
+        _bitmapWidth = 0;
+        _bitmapHeight = 0;
+
+        // Released with the bitmaps it existed to feed; at 1080p it is 8 MB.
+        _staged = null;
     }
 
     /// <summary>
@@ -857,10 +1133,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         // queued, and the frame sits pending until an allocation replaces the buffer under
         // it.
         if (_backPending)
-            _backBinding?.Sink.RecordPreSwapDrop();
+            _backSink?.RecordPreSwapDrop();
 
         _backPending = false;
-        _backBinding = null;
+        _backSink = null;
 
         _back = new WriteableBitmap(
             new PixelSize(width, height),
@@ -934,4 +1210,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "FrameFlowVideoView disposed.")]
     private static partial void LogDisposed(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "A step of leaving the visual tree threw; the view stopped presenting and kept its sink all the same."
+    )]
+    private static partial void LogDetachFailed(ILogger logger, Exception ex);
 }
