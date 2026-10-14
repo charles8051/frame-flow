@@ -56,16 +56,27 @@ public sealed class AvaloniaVideoSinkDisposalTests
         // a check of the disposed flag followed by a set left the frame in the slot after dispose's
         // final take, with nothing left to take it.
         var sink = NewSink();
+
+        // A frame drawn, then a wait the racing frame's present logs as a PRESENT GAP. That log
+        // comes after the disposed check, so it shows the present got past the check before the
+        // dispose ran, and the test is still driving the race.
+        await sink.PresentAsync(new CountedFrame(), CancellationToken.None);
+        sink.RenderPendingFrame()?.Dispose();
+        _time.Advance(TimeSpan.FromSeconds(1));
+
         var arrived = 0;
         sink.FrameArrived = () => arrived++;
         var racing = new CountedFrame { OnDurationRead = () => DisposeNow(sink) };
 
         await sink.PresentAsync(racing, CancellationToken.None);
 
-        Assert.True(racing.DurationRead);
+        Assert.Single(
+            _logs.Entries,
+            e => e.Level == LogLevel.Warning && e.Message.Contains("PRESENT GAP", StringComparison.Ordinal)
+        );
         Assert.Equal(0, racing.References);
         Assert.Null(sink.RenderPendingFrame());
-        Assert.Equal(0, sink.RenderedFrameCount);
+        Assert.Equal(1, sink.RenderedFrameCount);
         Assert.Equal(0, sink.DroppedFrameCount);
         Assert.Equal(0, arrived);
     }
@@ -97,12 +108,11 @@ public sealed class AvaloniaVideoSinkDisposalTests
     private sealed class CountedFrame : IVideoFrame
     {
         private int _references = 1;
+        private bool _durationRead;
 
         public Action? OnDurationRead { get; init; }
 
         public int References => Volatile.Read(ref _references);
-
-        public bool DurationRead { get; private set; }
 
         public int Width => 16;
         public int Height => 16;
@@ -114,9 +124,9 @@ public sealed class AvaloniaVideoSinkDisposalTests
         {
             get
             {
-                if (!DurationRead)
+                if (!_durationRead)
                 {
-                    DurationRead = true;
+                    _durationRead = true;
                     OnDurationRead?.Invoke();
                 }
 

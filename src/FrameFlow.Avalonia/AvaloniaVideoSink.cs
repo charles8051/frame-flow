@@ -196,7 +196,9 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
         // Spares a frame given after dispose the gap tracker and its logs. The slot's closed state
-        // is what disposes a frame whose present races the dispose past this check.
+        // is what disposes a frame whose present races the dispose past this check. The race test
+        // disposes the sink from the frame's Duration read below, so that read stays after this
+        // check (AvaloniaVideoSinkDisposalTests).
         if (_disposed)
         {
             frame.Dispose();
