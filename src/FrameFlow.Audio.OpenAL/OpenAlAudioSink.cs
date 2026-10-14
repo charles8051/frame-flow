@@ -219,7 +219,13 @@ public sealed partial class OpenAlAudioSink
     // descheduled thread can never strand a pacer on a stale clock (ADR-0057,
     // superseding the prior 5 ms publish ticker that starved under CPU load and
     // burst-released frames downstream). Cancelled on dispose to release any
-    // in-flight pacing waits.
+    // in-flight pacing waits, and never disposed: a flush or a clock wait that reads its
+    // token after the dispose links to a source already cancelled and ends at once, where a
+    // disposed source would throw ObjectDisposedException (#723). It has no timer, and each
+    // source linked to it is disposed when the wait that made it ends, which leaves nothing
+    // registered on it.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "Cancelled by the teardown and left undisposed on purpose, so a reader after it cannot throw (#723).")]
     private readonly CancellationTokenSource _clockShutdownCts = new();
 
     // Diagnostics state
@@ -937,17 +943,12 @@ public sealed partial class OpenAlAudioSink
         if (_disposed)
             return;
 
-        CancellationToken shutdown;
-        try
-        {
-            shutdown = _clockShutdownCts.Token;
-        }
-        catch (ObjectDisposedException)
-        {
-            return; // disposed since the check above
-        }
-
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown);
+        // A dispose since the check above is seen under the lock below, or ends a wait in
+        // between quietly: it cancels the shutdown token and leaves it readable.
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _clockShutdownCts.Token
+        );
         var startedAt = _timeProvider.GetTimestamp();
         var drain = AudioDrain.Begin(DrainStallLimit, TimeSpan.Zero);
         var uploadLatency = Stopwatch.StartNew();
@@ -1223,6 +1224,10 @@ public sealed partial class OpenAlAudioSink
             return ValueTask.CompletedTask;
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled(cancellationToken);
+
+        // Disposed: the clock no longer moves, so the wait ends as one in flight at the dispose does.
+        if (_clockShutdownCts.IsCancellationRequested)
+            return ValueTask.FromCanceled(_clockShutdownCts.Token);
         return new ValueTask(WaitUntilCoreAsync(target, cancellationToken));
     }
 
@@ -1389,14 +1394,14 @@ public sealed partial class OpenAlAudioSink
         // Release any in-flight pacing waits (the pull-based WaitUntilAsync loop
         // links its sleeps to this token), then tear down the OpenAL resources.
         // The device is released whatever a cancellation callback throws: no later
-        // dispose would release it, since they all wait for this one.
+        // dispose would release it, since they all wait for this one. The source stays
+        // undisposed (see _clockShutdownCts).
         try
         {
             _clockShutdownCts.Cancel();
         }
         finally
         {
-            _clockShutdownCts.Dispose();
             DisposeOpenAlResources();
         }
         return ValueTask.CompletedTask;
