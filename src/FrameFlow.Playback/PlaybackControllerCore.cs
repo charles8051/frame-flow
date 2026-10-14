@@ -174,19 +174,27 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private readonly TimeProvider _timeProvider;
     private bool _disposed;
 
+    // The claims on the sinks the controller was built with (ADR-0085, decision 6). Released once
+    // DisposeAsync has completed, which is after the last frame the controller sends has reached
+    // its sink.
+    private readonly IDisposable? _sinkClaims;
+
     private const string DisposeFailureMessage = "PlaybackController is disposing.";
 
     /// <summary>
     /// Initializes a new <see cref="PlaybackControllerCore"/> with all three state machines
     /// configured, a session factory for creating pipeline sessions, and the dispatch
-    /// loop started.
+    /// loop started. <c>sinkClaims</c> are the claims on the sinks the factory drives, which the
+    /// controller now holds and releases at the end of <see cref="DisposeAsync"/>; null when
+    /// nothing was claimed.
     /// </summary>
     public PlaybackControllerCore(
         ILogger<PlaybackControllerCore> logger,
         IPlaybackSessionFactory sessionFactory,
         IPlaybackClock clock,
         IOptions<FrameFlowPlaybackOptions>? playbackOptions = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        IDisposable? sinkClaims = null
     )
     {
         // Wall time, not media time. IPlaybackClock above carries a position on the presentation
@@ -201,6 +209,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _sinkClaims = sinkClaims;
         _tickerBinding = new WorkerBinding<PositionTickerWorker>(
             () =>
                 new PositionTickerWorker(
@@ -1786,41 +1795,54 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     // ── IAsyncDisposable ───────────────────────────────────────────────
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Releases the claims on the controller's sinks last, once the session and with it the graph
+    /// and the pacer's delivery loop have been awaited, so nothing the controller sent can reach
+    /// a sink after another player has claimed it (ADR-0085, decision 6). A dispose that throws
+    /// releases them too.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
             return;
         _disposed = true;
 
-        // Stop folding position ticks before the ticker stops emitting them.
-        _loopStallSubscription?.Dispose();
-        _loopStallSubscription = null;
+        try
+        {
+            // Stop folding position ticks before the ticker stops emitting them.
+            _loopStallSubscription?.Dispose();
+            _loopStallSubscription = null;
 
-        PrepareActiveSeekForDisposal();
-        await _tickerBinding.StopAsync();
+            PrepareActiveSeekForDisposal();
+            await _tickerBinding.StopAsync();
 
-        _commandChannel.Writer.TryComplete();
-        await _dispatchLoop;
+            _commandChannel.Writer.TryComplete();
+            await _dispatchLoop;
 
-        PrepareActiveSeekForDisposal();
-        await NormalizeSeekStateAfterDisposalAsync();
-        await DisposeSessionAsync();
+            PrepareActiveSeekForDisposal();
+            await NormalizeSeekStateAfterDisposalAsync();
+            await DisposeSessionAsync();
 
-        _playbackStateSubject.Dispose();
-        _seekStateSubject.Dispose();
-        _repeatModeSubject.Dispose();
-        _loopRestartedSubject.Dispose();
-        _itemFailedSubject.Dispose();
-        _itemLoopedSubject.Dispose();
-        _loopStalledSubject.Dispose();
-        _itemStalledSubject.Dispose();
-        _errorSubject.Dispose();
-        _positionTickSubject.Dispose();
+            _playbackStateSubject.Dispose();
+            _seekStateSubject.Dispose();
+            _repeatModeSubject.Dispose();
+            _loopRestartedSubject.Dispose();
+            _itemFailedSubject.Dispose();
+            _itemLoopedSubject.Dispose();
+            _loopStalledSubject.Dispose();
+            _itemStalledSubject.Dispose();
+            _errorSubject.Dispose();
+            _positionTickSubject.Dispose();
 
-        // A factory that owns what it built — a coordinator this controller's own queue lives in —
-        // is disposed here. One built from a player's coordinator disposes nothing.
-        (_sessionFactory as IDisposable)?.Dispose();
+            // A factory that owns what it built — a coordinator this controller's own queue lives
+            // in — is disposed here. One built from a player's coordinator disposes nothing.
+            (_sessionFactory as IDisposable)?.Dispose();
 
-        LogDisposed();
+            LogDisposed();
+        }
+        finally
+        {
+            _sinkClaims?.Dispose();
+        }
     }
 }

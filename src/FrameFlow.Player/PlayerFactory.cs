@@ -57,28 +57,45 @@ internal static class PlayerFactory
 
         var coordinator = PlaylistCoordinator.Of(initial, initialRepeatMode);
 
+        // The controller claims the sinks before it builds anything (ADR-0085, decision 6). A sink
+        // another player or pass holds fails that claim before the controller exists, so only the
+        // coordinator is left to dispose.
+        IPlaybackController controller;
+        try
+        {
 #pragma warning disable CA2000 // controller ownership transfers to the player returned below; disposed via Dispose
-        var controller = PlaybackController.CreatePlaylist(
-            coordinator,
-            videoSink: videoSink,
-            audioSink: audioSink,
-            hardwareDecodeMode: hardwareDecodeMode,
-            hardwareDecodeCapabilities: bootstrap.Capabilities,
-            yieldHardwareFrames: yieldHardwareFrames,
-            initialRepeatMode: initialRepeatMode,
-            clock: clock,
-            loggerFactory: loggerFactory,
-            configureVideo: configureVideo,
-            configureAudio: configureAudio,
-            latenessRecovery: latenessRecovery,
-            timeProvider: timeProvider,
-            hardwareDevice: hardwareDevice,
-            preferredBackends: preferredBackends,
-            excludedCodecs: excludedCodecs,
-            prepareNextItem: prepareNextItem
-        );
+            controller = PlaybackController.CreatePlaylist(
+                coordinator,
+                videoSink: videoSink,
+                audioSink: audioSink,
+                hardwareDecodeMode: hardwareDecodeMode,
+                hardwareDecodeCapabilities: bootstrap.Capabilities,
+                yieldHardwareFrames: yieldHardwareFrames,
+                initialRepeatMode: initialRepeatMode,
+                clock: clock,
+                loggerFactory: loggerFactory,
+                configureVideo: configureVideo,
+                configureAudio: configureAudio,
+                latenessRecovery: latenessRecovery,
+                timeProvider: timeProvider,
+                hardwareDevice: hardwareDevice,
+                preferredBackends: preferredBackends,
+                excludedCodecs: excludedCodecs,
+                prepareNextItem: prepareNextItem,
+                claimant: initial.Count > 0
+                    ? $"a player built for '{initial[0].Source.DisplayName}'"
+                    : "a player built with an empty queue"
+            );
 #pragma warning restore CA2000
+        }
+        catch
+        {
+            coordinator.Dispose();
+            throw;
+        }
 
+        // From here on a failure or a cancellation disposes the controller, which releases the
+        // claims on the sinks before the exception leaves.
         try
         {
             if (activateAudioSink && audioSink is not null)

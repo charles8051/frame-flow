@@ -118,6 +118,32 @@ public sealed class AddFrameFlowAvaloniaTests
     }
 
     // -----------------------------------------------------------------------
+    // The registered sink is claimed (ADR-0085, decision 6)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task TheResolvedSink_IsClaimedByTheControllerBuiltOverIt_AndASecondBuildFails()
+    {
+        // A container's singleton sink reaches a controller through the same factory as any other,
+        // so the claim covers it: a second controller over it fails until the first is disposed.
+        var services = new ServiceCollection();
+        AddNullLogging(services);
+        services.AddFrameFlow().AddFrameFlowAvaloniaVideoSink();
+        await using var provider = services.BuildServiceProvider();
+        var sink = provider.GetRequiredService<IVideoSink>();
+
+        var first = PlaybackController.Create(videoSink: sink);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            PlaybackController.Create(videoSink: provider.GetRequiredService<IVideoSink>())
+        );
+
+        Assert.Contains("video sink AvaloniaVideoSink", error.Message, StringComparison.Ordinal);
+        Assert.Contains("held by a controller from PlaybackController.Create", error.Message, StringComparison.Ordinal);
+        await first.DisposeAsync();
+        await using var second = PlaybackController.Create(videoSink: sink);
+    }
+
+    // -----------------------------------------------------------------------
     // Test doubles
     // -----------------------------------------------------------------------
 

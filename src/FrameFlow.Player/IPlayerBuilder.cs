@@ -75,9 +75,12 @@ public interface IPlayerBuilder
     /// </remarks>
     /// <remarks>
     /// One sink serves one player at a time, and may serve several in sequence, which is what
-    /// keeps a presenter warm across a playlist's items. Nothing enforces the "at a time":
-    /// attaching one sink to two players that run concurrently is undefined, and keeping them
-    /// apart is the caller's job.
+    /// keeps a presenter warm across a playlist's items. A sink that implements
+    /// <see cref="IClaimableSink"/>, as the in-box sinks with state do, is claimed by
+    /// <see cref="BuildPlayerAsync"/> and held until the player has been disposed, so a second
+    /// build against it fails until then (ADR-0085, decision 6). For any other sink nothing
+    /// enforces the "at a time": attaching one sink to two players that run concurrently is
+    /// undefined, and keeping them apart is the caller's job.
     /// </remarks>
     IPlayerBuilder WithVideoSink(IVideoSink sink);
 
@@ -92,9 +95,12 @@ public interface IPlayerBuilder
     /// </remarks>
     /// <remarks>
     /// One sink serves one player at a time, and may serve several in sequence, which is what
-    /// keeps a presenter warm across a playlist's items. Nothing enforces the "at a time":
-    /// attaching one sink to two players that run concurrently is undefined, and keeping them
-    /// apart is the caller's job.
+    /// keeps a presenter warm across a playlist's items. A sink that implements
+    /// <see cref="IClaimableSink"/>, as the in-box sinks with state do, is claimed by
+    /// <see cref="BuildPlayerAsync"/> and held until the player has been disposed, so a second
+    /// build against it fails until then (ADR-0085, decision 6). For any other sink nothing
+    /// enforces the "at a time": attaching one sink to two players that run concurrently is
+    /// undefined, and keeping them apart is the caller's job.
     /// </remarks>
     IPlayerBuilder WithAudioSink(IAudioSink sink);
 
@@ -268,5 +274,16 @@ public interface IPlayerBuilder
     /// started; the caller invokes <see cref="IMediaTransport.PlayAsync"/> explicitly. A caller who
     /// wants the small surface names <see cref="IMediaTransport"/>.
     /// </summary>
+    /// <remarks>
+    /// Each sink that implements <see cref="IClaimableSink"/> is claimed before anything else is
+    /// built, and the player holds the claim until its <c>DisposeAsync</c> has completed. A build
+    /// that fails or is cancelled releases it before it throws (ADR-0085, decision 6).
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Another player or pass holds the video or audio sink: the message names the sink and its
+    /// holder, and the fix is to await that player's or pass's <c>DisposeAsync</c> first. Also
+    /// thrown when the FFmpeg bootstrap fails or the first item fails to load.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">The video or audio sink is a claimable sink that has been disposed.</exception>
     Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
 }

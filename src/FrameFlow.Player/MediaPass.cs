@@ -39,6 +39,12 @@ namespace FrameFlow.Player;
 /// once and handed to any number of passes. As a user, the pass activates the audio sink for its
 /// run and deactivates it when the run ends, however it ends.
 /// </para>
+/// <para>
+/// <b>Sink claims (ADR-0085, decision 6).</b> The pass builder claims each sink that implements
+/// <see cref="IClaimableSink"/>, and the pass holds the claim until it is disposed, not until its
+/// run ends: a pass built against a sink this one holds fails until this one has been disposed.
+/// A run still in flight when the pass is disposed keeps the claim until it ends.
+/// </para>
 /// </remarks>
 public sealed class MediaPass : IAsyncDisposable
 {
@@ -55,6 +61,12 @@ public sealed class MediaPass : IAsyncDisposable
 
     private int _started;
     private bool _disposed;
+
+    // The claims on the sinks, released once the pass is disposed and no run is in flight. The
+    // hold is read and advanced under the lock.
+    private readonly IDisposable? _sinkClaims;
+    private readonly object _claimLock = new();
+    private PassClaimHold _claimHold = PassClaimHold.Built;
 
     /// <summary>
     /// The clock a pass is given and never reads.
@@ -79,11 +91,13 @@ public sealed class MediaPass : IAsyncDisposable
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator,
         ILogger? logger = null,
         IPlaybackClock? clock = null,
-        PassRange range = default
+        PassRange range = default,
+        IDisposable? sinkClaims = null
     )
     {
         Clock = clock;
         _range = range;
+        _sinkClaims = sinkClaims;
         _demux = demux ?? throw new ArgumentNullException(nameof(demux));
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _videoDecoder = videoDecoder;
@@ -153,6 +167,30 @@ public sealed class MediaPass : IAsyncDisposable
             );
         }
 
+        // The claims on the sinks stay held while the run is in flight, even past a dispose, so
+        // nothing it sends reaches a sink after the next pass has claimed it.
+        bool started;
+        lock (_claimLock)
+            (_claimHold, started) = _claimHold.StartRun();
+        ObjectDisposedException.ThrowIf(!started, this);
+
+        try
+        {
+            await RunGraphToEndAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            bool release;
+            lock (_claimLock)
+                (_claimHold, release) = _claimHold.EndRun();
+            if (release)
+                _sinkClaims?.Dispose();
+        }
+    }
+
+    /// <summary>The body of <see cref="RunToCompletionAsync"/>, once it has started the run.</summary>
+    private async Task RunGraphToEndAsync(CancellationToken ct)
+    {
         var hasVideo = _videoDecoder is not null && _videoSink is not null;
         var hasAudio = _audioDecoder is not null && _audioSink is not null;
 
@@ -461,5 +499,13 @@ public sealed class MediaPass : IAsyncDisposable
         catch
         { /* best-effort */
         }
+
+        // Last, so a pass built next cannot claim the sinks while this one still holds a decoder.
+        // A run still in flight releases them when it ends instead.
+        bool release;
+        lock (_claimLock)
+            (_claimHold, release) = _claimHold.Dispose();
+        if (release)
+            _sinkClaims?.Dispose();
     }
 }

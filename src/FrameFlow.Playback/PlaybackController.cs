@@ -60,6 +60,12 @@ public static class PlaybackController
     /// drop-in replacement (subject to the deferred items in the
     /// type-level remarks).
     /// </summary>
+    /// <remarks>
+    /// <b>The sinks are claimed (ADR-0085, decision 6).</b> Each sink that implements
+    /// <see cref="IClaimableSink"/> is claimed before anything else is built, and the claim is
+    /// released once the controller's <c>DisposeAsync</c> has completed. A sink another player,
+    /// controller or pass holds makes this throw.
+    /// </remarks>
     /// <param name="videoSink">
     /// Video sink the controller will drive when video is present in
     /// the loaded source. <see langword="null"/> for audio-only
@@ -143,6 +149,14 @@ public static class PlaybackController
     /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
     /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// Another player, controller or pass holds <paramref name="videoSink"/> or
+    /// <paramref name="audioSink"/>. The message names the sink and its holder.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// <paramref name="videoSink"/> or <paramref name="audioSink"/> is a claimable sink that has been
+    /// disposed.
+    /// </exception>
     public static IPlaybackController Create(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -164,14 +178,18 @@ public static class PlaybackController
         // One source at a time, as a queue of one on the playlist session. Each load makes the
         // loaded source the queue's only item.
         loggerFactory ??= NullLoggerFactory.Instance;
+        var factoryLoggers = loggerFactory;
         return Assemble(
-            new PlaylistSessionFactory(
+            "a controller from PlaybackController.Create",
+            videoSink,
+            audioSink,
+            () => new PlaylistSessionFactory(
                 new PlaylistCoordinator(initialRepeatMode),
                 videoSink,
                 audioSink,
                 hardwareDecodeMode,
                 hardwareDecodeCapabilities,
-                loggerFactory,
+                factoryLoggers,
                 configureVideo,
                 configureAudio,
                 yieldHardwareFrames,
@@ -278,6 +296,11 @@ public static class PlaybackController
     /// Whether the playlist prepares the item its queue would take next while the current one
     /// plays (media-clips decision 8).
     /// </param>
+    /// <param name="claimant">
+    /// Who claims the sinks, as the error a later build against them names it (ADR-0085,
+    /// decision 6). The sinks are claimed as <see cref="Create"/> claims them, and every item the
+    /// playlist plays or prepares shares the claim.
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -295,19 +318,24 @@ public static class PlaybackController
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
-        bool prepareNextItem = false
+        bool prepareNextItem = false,
+        string claimant = "a player"
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         loggerFactory ??= NullLoggerFactory.Instance;
+        var factoryLoggers = loggerFactory;
         return Assemble(
-            new PlaylistSessionFactory(
+            claimant,
+            videoSink,
+            audioSink,
+            () => new PlaylistSessionFactory(
                 coordinator,
                 videoSink,
                 audioSink,
                 hardwareDecodeMode,
                 hardwareDecodeCapabilities,
-                loggerFactory,
+                factoryLoggers,
                 configureVideo,
                 configureAudio,
                 yieldHardwareFrames,
@@ -325,23 +353,43 @@ public static class PlaybackController
     }
 
     /// <summary>
-    /// Builds the controller over <paramref name="sessionFactory"/>. Both entry points build their
-    /// factory and call this (#44).
+    /// Claims the sinks, then builds the controller over the factory
+    /// <paramref name="sessionFactory"/> makes. Both entry points call this (#44).
     /// </summary>
+    /// <remarks>
+    /// The claim comes before anything is built, so a build against a held sink fails before it
+    /// has made anything to tear down (ADR-0085, decision 6). The controller releases it once its
+    /// dispose has completed; a build that throws after the claim releases it first.
+    /// </remarks>
     private static PlaybackControllerCore Assemble(
-        IPlaybackSessionFactory sessionFactory,
+        string claimant,
+        IVideoSink? videoSink,
+        IAudioSink? audioSink,
+        Func<IPlaybackSessionFactory> sessionFactory,
         RepeatMode initialRepeatMode,
         IPlaybackClock? clock,
         ILoggerFactory loggerFactory,
         TimeProvider? timeProvider
-    ) =>
-        new(
-            loggerFactory.CreateLogger<PlaybackControllerCore>(),
-            sessionFactory,
-            // A caller who names a provider and no clock gets both on it, rather than a
-            // deterministic watchdog beside a wall-clock timeline.
-            clock ?? new PlaybackClock(timeProvider ?? TimeProvider.System),
-            Options.Create(new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }),
-            timeProvider
-        );
+    )
+    {
+        var claims = SinkClaims.Take(claimant, videoSink, audioSink);
+        try
+        {
+            return new(
+                loggerFactory.CreateLogger<PlaybackControllerCore>(),
+                sessionFactory(),
+                // A caller who names a provider and no clock gets both on it, rather than a
+                // deterministic watchdog beside a wall-clock timeline.
+                clock ?? new PlaybackClock(timeProvider ?? TimeProvider.System),
+                Options.Create(new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }),
+                timeProvider,
+                claims
+            );
+        }
+        catch
+        {
+            claims.Dispose();
+            throw;
+        }
+    }
 }

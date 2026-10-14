@@ -239,6 +239,28 @@ internal sealed class PassBuilder : IPassBuilder
         RequireASink();
         RequireSinkForEachConfigurator();
 
+        // Claim the sinks before building anything else (ADR-0085, decision 6). The pass holds the
+        // claims until it is disposed; a build that fails or is cancelled releases them here.
+        var claims = SinkClaims.Take($"a pass over '{_source.DisplayName}'", _videoSink, _audioSink);
+        MediaPass? pass = null;
+        try
+        {
+            pass = await BuildClaimedAsync(claims, cancellationToken).ConfigureAwait(false);
+            return pass;
+        }
+        finally
+        {
+            if (pass is null)
+                claims.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The body of <see cref="BuildAsync"/>, once the sinks are claimed: the pass it builds takes
+    /// <paramref name="claims"/> over.
+    /// </summary>
+    private async Task<MediaPass> BuildClaimedAsync(IDisposable claims, CancellationToken cancellationToken)
+    {
         // Bootstrap the FFmpeg native runtime — same eager call the
         // existing examples make manually. Idempotent across calls; a
         // shared bootstrapper would also work but constructing a fresh
@@ -435,7 +457,8 @@ internal sealed class PassBuilder : IPassBuilder
                 _audioConfigurator,
                 _loggerFactory.CreateLogger<MediaPass>(),
                 _clock,
-                _range
+                _range,
+                claims
             );
             demux = null;
             videoDecoder = null;
