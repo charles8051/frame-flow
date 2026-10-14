@@ -325,14 +325,13 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     }
 
     /// <summary>
-    /// Two disposes that overlap neither throw, and the second waits for the first (ADR-0086,
-    /// decision 3). Overlapping disposes used to both reach the clock's cancellation source, and
-    /// the second could throw <see cref="ObjectDisposedException"/>, or return while the first was
-    /// still giving the device back. The first is held inside that release, under the sink's lock,
-    /// by a lease that does not let go until the test says.
+    /// A dispose made while another gives the device back joins it: it waits for the first and
+    /// ends as it did (ADR-0086, decision 3). It used to return at once, before the device was
+    /// released. The first is held inside that release, under the sink's lock, by a lease that
+    /// does not let go until the test says.
     /// </summary>
     [Fact]
-    public async Task TwoOverlappingDisposes_DoNotThrow_AndTheSecondWaitsForTheFirst()
+    public async Task ADisposeMadeWhileAnotherGivesTheDeviceBack_JoinsIt()
     {
         var device = new FakeOpenAlDevice();
         using var hold = new LeaseHold();

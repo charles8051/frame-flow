@@ -1388,10 +1388,17 @@ public sealed partial class OpenAlAudioSink
 
         // Release any in-flight pacing waits (the pull-based WaitUntilAsync loop
         // links its sleeps to this token), then tear down the OpenAL resources.
-        _clockShutdownCts.Cancel();
-        _clockShutdownCts.Dispose();
-
-        DisposeOpenAlResources();
+        // The device is released whatever a cancellation callback throws: no later
+        // dispose would release it, since they all wait for this one.
+        try
+        {
+            _clockShutdownCts.Cancel();
+        }
+        finally
+        {
+            _clockShutdownCts.Dispose();
+            DisposeOpenAlResources();
+        }
         return ValueTask.CompletedTask;
     }
 
