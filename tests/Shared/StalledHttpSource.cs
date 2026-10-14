@@ -210,8 +210,21 @@ internal sealed class StalledHttpSource : IAsyncDisposable
             + $"Content-Range: bytes {from}-{Length - 1}/{Length}\r\n"
             + $"Content-Length: {Length - from}\r\n"
             + "\r\n";
-        await socket.SendAsync(Encoding.ASCII.GetBytes(header), SocketFlags.None, _closing.Token).ConfigureAwait(false);
-        await socket.SendAsync(_content.AsMemory((int)from, count), SocketFlags.None, _closing.Token).ConfigureAwait(false);
+        await SendAllAsync(socket, Encoding.ASCII.GetBytes(header)).ConfigureAwait(false);
+        await SendAllAsync(socket, _content.AsMemory((int)from, count)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends all of <paramref name="bytes"/>. A send may take fewer bytes than it is given, and
+    /// the reply has to be what the test arranged, so it sends on until none are left.
+    /// </summary>
+    private async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> bytes)
+    {
+        while (!bytes.IsEmpty)
+        {
+            int sent = await socket.SendAsync(bytes, SocketFlags.None, _closing.Token).ConfigureAwait(false);
+            bytes = bytes[sent..];
+        }
     }
 
     /// <summary>Closes every connection, which ends any call still waiting on one. Idempotent.</summary>
