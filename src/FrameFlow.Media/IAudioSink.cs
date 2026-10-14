@@ -63,10 +63,11 @@ namespace FrameFlow.Media;
 /// without cloning.
 /// </para>
 /// <para>
-/// <b>Disposal contract (ADR-0044).</b> Implementations <b>must</b>
-/// support idempotent <see cref="IAsyncDisposable.DisposeAsync"/>:
-/// calling it more than once is a no-op (no throw, no side effects,
-/// no resource access on the second and subsequent calls).
+/// <b>Disposal contract (ADR-0044, ADR-0086).</b> Implementations <b>must</b>
+/// support calling <see cref="IAsyncDisposable.DisposeAsync"/> more than once:
+/// only the first call tears down, and a later one has no side effects and
+/// accesses no resource. A later call may wait for the first and end as it
+/// did, as <c>OpenAlAudioSink</c>'s does, so it throws only when the first threw.
 /// </para>
 /// <para>
 /// <b>Ownership (ADR-0044, as amended).</b> Whoever constructs a sink owns

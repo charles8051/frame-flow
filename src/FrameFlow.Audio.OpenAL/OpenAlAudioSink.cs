@@ -125,7 +125,13 @@ public sealed partial class OpenAlAudioSink
     private readonly List<uint> _allBuffers = new();
     private int _sampleRate;
     private int _channels;
+
+    // Whether the device resources are released. Set under _stateLock by the teardown, and checked
+    // under it before every al* call.
     private volatile bool _disposed;
+
+    // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3).
+    private readonly DisposeOnce _dispose = new();
 
     // The master clock as a pure value (§5.2): the source-time origin, whether it's
     // seated, the cumulative processed-sample count, and any pending seek seed — the
@@ -1369,14 +1375,15 @@ public sealed partial class OpenAlAudioSink
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Idempotent per the ADR-0044 sink-disposal contract. Claiming the sink afterwards throws
+    /// The first call tears down. A call made while it runs, or after, waits for it and ends as it
+    /// did (ADR-0086, decision 3). Claiming the sink afterwards throws
     /// <see cref="ObjectDisposedException"/>.
     /// </remarks>
-    public ValueTask DisposeAsync()
-    {
-        if (_disposed)
-            return ValueTask.CompletedTask;
+    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDown);
 
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private ValueTask TearDown()
+    {
         _claims.Close();
 
         // Release any in-flight pacing waits (the pull-based WaitUntilAsync loop
