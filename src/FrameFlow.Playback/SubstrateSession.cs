@@ -2134,11 +2134,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
                     if (reachedEof)
                     {
+                        // The flush marker waits for space in a decoder's queue. Once the run
+                        // is cancelled the graph stops draining it, so a full queue never frees
+                        // up, and a stop waiting for this pump would wait for good: pass the
+                        // run's token so the flush gives up. The queues are completed either way.
                         try
                         {
-                            await _pipeline!
-                                .FinalizeDecodersAsync(CancellationToken.None)
-                                .ConfigureAwait(false);
+                            await _pipeline!.FinalizeDecodersAsync(ct).ConfigureAwait(false);
                         }
                         catch { }
                     }
