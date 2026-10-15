@@ -400,11 +400,13 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
 
         // (4) Every pass that ended played through to the clip's last frame. A late drop never
         // takes the newest frame, so this holds however the runner was scheduled.
-        var lastFrame = passes.Max(p => p.Max());
+        var clip = IntegrationTestHelper.GetCorpusExpectation("test-subsecond.mp4")!;
+        var frameInterval = TimeSpan.FromSeconds(1.0 / clip.Fps!.Value);
+        var lastFrame = frameInterval * (clip.ExpectedVideoFrames!.Value - 1);
         for (int i = 0; i < passes.Count - 1; i++)
         {
             Assert.True(
-                passes[i].Max() == lastFrame,
+                passes[i].Max() >= lastFrame - frameInterval / 2,
                 $"Pass {i} ended at {passes[i].Max().TotalMilliseconds:F0}ms, short of the clip's "
                     + $"last frame at {lastFrame.TotalMilliseconds:F0}ms."
             );

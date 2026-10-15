@@ -240,7 +240,8 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         var between = run.Sink.PresentedPts.Skip(from).Take(Math.Max(0, until - from)).ToArray();
         Assert.True(
             between.All(pts => pts < LastFrame - HalfFrame),
-            $"the item played on to its last frame before the transition: {string.Join(", ", between)}"
+            $"the item played on to its last frame before the transition: {between.Length} frames, "
+                + $"the furthest at {between.DefaultIfEmpty().Max()}"
         );
     }
 
