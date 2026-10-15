@@ -931,7 +931,20 @@ internal sealed class PlaylistSession : IPlaybackSession
             Retire(prepared);
             return new(PlaylistOutcome.Failed, Error: fault);
         }
-        prepared.Runtime.Attach();
+        // The shared clocks are seated where it was positioned before the promotion reports its
+        // outcome, so whatever reads the position from here reads the new item's. A runtime that
+        // cannot be attached is not used: its notifications are dropped again, it is released as
+        // one that faulted while prepared is, and the protocol opens the item instead.
+        try
+        {
+            await prepared.Runtime.AttachAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Volatile.Write(ref prepared.Generation, -1);
+            Retire(prepared);
+            return new(PlaylistOutcome.Failed, Error: ex);
+        }
         _runtime = prepared.Runtime;
         prepared.Cancellation.Dispose();
         LogPromoted(_logger, prepared.Item.ToString());

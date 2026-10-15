@@ -72,7 +72,7 @@ public sealed class HardwareFrameChoiceTests
     [Fact]
     public void ThePlayersOwnPath_OverASinkThatTakesGpuFrames_KeepsThem()
     {
-        var (graph, source) = SubstrateSession.VideoProbe(configurator: null, new Sink(FrameMemoryDomains.Any));
+        var (graph, source) = SubstrateMedia.VideoProbe(configurator: null, new Sink(FrameMemoryDomains.Any));
 
         Assert.Null(graph!.FrameDomainMismatchFor(source!, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly));
     }
@@ -80,7 +80,7 @@ public sealed class HardwareFrameChoiceTests
     [Fact]
     public void ThePlayersOwnPath_OverASinkThatSaysNothing_NamesTheSink()
     {
-        var (graph, source) = SubstrateSession.VideoProbe(configurator: null, new Sink(accepts: null));
+        var (graph, source) = SubstrateMedia.VideoProbe(configurator: null, new Sink(accepts: null));
 
         Assert.Equal(
             "video-sink",
@@ -90,7 +90,7 @@ public sealed class HardwareFrameChoiceTests
     [Fact]
     public void ThePlayersOwnPath_WithAnUndeclaredNode_NamesIt()
     {
-        var (graph, source) = SubstrateSession.VideoProbe(
+        var (graph, source) = SubstrateMedia.VideoProbe(
             chain => chain.Then(new OperatorNode<IVideoFrame, IVideoFrame>(
                 "tag", (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight)),
             new Sink(FrameMemoryDomains.Any));
@@ -142,7 +142,7 @@ public sealed class HardwareFrameChoiceTests
     [Fact]
     public void ThePlayersOwnPath_OverASinkThatReadsD3D_TakesD3D11AndD3D12Frames_AndRefusesCuda()
     {
-        var (graph, source) = SubstrateSession.VideoProbe(configurator: null, new Sink(ReadsD3D));
+        var (graph, source) = SubstrateMedia.VideoProbe(configurator: null, new Sink(ReadsD3D));
 
         Assert.Equal(
             FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12,

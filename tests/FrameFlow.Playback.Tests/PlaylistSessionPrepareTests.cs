@@ -83,6 +83,31 @@ public sealed class PlaylistSessionPrepareTests
     }
 
     [Fact]
+    public async Task APromotionWhoseAttachFails_ReleasesThePreparedRuntime_AndOpensTheItem()
+    {
+        // Once taken off the prepared slot, a runtime that cannot be attached is owned by nothing
+        // unless the promotion releases it.
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        var b = rig.PlaylistItem("b");
+        Assert.True((await rig.Session.PrepareAsync(b, CancellationToken.None)).IsSuccess);
+        await rig.SettleAsync();
+        rig.TakeLog();
+        rig.Fail("b", ItemOp.Attach, new InvalidOperationException("The clocks cannot be seated."));
+        var disposal = rig.Hold("b", ItemOp.Dispose);
+
+        rig.Coordinator.RequestJump(b);
+        await disposal.EnteredAsync();
+        disposal.Release();
+        await rig.SettleAsync();
+
+        var log = rig.TakeLog();
+        Assert.Contains("b#1.Attach", log);
+        Assert.Contains("b#1.Dispose", log);
+        Assert.Contains("b#2.Open", log);
+        Assert.Contains("b#2.Play", log);
+    }
+
+    [Fact]
     public async Task ALaterRequest_ReplacesThePreparedItem_AndTheEarlierRequestFails()
     {
         await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b", "c");

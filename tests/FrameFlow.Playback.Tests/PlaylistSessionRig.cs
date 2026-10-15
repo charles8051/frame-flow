@@ -463,7 +463,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                 _ => $"{op}({start}..{end})",
             };
 
-        public void Attach() => rig.Record($"{Name}.Attach");
+        public ValueTask AttachAsync() => rig.PerformAsync(this, ItemOp.Attach, "Attach", CancellationToken.None);
 
         public async ValueTask DisposeAsync()
         {
@@ -587,6 +587,7 @@ internal enum ItemOp
     Pause,
     Seek,
     Rewind,
+    Attach,
     Dispose,
 }
 
