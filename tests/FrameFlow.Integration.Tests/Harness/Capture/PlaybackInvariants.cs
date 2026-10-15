@@ -493,10 +493,9 @@ internal static class PlaybackInvariants
     // ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Asserts every frame the runtime delivered is byte-identical to the
-    /// reference decode's frame at the same PTS, and that no more than
-    /// <paramref name="maxFrameLossRatio"/> of the reference's frames went
-    /// missing.
+    /// Asserts every frame the runtime presented is byte-identical to the
+    /// reference decode's frame at the same PTS, and that every reference frame
+    /// it did not present is one it counted as dropped late.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -511,11 +510,30 @@ internal static class PlaybackInvariants
     /// it was written for.
     /// </para>
     /// <para>
-    /// So delivery and correctness are asserted apart. Every delivered frame
-    /// must match exactly, whatever the loss. The loss itself is a budget the
-    /// caller states: <c>0.0</c> for the corpus clips, which shed nothing and
-    /// must deliver everything, and a stated fraction for a clip chosen to
-    /// apply decode pressure.
+    /// So delivery and correctness are asserted apart. Every presented frame
+    /// must match exactly, whatever was dropped.
+    /// </para>
+    /// <para>
+    /// <b>Loss is accounted, not budgeted (#299).</b> A real-time run drops a
+    /// frame whenever the clock passes it before the pacer can present it, so
+    /// how many frames reach the sink depends on how the machine was
+    /// scheduled. A budget on that number, zero included, is a statement about
+    /// the runner. What does not depend on the runner is the account: each
+    /// reference frame was either presented or counted by the runtime as
+    /// dropped late, so the frames missing from the capture must equal
+    /// <paramref name="droppedLate"/> exactly. Load moves frames from one side
+    /// of that sum to the other and cannot change the total. A frame lost with
+    /// no count fails it, and so does a count with no frame behind it.
+    /// </para>
+    /// <para>
+    /// The newest frame is held to more than the count. A late drop discards a
+    /// frame because a newer one was due, so the last reference frame is never
+    /// one of them and must be presented.
+    /// </para>
+    /// <para>
+    /// The account has no term for packets shed before decode: a shed leaves
+    /// frames missing with nothing counted, and fails it. A caller whose source
+    /// can shed rules that out and says how, or accounts for the shed itself.
     /// </para>
     /// <para>
     /// <b>Byte-exact, not SSIM.</b> Both sides run the same decoder in
@@ -527,32 +545,22 @@ internal static class PlaybackInvariants
     /// </remarks>
     /// <param name="capture">Frames the playback runtime presented, in arrival order.</param>
     /// <param name="reference">Ground-truth decode of the same source.</param>
-    /// <param name="maxFrameLossRatio">
-    /// Fraction of the reference's frames the runtime may fail to deliver,
-    /// in [0, 1]. Defaults to 0: every frame must arrive. Raise it only for a
-    /// clip deliberately chosen to overload decode, and say in the test why
-    /// that clip's budget is what it is.
+    /// <param name="droppedLate">
+    /// Frames the runtime counted as dropped late over the run: its
+    /// <c>VideoFramesDroppedForSync</c>. Read it from the runtime rather than
+    /// stating it, since stating it is a budget again.
     /// </param>
     public static void VideoFramePixelsMatchReference(
         IReadOnlyList<VideoCapture> capture,
         IReadOnlyList<VideoCapture> reference,
-        double maxFrameLossRatio = 0.0
+        long droppedLate
     )
     {
         ArgumentNullException.ThrowIfNull(capture);
         ArgumentNullException.ThrowIfNull(reference);
-        // NaN fails every comparison, so it would slip past a bare range check
-        // and then make the budget assertion below vacuously true.
-        if (double.IsNaN(maxFrameLossRatio) || maxFrameLossRatio < 0.0 || maxFrameLossRatio > 1.0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxFrameLossRatio),
-                maxFrameLossRatio,
-                "Frame-loss budget must be a fraction in [0, 1]."
-            );
-        }
+        ArgumentOutOfRangeException.ThrowIfNegative(droppedLate);
 
-        if (capture.Count == 0 && reference.Count == 0)
+        if (capture.Count == 0 && reference.Count == 0 && droppedLate == 0)
             return;
 
         Assert.NotEmpty(reference);
@@ -560,10 +568,10 @@ internal static class PlaybackInvariants
         // Frames are matched by PTS and loss is counted by subtracting the two
         // list lengths. Both depend on the reference's timestamps being unique.
         // Without this check a duplicate would be silently overwritten in the
-        // lookup while still counting toward the reference total: with a budget
-        // it could certify a capture that omitted one of the colliding frames,
-        // and at the default zero budget it could reject a capture that
-        // delivered every distinguishable PTS.
+        // lookup while still counting toward the reference total, so the account
+        // below could certify a capture that omitted one of the colliding frames
+        // against a late drop, or reject one that delivered every distinguishable
+        // PTS.
         var referenceByPts = new Dictionary<TimeSpan, VideoCapture>(reference.Count);
         foreach (var r in reference)
         {
@@ -620,14 +628,30 @@ internal static class PlaybackInvariants
         }
 
         int missing = reference.Count - capture.Count;
-        double lossRatio = (double)missing / reference.Count;
 
         Assert.True(
-            lossRatio <= maxFrameLossRatio,
-            $"Video frame loss {lossRatio:P2} exceeds the budget {maxFrameLossRatio:P2}: "
-                + $"delivered {capture.Count} of {reference.Count} reference frames "
-                + $"({missing} missing). Every delivered frame matched, so this is the runtime "
-                + $"dropping pictures rather than corrupting them — check the shed counters."
+            missing >= droppedLate,
+            $"The runtime counted {droppedLate} frames dropped late, but only {missing} of "
+                + $"{reference.Count} reference frames are missing from the {capture.Count} it "
+                + $"presented. The count and the capture disagree: a frame counted as dropped also "
+                + $"reached the sink, or the count is wrong."
+        );
+
+        Assert.True(
+            missing == droppedLate,
+            $"{missing - droppedLate} of {reference.Count} reference frames went missing with no "
+                + $"count recording them: {capture.Count} presented, {droppedLate} counted as "
+                + $"dropped late, {missing} missing. Every presented frame matched, so the runtime "
+                + $"lost pictures rather than corrupting them, and it lost them somewhere other "
+                + $"than the pacer's late drop."
+        );
+
+        var newest = reference.MaxBy(r => r.Pts)!;
+        Assert.True(
+            seen.Contains(newest.Pts),
+            $"The last reference frame, PTS {newest.Pts.TotalSeconds:F4}s, was not presented. A "
+                + $"late drop discards a frame because a newer one was due, so the newest frame "
+                + $"of all is never one of the {droppedLate} counted as dropped late."
         );
     }
 

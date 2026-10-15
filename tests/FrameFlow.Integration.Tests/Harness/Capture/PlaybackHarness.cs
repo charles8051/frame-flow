@@ -211,7 +211,9 @@ internal static class OpenAlPlaybackHarness
                 Video: videoSink.Captures,
                 FinalState: controller.State,
                 LoadResult: loadResult,
-                PlayResult: playResult
+                PlayResult: playResult,
+                // Read before the finally block disposes the controller, as PlaybackHarness does.
+                Diagnostics: controller.GetDiagnostics()
             );
         }
         finally
@@ -291,7 +293,8 @@ internal static class OpenAlPlaybackHarness
 /// What <see cref="OpenAlPlaybackHarness.PlayCorpusFileAsync"/> hands back. The
 /// device is included so a test can assert over the call log as well as the PCM,
 /// and the sink so a test can compare its reported counters against what the
-/// device actually did — the comparison #140 is about.
+/// device actually did — the comparison #140 is about. The diagnostics carry the
+/// frames the pacer dropped late, which the video comparison accounts for.
 /// </summary>
 internal sealed record OpenAlPlaybackResult(
     FakeOpenAlDevice Device,
@@ -301,7 +304,8 @@ internal sealed record OpenAlPlaybackResult(
     IReadOnlyList<VideoCapture> Video,
     PlaybackState FinalState,
     Result LoadResult,
-    Result PlayResult
+    Result PlayResult,
+    PlaybackDiagnosticsSnapshot Diagnostics
 );
 
 /// <summary>
