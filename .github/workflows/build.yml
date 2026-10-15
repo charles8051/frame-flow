@@ -274,12 +274,18 @@ jobs:
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
 
-      # The Release legs have no corpus, so every test that opens a media file
-      # skips there. The Debug leg needs one: the use counters' own tests open a
-      # file. --allow-unavailable because the pinned FFmpeg is an LGPL build with
-      # no libx264, which two fixtures need; the tests that use them skip.
+      # Every test that opens a media file skips without the corpus, so every leg
+      # generates it: the Release legs for the corpus tests in each project, the
+      # Debug leg because the use counters' own tests open a file (#737).
+      # --allow-unavailable because the pinned FFmpeg is an LGPL build with no
+      # libx264, which two fixtures need; the tests that use them skip.
+      #
+      # Not on macOS, which only a dispatch reaches. The osx-arm64 pin carries the
+      # libraries and no ffmpeg tool, and no Homebrew ffmpeg has every encoder the
+      # fixtures name (see ffmpeg-macos.yml), so the corpus tests skip there as
+      # they always have.
       - name: Generate test corpus
-        if: matrix.configuration == 'Debug'
+        if: runner.os != 'macOS'
         run: dotnet run scripts/generate-test-corpus.cs -- --allow-unavailable
 
       # The Debug leg builds the whole solution too, so code that compiles only
@@ -296,6 +302,39 @@ jobs:
       - name: Test
         if: matrix.configuration == 'Release'
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      # The corpus tests skip without FFmpeg or the corpus, so a leg that lost
+      # either would stay green having run none of them. This fails it unless a
+      # corpus test class passed in full in each project that holds most of them.
+      # They need only the corpus and FFmpeg, no GPU or audio device, so they run
+      # on every leg that generates the corpus.
+      #
+      # PowerShell, because it reads the TRX on all three hosts: the SDK
+      # container ships it, and the self-hosted Windows box need not have bash.
+      - name: Check the corpus tests ran
+        if: matrix.configuration == 'Release' && runner.os != 'macOS'
+        shell: pwsh
+        run: |
+          $failed = $false
+          $checks = @(
+            @{ Project = 'Decoding'; Class = 'DemuxSessionIntegrationTests'; Count = 24 },
+            @{ Project = 'Player'; Class = 'MediaPassIntegrationTests'; Count = 14 },
+            @{ Project = 'Integration'; Class = 'VideoFormatAnnouncementTests'; Count = 3 }
+          )
+          foreach ($check in $checks) {
+            $trx = "tests/FrameFlow.$($check.Project).Tests/TestResults/test-${{ matrix.os }}.trx"
+            $prefix = "FrameFlow.$($check.Project).Tests.$($check.Class)."
+            $passed = 0
+            if (Test-Path $trx) {
+              $passed = @(([xml](Get-Content -Raw $trx)).TestRun.Results.UnitTestResult |
+                Where-Object { $_.testName.StartsWith($prefix) -and $_.outcome -eq 'Passed' }).Count
+            }
+            if ($passed -lt $check.Count) {
+              "::error::$($check.Class) passed $passed of its $($check.Count) tests: the corpus tests did not run."
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
       # The Debug leg's reason to exist (#726). DemuxSession, AudioDecoder and
       # DecodingPipeline take no lock around their native calls; their owner
