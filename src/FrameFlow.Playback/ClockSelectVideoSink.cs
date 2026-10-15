@@ -1616,7 +1616,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     // Parks the loop until the pacer is disposed, once delivery has stopped for good. The frames
     // in the ring stay there, and the teardown in the loop's finally releases them; a producer
-    // blocked on a full ring is released by the session's cancellation or by that teardown.
+    // blocked on a full ring is released by the run's cancellation or by that teardown.
     private async Task HaltAsync(CancellationToken ct)
     {
         try

@@ -6,6 +6,12 @@ Accepted (2026-09-16). Proposed 2026-09-14; numbered and accepted once the imple
 Revised the same day after an independent review; *Revision history* says what changed. **All four
 steps of the migration are implemented** (decision 8, *As implemented*).
 
+> **Amended 2026-10-14.** *Not settled here* leaves "`SubstrateSession`'s reposition recipe as a
+> protocol" to a separate change. [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md)
+> decision 2 is that change: the recipe is the transitions of a pure core in this record's shape,
+> `ItemRuntimeProtocol` (#722), and `SubstrateSession` is its shell (#740). `PlaylistSessionProtocol`
+> is unchanged and still sees a runtime that reports Ok, Cancelled or Failed.
+
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
 - makes the queue an immutable value with pure operations;

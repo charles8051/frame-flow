@@ -256,10 +256,10 @@ land.
   it, and `PaceUntil` goes. The registry is deferred, with the condition that would revive it.
 - [An immutable blueprint for the graph](immutable-graph-blueprint.md) — `Graph` is a description
   and a runner in one type, so the topology is assembled by side effect, validated only inside
-  `RunAsync`, and re-run by resetting mutable port state. `_resets`, `BeforeEachRun` and
-  `SubstrateSession`'s `GraphPolicy` are three answers to one question. Proposes a `GraphBlueprint`
-  value validated at construction, a separate `GraphInstance` owning the channels and the pumps,
-  and node specs as factories, which is the layer [ADR-0078](ADR-0078-graph-chain-forks-joins-and-termination.md)
+  `RunAsync`, and re-run by resetting mutable port state. `_resets`, `BeforeEachRun` and the
+  item runtime's graph policy (`Reuse` or `Rebuild`) are three answers to one question. Proposes a
+  `GraphBlueprint` value validated at construction, a separate `GraphInstance` owning the channels
+  and the pumps, and node specs as factories, which is the layer [ADR-0078](ADR-0078-graph-chain-forks-joins-and-termination.md)
   named as missing when it rejected reusable blueprints. The costs are the typed `Connect`'s
   compile-time proof and a break across 80 construction sites. `FrameFlow.Graph` has shipped
   nothing, so that break is free until it does.
@@ -502,7 +502,7 @@ ADR-0085 was numbered and accepted on 2026-10-13, and implemented under #691.
   under the player view's own claim; and an in-box `FanOutVideoSink` that passes the claim to the
   views it feeds (#611).
 
-ADR-0086 was numbered and accepted on 2026-10-14; its implementation is tracked in #718.
+ADR-0086 was numbered and accepted on 2026-10-14, and implemented under #718.
 
 - [Work in flight is held until it ends: one owner, one disposal](ADR-0086-work-in-flight-held-until-it-ends.md)
   — the pure cores decide what happens, but the layer that owns work in flight has no core, and

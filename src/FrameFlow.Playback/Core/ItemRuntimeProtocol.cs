@@ -40,8 +40,8 @@ namespace FrameFlow.Playback.Core;
 /// on the destination frame; one that ends before its settle releases the hold its run took on that
 /// frame. One on an item that is paused, or has not played, holds, and leaves the
 /// launch to the next play. A seek and a play build a fresh graph; a rewind runs the last one again
-/// once one is built. Every path cancels a run that is still running and waits for its work, so
-/// what <c>SubstrateSession</c> chose between with <c>TaskPolicy</c> is one rule here.
+/// once one is built. Every path cancels a run that is still running and waits for its work: one
+/// rule, where the runtime used to choose between cancelling a run and waiting for it to end.
 /// </para>
 /// <para>
 /// <b>Superseding commands coalesce.</b> A command waiting for work, a stop or a first frame, is

@@ -2,9 +2,12 @@
 
 ## Status
 
-**Accepted (2026-10-14)**, implementation tracked in #718. Not implemented yet. Proposed on
-2026-10-14 in #712 and revised by review there; [Revision history](#revision-history) lists what
-changed.
+**Accepted (2026-10-14) and implemented (2026-10-14)** under #718: staging slice 1 in #721, slice 2
+in #732, slice 3 in #722, slice 4 in #740, slice 5 in #733 (the owners in Player and Playback) and
+#727 (the views and OpenAL), and slice 6 in #741. #735 added the Debug CI leg that runs decision
+3.5's use counters. [Implementation](#implementation) lists what shipped, what differs from the
+decisions, and what is left. Proposed on 2026-10-14 in #712 and revised by review there;
+[Revision history](#revision-history) lists what changed.
 
 Motivating issues: #707 (a cancelled seek forgets the session's pump and graph tasks while they
 still run), #708 (a second player dispose returns before the first has finished), #696 (a pass
@@ -344,6 +347,177 @@ Each slice carries its own BREAKING-CHANGES entry where an app can see a change.
 6. **Docs.** Amendment notes at the top of ADR-0013, ADR-0026 and ADR-0044, and a note on ADR-0056's
    rationale.
 
+## Implementation
+
+| Slice | Change | BREAKING-CHANGES | Shipped in |
+| ----- | ------ | ---------------- | ---------- |
+| 1 | `WorkScope` (decision 1), `DisposeOnce` (decision 3.1) and `SlowWorkWarning` (decision 3.3), internal in `FrameFlow.Media`, with the pure `WorkLedger`; the controller and the player on `DisposeOnce` (#708); `ClockSelectVideoSink`, `OpenAlAudioSink`, the interop view, `PlaylistSession` and its prepared runtimes on it too | 27 | #721 |
+| 2 | Decision 4: an `AVIOInterruptCB` on every source, through which each demuxer call observes the token of its own operation (#709); decision 3.5's Debug use counters on `DemuxSession`, `AudioDecoder` and `DecodingPipeline` | 29 | #732 |
+| 3 | Decision 2: `ItemRuntimeProtocol` in `FrameFlow.Playback.Core`, tested by a walk over every reachable state of five item shapes; not wired | none | #722 |
+| 4 | Decisions 1, 2, 5 and 6: `SubstrateSession` as the core's shell, with a `WorkScope` per run; `IItemMedia` and `SubstrateMedia`, the seam the rig drives; `RunTasks<T>` and the empty-graph `Task.Run` removed; an open that fails late frees what it allocated (#725) | 31 | #740 |
+| 5a | `MediaPass` on a scope and `DisposeOnce`, its first fault cancelling the other side (#713); `WorkerBinding` without its abandon; the pacer's delivery loop held by a scope; the controller's dispatch loop and seek runners on scopes, its dispose cancelling the open or play the loop waits on (#719); the player throwing what its controller's dispose threw | 30 | #733 |
+| 5b | The interop view's live-path converter disposals through `PresenterTeardownReaper`; `PresenterStallWatchdog` joined to its timer through a new `DisposeAsync`; `OpenAlAudioSink`'s shutdown source never disposed (#723) | 28 | #727 |
+| 6 | Amendment notes on ADR-0013, ADR-0026, ADR-0044, ADR-0056, ADR-0062, ADR-0076 and ADR-0081; notes on ADR-0048, ADR-0084 and the graph blueprint draft, which name what slice 4 removed; the comments that still described it; this section | | #741 |
+
+Three local fixes landed first, each closing the issues named with it:
+
+- #710, for #696. A pass's dispose cancels its run and waits for it before it frees the pipeline,
+  the decoders and the demux session, and releases its claims last (BREAKING-CHANGES entry 24).
+  Slice 5a put the pass on a scope and `DisposeOnce`; its pure `PassLifecycle` stays.
+- #711, for #703. A video sink that throws costs its frame, the failures are reported at most once
+  every five seconds, and more than eight in a row fault the item (entry 25). It is decision 5's
+  instance for sink failures, and it stays as it is.
+- #715, for #707 and #714. It held the pump, the graph and the lateness-recovery walk in a pure
+  `RunTasks<T>` until each ended, made a cut-short wait throw rather than forget them, moved the
+  end-of-stream flush onto the run's token, and made a play after a cut-short seek reposition first
+  (entry 26). That is the alternative "Join the tasks and stop there", and it did more than the
+  alternative says: the run number no longer advanced on an interrupted stop, and a second warm-up
+  no longer started a graph beside a live one. What it left was decision 2's: the reposition paths
+  still undecided, the empty-graph end of stream still a fire-and-forget, and the differences the
+  core's walk found (below). Slice 4 subsumed it and removed `RunTasks<T>`. #715's nine real-media
+  tests stay.
+
+What differs from the decisions, slice by slice. None reverses one. Neutral says the public API does
+not change; it gained one member, the last item under the other owners.
+
+**The primitives (slice 1, #721).**
+
+- Besides a cancellation the stop caused, one that the work's own token asked for is not a fault
+  either. `StopAsync` returns each fault once, named, from the first stop that completes after it.
+- `DisposeOnce` has two forms: a direct one, which keeps the analyzer checking what an owner's
+  teardown disposes, and `RunAsync`, for a teardown that may throw before it returns its task.
+- The sinks' disposal contract, ADR-0044's no-op second dispose, was amended in this slice rather
+  than in slice 6, because `OpenAlAudioSink`'s second dispose could now throw the first's exception.
+- `PlaylistSession` and its prepared runtimes moved too, though slice 1 does not name them. Their
+  second dispose already waited for the first, but it used to succeed after a first that had thrown;
+  it now ends as the first did.
+- MotionClip's `ClipEncoderSink` and `MotionClipRecorder` keep their Interlocked guard: MotionClip is
+  an application and cannot see `FrameFlow.Media`'s internals (#720).
+
+**Native waits (slice 2, #732).**
+
+- No owner sets the current token. Each demuxer operation installs the token it was given and
+  restores the one before when it ends, so a seek after a cancelled run observes its own token, not
+  the run's.
+- The end-of-stream flush was already on the run's token, from #715.
+- In a Debug build, a dispose with a use in flight throws `InvalidOperationException` and frees
+  nothing, rather than asserting, which would end the test host.
+- A read given up partway drops the part that arrived. The demuxer's position is then unreliable, so
+  the session refuses reads until a seek completes, and a seek that does not complete leaves the same
+  refusal. A cancelled open returns no session probed partway.
+- The next operation clears the error and the end-of-file mark that an interrupt leaves on the
+  format context's I/O. Nested readers, such as HLS and DASH segments and `mov` external references,
+  keep theirs, as the remarks say.
+- An `AVERROR_EXIT` that nothing cancelled is a fault that names it, not a fallback to the
+  container's seek.
+
+**The core (slice 3, #722).**
+
+- The phase is two fields, not decision 2's single list: the phase (New, Opening, Open, Disposing,
+  Disposed) and, while open, the run status (Idle, Running, Stopping, Stopped). Warm is a run going
+  behind shut gates before the first play. There is no Faulted: a fault is reported, and the item's
+  owner decides.
+- The core recorded 19 places where its rule differs from `SubstrateSession` after #715. Slice 4
+  shipped each of them:
+  - *Stopping.* Every stop cancels a running run and waits for its work, so the `TaskPolicy` paths
+    are one rule. A seek and a play rebuild the graph, and a rewind runs it again once one is built.
+    The core raises each end of stream and each fault once, from the work's completion; the
+    empty-graph end of stream only for a run that has not been stopped. A warm-up whose run has
+    ended with no first frame starts no new run.
+  - *Commands cut short.* A caller's cancellation is observed at the end of each awaited action. A
+    command cut short leaves the runtime at rest: playing, held behind the gates with its clocks, or
+    with its run stopped, and the next play or warm-up repositions at the clock first. A reposition
+    does not clear the floor when it starts, arms the settle hold only for its own relaunch, and
+    releases the hold when that relaunch ends first.
+  - *The audio comes first.* A resume resumes the audio sink before it runs the clocks and opens the
+    gates, and a reposition pauses the sink before it shuts them. A resume activates a sink that a
+    failed reposition left inactive. A first play starts its run before its clocks.
+  - *Refusals.* A disposing runtime refuses every command, a second open is refused, the core
+    serialises commands, and a runtime prepared ahead refuses a play and a pause until it is
+    attached.
+  - *The teardown* frees the audio decoder before the video decoder, in reverse allocation order,
+    and deactivates the sink of a detached runtime that activated it, which nothing reaches.
+
+  The slice 3 audit reversed none of them. It listed what slice 4's shell had to add, and asked that
+  slice 4's BREAKING-CHANGES entry carry the ones an app can see. Entry 31 does.
+
+**The runtime (slice 4, #740).** Twelve more, from the shell. The behaviour audit found each one
+acceptable.
+
+- The #713 cancel is in the shell. When it performs the core's report of a pump's or a graph's
+  fault, it cancels that run's scope first, so a pump parked on a full queue ends, and a pump's
+  fault cancels the graph the same way. In the core, the cancel would break walk invariants that
+  hold today.
+- A command's clock inputs are read when the reader steps the command, not on the caller's thread.
+  A command whose token is already cancelled when it is called does nothing.
+- An attach is queued with the commands, as `AttachAsync`, which completes once the shared clocks are
+  seated. A promotion whose attach fails releases the prepared runtime, and the item is opened
+  instead.
+- A warm-up whose run faults before its first frame completes Ok, and the fault is reported once, as
+  it was before #740.
+- A failure in the decoders' end-of-stream flush, which was swallowed, faults the pump.
+- An immediate action that throws, such as a call to an app's clock, is logged and fails the item,
+  not the command.
+- The dispose throws what a stop's cancellation callbacks threw, as `MediaPass` does. A failure to
+  free the provisional wallclock, once the audio sink masters the clock, is logged, not thrown.
+- Run numbers can skip a value that no run launched with, when a reposition is cut short after its
+  stop. An end of stream still carries its own run's number.
+- The audio sink's activate, pause, resume and deactivate are called on pool threads.
+- `VideoFrameBudget` and `VideoProbe` moved to `SubstrateMedia` with the video path they wire.
+  ADR-0081 carries a note.
+
+**The other owners (slices 5a and 5b, #733 and #727).**
+
+- A pass's run starts on its scope's thread-pool task, so its audio sink's `ActivateAsync` and the
+  configurators are called there (entry 30).
+- Decision 3.4 also covers a pass's frees and the pacer's loop teardown, which both swallowed what
+  they threw.
+- `IStateBoundWorker.StopAsync` gets `CancellationToken.None`, not a token cancelled after the
+  shutdown timeout. `WorkerBinding.StartAsync` completes once the worker's start has returned its
+  loop, as it did before the scope moved the start onto the thread pool.
+- #723 is fixed by never disposing `OpenAlAudioSink`'s shutdown source, as `WorkScope` never
+  disposes its own.
+- A converter retired on the interop view's live path has no caller whose wait could be bounded.
+  The reaper holds it until the compositor lets it go, and names one that has waited five seconds,
+  once.
+- Owners left as they were, each with its reason in its pull request: `PlaylistSession`'s reader,
+  its preparation of a runtime and its release of a faulted one (each joined another way), the
+  inline scheduler, the interop view's logging task and interop initialisation, `SdlCommandQueue`,
+  `TransportCommand.FireAndForget`, and the synchronous, UI-thread disposes of `FrameFlowPlayerView`
+  and `FrameFlowVideoView`.
+- `PresenterStallWatchdog` implements `IAsyncDisposable`. Its `DisposeAsync` is public, an addition
+  to `FrameFlow.Media`'s API.
+
+**The Debug CI leg (#735).** Decision 3.5's use counters exist only in Debug builds, and every CI leg
+built Release (#726). Build and Test now has a `test (linux, Debug)` leg on a hosted runner. It
+generates the test corpus, builds the solution in Debug, runs the Decoding, Playback, Player and
+Media tests, and fails unless the three use-counter tests passed. Its first run found a racy count in
+one of #715's tests, which #735 fixed. It also showed that no Release leg generates the corpus, so no
+corpus-gated test runs in Release CI (#737).
+
+**Checked on a real device.** Before #740 merged, its branch and `main` were played on a headset:
+play, pause, resume, seeks, an item's end, and nine hand-offs to items prepared ahead. The two
+matched, including the PRESENT GAP warning after a resume that `main` already shows (#680) and one
+underrun at the end of each item.
+
+**What a scrub costs.** Negative says the runtime slice measures it. Over 12 bursts of 15 superseding
+seeks on a 1080p60 file, timed from the last seek's acceptance to the seek having settled, the median
+with hardware decode was 495 to 522 ms both before and after #740. With software decode it was 941
+to 1129 ms before and 740 to 806 ms after.
+
+What is left:
+
+- #739: an item with no audio, sought while paused after it reached its end, plays from the target
+  at decode rate when it resumes, because its wallclock ran on while it was paused. `main` did the
+  same before #740. The fix belongs in the core, which decides when the clocks run.
+- #728: a pass whose graph completes while the demux pump waits on a full decoder queue does not
+  end. It is #713's shape, reached through a completion instead of a fault; no in-box node reaches
+  it.
+- #729: `PresenterStallWatchdog` can run two checks at once, so a slow `Stalled` handler sees the
+  stall raised again.
+- #720: MotionClip's encoder sink and recorder still return at once on a second dispose.
+- #737: no Release leg generates the test corpus.
+
 ## Consequences
 
 ### Positive
@@ -474,3 +648,6 @@ None remain. The draft's three were settled on acceptance:
   made, join the motivating issues. The three open questions are settled: the scope and the disposal
   helper are internal in `FrameFlow.Media`, Debug use counters suffice, and the interop view's
   bounded drain conforms to decision 3.3.
+- **2026-10-14, on implementation.** Status names the pull requests, and
+  [Implementation](#implementation) lists what shipped, what differs and what is left. The
+  decisions are unchanged.

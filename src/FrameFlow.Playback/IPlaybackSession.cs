@@ -136,11 +136,11 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// driven by natural end-of-stream: when the controller fires this, the graph and demux
     /// pump have already run dry and completed cleanly, so there is nothing in flight to
     /// cancel. The full seek path, by contrast, is built for a seek that can land at any time
-    /// during active playback: it cancels the session CTS to stop a running graph mid-flight
+    /// during active playback: it cancels the run's work to stop a running graph mid-flight
     /// (the cancel-mid-GPU-op implicated in the native seek-cancel wedge), tears the graph
     /// down, then rebuilds a brand-new graph topology on restart. The rewind keeps the
     /// long-lived graph object and merely re-runs it after repositioning the demuxer and
-    /// resetting the decoders — skipping the CTS-cancel of in-flight work and the graph
+    /// resetting the decoders — with no in-flight work to cancel and no graph
     /// teardown/rebuild, which is the recurring per-loop CPU/GPU spike on a 24/7 attract loop.
     /// </para>
     /// <para>

@@ -11,6 +11,14 @@
 - `docs/DEFERRED_WORK.md` → "Seek-discipline audit" — the exploration entry this ADR resolves
 - Commits: `1a45f83` (avformat_flush), `1e19ca2` + `35323ad` (OpenAL master-clock), `d03e4b0` (DiscardPendingPacket), `6fe6af6` (logger plumbing)
 
+> **Amended 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 2 makes
+> the discipline below the transitions of a pure core, `ItemRuntimeProtocol` (#722), which
+> `SubstrateSession` runs as its shell (#740). `_sessionCts`, `_pumpTask`, `StartSessionTasks`,
+> `_eofFired` and `_renderersActivated` are gone: each run's work is held by a `WorkScope` of its
+> own, and the core waits for all of it, the lateness-recovery walk included, before the demuxer
+> seeks or the decoders reset. The steps keep their order, except that the audio pauses before the
+> gates close.
+
 ## Context
 
 `FrameFlow.Playback.Next.SubstrateSession` runs a single long-lived
