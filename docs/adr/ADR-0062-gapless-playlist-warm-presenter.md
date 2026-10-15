@@ -9,6 +9,14 @@ Accepted — core implemented on `feat/gapless-playlist-impl` (see Implementatio
 below). Preroll (`PlaylistPrerollMode.NextItem`) and the presenter-side
 format-change reconfigure remain follow-ups.
 
+> **Amended 2026-10-14.** Alternative F, extracting a `SourceRuntime` from `SubstrateSession`, was
+> deferred. [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) did part of it.
+> `SubstrateSession` is the shell of a pure core, `ItemRuntimeProtocol` (decision 2, #722), and the
+> demux session, the decoders, the pipeline, the graph and the pacer it ran over moved into
+> `SubstrateMedia`, behind the internal `IItemMedia` (#740). `PlaylistSession` still composes one
+> `SubstrateSession` per item, as option A does, and that runtime keeps the clocks, the audio sink
+> and the sequencing.
+
 **Date:** 2026-06-06
 **Related:**
 - ADR-0044 (sink ownership and disposal — the session/controller are *users* of sinks, never owners; the structural enabler for this whole design)

@@ -8,6 +8,12 @@ Revised 2026-09-29: prior art from ComfyUI's executor added to Context; decision
 duplicate node ids; decision 4 says what a factory may close over; two open questions added, on
 where a node's declarations live and on composite specs.
 
+> **Note 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) put the item
+> runtime on a pure core (#740). `SubstrateSession`'s `GraphPolicy` is now `ItemGraphPolicy`: the
+> core, `ItemRuntimeProtocol`, chooses `Rebuild` or `Reuse` for each run it starts, and
+> `SubstrateMedia.BeginRun` applies it. `StopGraphAsync` is gone; the core's stop cancels the run and
+> waits for all of its work before the next run starts. The argument below is unchanged.
+
 This record proposes splitting `FrameFlow.Graph.Graph` into a description that is a value and an
 instance that runs. The description would be immutable, validated at construction, and
 instantiable more than once; the instance would own the channels, the pumps, and the cancellation.

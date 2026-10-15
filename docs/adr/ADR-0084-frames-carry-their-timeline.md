@@ -10,6 +10,12 @@ ids identify a timeline but carry no order, and order comes from presentation. A
 implementation: decision 5's table names the join's action on a secondary's new timeline.
 [Revision history](#revision-history) lists what changed.
 
+> **Amended 2026-10-14.** `SubstrateSession.RepositionAsync` and `LaunchSessionTasks`, which this
+> record names, are gone: [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) put the item
+> runtime on a pure core (#740). A run's id is now minted in `SubstrateMedia.BeginRun`, which the
+> runtime performs only when its core starts a run, so still after the previous run's work has
+> ended and after the reset that follows a reposition. The decisions are unchanged.
+
 Motivating issues: #621 (`PresentedResults` has no item boundary), #641 (LiveCaptioning shows
 captions for audio from before a seek or loop) and #624 (a PRESENT GAP warning when a new item
 starts after `Ended`). It would also replace the inference rules that #620 and #619 added to the

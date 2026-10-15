@@ -9,6 +9,17 @@ a playback state.
 **Supersedes:** None (extends ADR-0022, ADR-0023)
 **Related:** ADR-0009 (threading and concurrency), ADR-0013 (cancellation token propagation), ADR-0020 (lifecycle decoupled from processing), ADR-0022 (long-lived workers with pause gate), ADR-0023 (hierarchical state machine with channel dispatch), ADR-0024 (playback controller as public API surface), ADR-0036 (decode/playback decoupling — lifts decode workers out of this ADR's scope)
 
+> **Amended 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 3
+> amends three things below, and #733 made the change. `WorkerBinding` no longer abandons a worker
+> that has not stopped in time: a stop cancels the worker's loop, calls its `StopAsync` with
+> `CancellationToken.None`, and waits for the loop with no bound before it disposes the worker,
+> logging once after five seconds that the worker has not ended. The shutdown timeout is gone from
+> the binding and from `BindWorker`. The compare-and-swap that returned a second stop at once is
+> replaced by a joined stop: a stop made while another is under way waits for it and ends as it did,
+> and a start is refused until the stop has ended. The seek in *6. Seek responsiveness improvement*
+> is no longer started and forgotten: the controller runs each seek on a scope that its dispose
+> stops and waits for, and a later seek cancels the one before.
+
 ## Context
 
 ### Manual worker lifecycle management in PlaybackController

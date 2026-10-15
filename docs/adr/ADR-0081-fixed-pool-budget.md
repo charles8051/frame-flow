@@ -9,6 +9,12 @@ same day; see [Revision history](#revision-history).
 > that predicted a drop. The decisions are unchanged: the guard now replaces a fatal error with
 > back-pressure.
 
+> **Amended 2026-10-14.** `VideoFrameBudget` and `VideoProbe`, which *Negative* and *The player's
+> probe* below place on `SubstrateSession`, are on `SubstrateMedia`. They moved with the video path
+> they wire when [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) put the item runtime on
+> its core and split out what it opens (#740). The budget is still computed on the player's video
+> path before the decoder opens; the decision holds.
+
 **Date:** 2026-09-24
 
 **Depends on:** [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md), for same-instance

@@ -217,7 +217,8 @@ public sealed class ItemRuntimeProtocolTests
     [Fact]
     public void ARewindAtTheEnd_FindsTheRunEnded_SeeksWithoutWaiting_AndRunsTheGraphAgain()
     {
-        // What SubstrateSession calls AwaitClean: the run ended by itself, so nothing is waited for.
+        // The runtime's AwaitClean path before ADR-0086: the run ended by itself, so nothing is
+        // waited for.
         var t = ItemRuntimeTranscript.Playing();
         t.Ends(ItemWork.Pump, ItemWorkEnding.Completed);
         t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
@@ -421,8 +422,8 @@ public sealed class ItemRuntimeProtocolTests
     [Fact]
     public void APlayAfterASeekCutShortWhilePlaying_RepositionsAndPlaysOn_ThenResumes()
     {
-        // As SubstrateSession does after #715: the reposition relaunches, and the resume finds the
-        // run going.
+        // As the runtime did after #715: the reposition relaunches, and the resume finds the run
+        // going.
         var t = ItemRuntimeTranscript.Playing();
         var seek = t.Seek(At3);
         t.Ok();
@@ -1250,7 +1251,7 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Equal(pausing, u.State);
     }
 
-    // ── Behaviour that differs from SubstrateSession ────────────────────────
+    // ── Behaviour that differs from the runtime before ADR-0086 ─────────────
 
     [Fact]
     public void AResumeWhoseAudioSinkWasLeftInactive_ActivatesIt()

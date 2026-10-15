@@ -4,6 +4,16 @@
 
 Accepted
 
+> **Amended 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 3
+> supersedes *Bounded disposal timeout* below, and the rejection of *Unbounded disposal wait*. A
+> dispose cancels its work and waits for it with no bound, and frees nothing until that work has
+> ended: "disposal completes anyway" and "dispose native resources regardless" turned a hung call
+> into a use after free. A caller that cannot wait bounds its own await
+> (`DisposeAsync().AsTask().WaitAsync(timeout)`), and the owner keeps the work's resources until the
+> work ends, logging once after five seconds which work has not. The hung native call that motivated
+> the bound is answered by decision 4: every source is opened with an interrupt callback, so a
+> demuxer call waiting on a stalled source gives up once its operation's token is cancelled (#732).
+
 ## Context
 
 All async public APIs in FrameFlow accept `CancellationToken`: `IPlaybackSession`, `IDemuxSession`, `IVideoDecoder`, `IAudioDecoder`, `IAudioSink`, and `IVideoFramePresenter`.

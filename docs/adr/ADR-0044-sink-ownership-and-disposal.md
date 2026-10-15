@@ -48,6 +48,15 @@ lands without migration shims.
 > what the views and the player view construct: a view keeps the sink it made, and the player view
 > the surface it made, until each is disposed (decisions 2 and 7).
 
+> **Amended 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 3
+> amends *Sink contract: idempotent disposal*: a second `DisposeAsync` is not a no-op that returns
+> before the first has finished. Only the first call tears down, and a later call touches no
+> resource, but it may wait for the first and end as it did, so it throws only when the first threw.
+> For an owner of work in flight, the player, the controller, the pass, the pacer, `OpenAlAudioSink`
+> and the interop view among them, every other call, concurrent or later, waits for the first and
+> sees its outcome (#721, #733). `IAudioSink` and `IVideoSink` state the sink's form of it; a sink
+> whose second call returns at once still meets it.
+
 **Date:** 2026-05-13
 **Supersedes:** Implicit ownership conventions established by
 ADR-0005 (native resource ownership) for the sink case; no other

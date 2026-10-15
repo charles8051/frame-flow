@@ -5,6 +5,14 @@
 **Supersedes:** None
 **Related:** ADR-0048 (seek-discipline audit — this mechanises it), ADR-0055 (decode protocol as a pure Mealy core — this fulfils its `SeekTransition` follow-up), ADR-0009 (threading and concurrency)
 
+> **Amended 2026-10-14.** The reason *A pure `SeekPlan` value* gives for its rejection, that seek
+> invalidation "has no input-dependent decision", no longer holds.
+> [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 2 found one: whether the run's
+> work has ended, and so whether the demuxer may seek and the decoders reset yet. The item runtime's
+> pure core, `ItemRuntimeProtocol` (#722, wired in #740), decides it, and asks for the reset only
+> from a state in which no work of any run is pending. `ISeekResettable` and the registered list
+> stay: the core decides when the reset runs, and the list is what it runs.
+
 ## Context
 
 A seek is a timeline discontinuity: every session-lifetime component holding state tied to the *pre-seek* position must invalidate it before post-seek packets flow. ADR-0048 audited **every** such participant and its reset hook, and documented the four production bugs that came from a *partial* invalidation — each was "`SubstrateSession.SeekAsync`'s reset-everything was missing a step."
