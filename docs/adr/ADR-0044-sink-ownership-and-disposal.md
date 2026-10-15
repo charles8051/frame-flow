@@ -49,13 +49,14 @@ lands without migration shims.
 > the surface it made, until each is disposed (decisions 2 and 7).
 
 > **Amended 2026-10-14.** [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 3
-> amends *Sink contract: idempotent disposal*: a second `DisposeAsync` is not a no-op that returns
-> before the first has finished. Only the first call tears down, and a later call touches no
-> resource, but it may wait for the first and end as it did, so it throws only when the first threw.
-> For an owner of work in flight, the player, the controller, the pass, the pacer, `OpenAlAudioSink`
-> and the interop view among them, every other call, concurrent or later, waits for the first and
-> sees its outcome (#721, #733). `IAudioSink` and `IVideoSink` state the sink's form of it; a sink
-> whose second call returns at once still meets it.
+> amends *Sink contract: idempotent disposal*: a later `DisposeAsync` is no longer required to be a
+> no-op that never throws. The contract `IAudioSink` and `IVideoSink` state is now that only the
+> first call tears down, a later call touches no resource, and a later call either returns at once
+> or waits for the first and ends as it did, so it throws only when the first threw. An owner of
+> work in flight takes the second form: every other call, concurrent or later, waits for the first
+> and sees its outcome. The player, the controller, the playlist session, the pass, the pacer,
+> `OpenAlAudioSink` and the interop view do (#721, #733); MotionClip's encoder sink and recorder do
+> not yet (#720).
 
 **Date:** 2026-05-13
 **Supersedes:** Implicit ownership conventions established by
