@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using FrameFlow.Graph;
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
@@ -93,13 +94,21 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
             // The position is read as b's first frame past its start is presented, on the
             // presenting thread, so b is the item playing when it is read however long the
             // runner takes to get back to the test. The time since the jump began is read there
-            // too, off the position clock's own source, after the position.
+            // too, after the position, on the position clock's own source and on a monotonic
+            // one, and the longer is taken: an adjustment of the system clock during the run
+            // then shortens neither the bound nor what it is compared with alone.
             (TimeSpan Position, TimeSpan SinceJump)? atB = null;
             var beforeJump = TimeProvider.System.GetUtcNow();
+            var beforeJumpTicks = Stopwatch.GetTimestamp();
             video.Presenting = pts =>
             {
                 if (atB is null && pts >= b.Start + PastStart)
-                    atB = (player.Position, TimeProvider.System.GetUtcNow() - beforeJump);
+                {
+                    var position = player.Position;
+                    var onClock = TimeProvider.System.GetUtcNow() - beforeJump;
+                    var monotonic = Stopwatch.GetElapsedTime(beforeJumpTicks);
+                    atB = (position, onClock > monotonic ? onClock : monotonic);
+                }
             };
             Assert.True((await player.JumpToAsync(bItem)).IsSuccess);
             await video.WhenPresented(pts => pts >= b.Start + PastStart, skip: mark).WaitAsync(Bound);
