@@ -388,8 +388,9 @@ not change; it gained one member, the last item under the other owners.
   teardown disposes, and `RunAsync`, for a teardown that may throw before it returns its task.
 - The sinks' disposal contract, ADR-0044's no-op second dispose, was amended in this slice rather
   than in slice 6, because `OpenAlAudioSink`'s second dispose could now throw the first's exception.
-- `PlaylistSession` and its prepared runtimes moved too. Their second dispose already waited, but it
-  succeeded after a first that had thrown.
+- `PlaylistSession` and its prepared runtimes moved too, though slice 1 does not name them. Their
+  second dispose already waited for the first, but it used to succeed after a first that had thrown;
+  it now ends as the first did.
 - MotionClip's `ClipEncoderSink` and `MotionClipRecorder` keep their Interlocked guard: MotionClip is
   an application and cannot see `FrameFlow.Media`'s internals (#720).
 
