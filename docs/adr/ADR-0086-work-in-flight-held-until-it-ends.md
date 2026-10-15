@@ -505,11 +505,15 @@ seeks on a 1080p60 file, timed from the last seek's acceptance to the seek havin
 with hardware decode was 495 to 522 ms both before and after #740. With software decode it was 941
 to 1129 ms before and 740 to 806 ms after.
 
+**After the slices.** #743 changed the core for #739. An item with no audio, sought while paused
+after it reached its end, played from the target at decode rate when it resumed: the controller
+freezes only the position clock at the end, and the runtime's own wallclock ran on while the item
+waited. A reposition that holds an item that has played now pauses the clocks with the gates, as a
+pause does. The walk models the wallclock apart from the position clock and checks that frames pass
+the gates of a delivering run only while the wallclock reads with the position clock.
+
 What is left:
 
-- #739: an item with no audio, sought while paused after it reached its end, plays from the target
-  at decode rate when it resumes, because its wallclock ran on while it was paused. `main` did the
-  same before #740. The fix belongs in the core, which decides when the clocks run.
 - #728: a pass whose graph completes while the demux pump waits on a full decoder queue does not
   end. It is #713's shape, reached through a completion instead of a fault; no in-box node reaches
   it.
@@ -651,3 +655,5 @@ None remain. The draft's three were settled on acceptance:
 - **2026-10-14, on implementation.** Status names the pull requests, and
   [Implementation](#implementation) lists what shipped, what differs and what is left. The
   decisions are unchanged.
+- **2026-10-14, after the slices.** #739 moved from what is left to a note on the change that
+  addressed it (#743). The decisions are unchanged.

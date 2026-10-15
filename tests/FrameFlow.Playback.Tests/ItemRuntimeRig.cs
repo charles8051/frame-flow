@@ -37,13 +37,14 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     private readonly ConcurrentQueue<bool> _endsOfStreamInStep = new();
     private readonly bool _latenessRecovery;
 
-    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery, TimeProvider? time)
+    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery, TimeProvider? time, TimeProvider? clockTime)
     {
         _latenessRecovery = latenessRecovery;
         Log = new RigLog();
         Media = new FakeItemMedia(shape, Log);
         Opener = new FakeMediaOpener(Media, Log);
         Audio = new RecordingAudioSink(Log);
+        Clock = new RigClock(clockTime);
         Session = new SubstrateSession(
             videoSink: null,
             audioSink: shape.Audio ? Audio : null,
@@ -69,7 +70,8 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
                 OnItemFailed: static (_, _, _) => { }
             ),
             HardwareDecodeMode.Disabled,
-            loggerFactory: Warnings
+            loggerFactory: Warnings,
+            wallclockTime: clockTime
         )
         {
             MediaOpener = Opener,
@@ -89,7 +91,7 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     public RecordingAudioSink Audio { get; }
 
-    public RigClock Clock { get; } = new();
+    public RigClock Clock { get; }
 
     /// <summary>Whether the owner's OnWorkerFaulted callback throws once it has recorded the fault.</summary>
     public bool WorkerFaultedThrows { get; set; }
@@ -121,12 +123,21 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     /// <summary>The steps the session has taken, in order.</summary>
     public Step[] Steps => [.. _steps];
 
+    /// <summary>A rig whose session is not yet opened.</summary>
+    /// <param name="shape">What the fake media holds.</param>
+    /// <param name="detached">Whether the session is prepared ahead.</param>
+    /// <param name="latenessRecovery">Whether each run has a lateness-recovery walk.</param>
+    /// <param name="time">Whose timers time a stop's warning. Null is the system's.</param>
+    /// <param name="clockTime">
+    /// Whose time the position clock and the session's own wallclock read. Null is the system's.
+    /// </param>
     public static ItemRuntimeRig Create(
         MediaShape? shape = null,
         bool detached = false,
         bool latenessRecovery = false,
-        TimeProvider? time = null
-    ) => new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery, time);
+        TimeProvider? time = null,
+        TimeProvider? clockTime = null
+    ) => new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery, time, clockTime);
 
     /// <summary>Opens the session, positioned at <paramref name="start"/>: no run starts.</summary>
     public async Task<ItemRuntimeRig> OpenAsync(TimeSpan start = default, TimeSpan? end = null)
@@ -702,11 +713,15 @@ internal sealed class FakeItemMedia : IItemMedia
         ReleaseHeldSettle();
     }
 
+    /// <summary>The clock the session gave the pacer to present against.</summary>
+    public IClockSource? Master { get; private set; }
+
     public void OpenPacer(IClockSource master)
     {
         _log.Add("OpenPacer");
         if (FailPacer is { } failure)
             throw failure;
+        Master = master;
         if (_shape.Pacer)
         {
             lock (_gate)
@@ -945,9 +960,10 @@ internal sealed class RecordingAudioSink(RigLog log) : IAudioSink
 }
 
 /// <summary>The position clock, whose position read can be made to throw, as an app's clock may.</summary>
-internal sealed class RigClock : IPlaybackClock
+/// <param name="time">Whose time it reads. Null is the system's.</param>
+internal sealed class RigClock(TimeProvider? time = null) : IPlaybackClock
 {
-    private readonly PlaybackClock _inner = new();
+    private readonly PlaybackClock _inner = new(time ?? TimeProvider.System);
 
     /// <summary>Whether reading the position throws.</summary>
     public bool FailPosition { get; set; }

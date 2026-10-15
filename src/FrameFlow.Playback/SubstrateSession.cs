@@ -219,7 +219,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         bool? yieldHardwareFrames = null,
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
-        IReadOnlyList<string>? excludedCodecs = null
+        IReadOnlyList<string>? excludedCodecs = null,
+        TimeProvider? wallclockTime = null
     )
     {
         ArgumentNullException.ThrowIfNull(clock);
@@ -241,8 +242,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         // Provisional master clock: a wallclock the session owns. The open upgrades this to the
         // audio sink's IClockSource iff this item actually has a decodable audio stream the sink
-        // will play (the ADR-0003 audio-master rule, evaluated per item), and frees it then.
-        _ownedClock = new WallClockSource();
+        // will play (the ADR-0003 audio-master rule, evaluated per item), and frees it then. Its
+        // time is WallClockSource's own unless a test steps it on a fake.
+        _ownedClock = new WallClockSource(wallclockTime);
         _clockSource = _ownedClock;
 
         // It waits for the first input, and the dispose waits for it.
@@ -421,7 +423,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// <summary>
     /// Seeks to <paramref name="position"/>: stops the run, waits for its work, seeks the demuxer,
     /// resets the decoders and seats the clocks, then, on an item that is playing, starts the next
-    /// run over a fresh graph and settles the clocks on its destination frame.
+    /// run over a fresh graph and settles the clocks on its destination frame. On one that is not,
+    /// it holds there with the clocks still, the session's own wallclock among them (#739), and the
+    /// next play starts the run.
     /// </summary>
     /// <remarks>
     /// A seek that arrives while another waits for the run supersedes it: the earlier one is

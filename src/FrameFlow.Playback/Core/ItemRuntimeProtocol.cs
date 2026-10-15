@@ -39,7 +39,9 @@ namespace FrameFlow.Playback.Core;
 /// audio sink, starts the next run, opens the gates, resumes the audio sink and settles the clocks
 /// on the destination frame; one that ends before its settle releases the hold its run took on that
 /// frame. One on an item that is paused, or has not played, holds, and leaves the
-/// launch to the next play. A seek and a play build a fresh graph; a rewind runs the last one again
+/// launch to the next play; one that holds an item that has played pauses the clocks with the
+/// gates, as a pause does, so the runtime's own wallclock does not run on from the target while the
+/// item waits (#739). A seek and a play build a fresh graph; a rewind runs the last one again
 /// once one is built. Every path cancels a run that is still running and waits for its work: one
 /// rule, where the runtime used to choose between cancelling a run and waiting for it to end.
 /// </para>
@@ -319,6 +321,13 @@ internal static class ItemRuntimeProtocol
         // position clock running.
         private bool PlaysOn(bool clockPaused) => State.Played && !clockPaused;
 
+        // The reposition in progress holds an item that has played: its position clock was read
+        // paused. It leaves the item as a pause does, with the clocks paused, so the next play runs
+        // both from the target. The controller freezes the position clock by itself at the end of
+        // the stream, which leaves the runtime's own wallclock running, and a wallclock seated on
+        // the target while it runs is ahead of the frames by the time the play comes (#739).
+        private bool Holds => State.Played && Command.Reposition is { Relaunch: false };
+
         private bool IsPastTheEnd(TimeSpan start) => State.Duration > TimeSpan.Zero && start >= State.Duration;
 
         private void OnCallerCancelled(int id)
@@ -458,8 +467,9 @@ internal static class ItemRuntimeProtocol
         }
 
         // What follows a pause or a resume of the audio sink at once: the gates and the clocks, and
-        // for a reposition the stop of its run. An activation needs nothing, since an activated sink
-        // plays only what reaches it through the gates, and nothing does until they open.
+        // for a reposition the stop of its run, with the clocks when it holds. An activation needs
+        // nothing, since an activated sink plays only what reaches it through the gates, and nothing
+        // does until they open.
         private void FollowAudio(ItemCommandStage stage)
         {
             switch (stage)
@@ -470,6 +480,8 @@ internal static class ItemRuntimeProtocol
                     break;
                 case ItemCommandStage.RepositionPausingAudio:
                     CloseGates();
+                    if (Holds)
+                        Emit(new ItemRuntimeAction.PauseClocks());
                     StopRun();
                     break;
                 case ItemCommandStage.ResumingAudio:

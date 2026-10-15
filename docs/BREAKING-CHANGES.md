@@ -1515,6 +1515,13 @@ disagreeing. Refs #707, #714.
   a control bound before it first joins the tree still follows from the bind. A transport disposed
   while its control was out of the tree is not followed when the control comes back, and the
   control keeps what it showed until the next transport is bound. #643.
+- **A seek while paused keeps the clocks still until the next play.** A player paces an item with
+  no audio by a wallclock of its own, which nothing paused when the item played to its end. A seek
+  from `Ended`, and the play after it, then presented the frames from the seek's target about 1 ms
+  apart, up to where that wallclock had run on to while the item waited. A seek on an item that is
+  paused or has ended now pauses the clocks as a pause does, and the play runs them from the
+  target. A position clock of your own given to `WithClock` has `Pause` called again at such a
+  seek, though it is already paused. #739.
 
 ## `v0.15.0` — since `v0.14.0`
 

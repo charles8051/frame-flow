@@ -274,6 +274,40 @@ public sealed class SubstrateSessionRigTests
         Assert.Equal(1, rig.Session.RunNumber);
     }
 
+    // ── #739: a seek that holds pauses the clocks ───────────────────────────
+
+    [Fact]
+    public async Task APlayAfterASeekThatHeldAtTheEnd_PresentsNoFrameBeforeTheClockReachesIt()
+    {
+        // An item with no audio is paced by the session's own wallclock. It plays to its end, and
+        // the controller freezes the position clock, as it does on entering Ended. A seek reads the
+        // clock paused and holds; a second passes; the play starts the run from the target.
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        await using var rig = await ItemRuntimeRig.Create(MediaShape.VideoOnly, clockTime: time).PlayingAsync();
+        var pacing = rig.Media.Master!;
+        rig.Media.Latest(ItemWork.Pump).Complete();
+        rig.Media.Latest(ItemWork.Graph).Complete();
+        await rig.EndOfStream().WaitAsync(Bound);
+        rig.Clock.Pause();
+
+        var target = TimeSpan.FromSeconds(2);
+        await rig.Session.SeekAsync(target).AsTask().WaitAsync(Bound);
+        time.Advance(TimeSpan.FromSeconds(1));
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Contains("BeginRun(Rebuild, floor 2, end none, hold False)", rig.Log.Calls);
+        Assert.Equal(target, rig.Clock.Position);
+        Assert.Equal(target, pacing.Latest);
+
+        // The pacer presents a frame once the clock it paces by reaches the frame's time.
+        var frame = TimeSpan.FromMilliseconds(40);
+        var presented = pacing.WaitUntilAsync(target + frame).AsTask();
+        Assert.False(presented.IsCompleted, "The frame after the target was due at once: the wallclock ran on while the item was paused.");
+        time.Advance(frame);
+        await presented.WaitAsync(Bound);
+        Assert.Empty(rig.Log.Violations);
+    }
+
     // ── A runtime prepared ahead ────────────────────────────────────────────
 
     [Fact]

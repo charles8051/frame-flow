@@ -23,7 +23,10 @@ namespace FrameFlow.Playback.Tests;
 /// them. A run's work runs from the moment the shell is asked to start it, so a piece can end before
 /// the start's outcome. The position clock is the model's: a command reads whether it is paused,
 /// and once a run has played to its end the controller may freeze it between commands, as it does
-/// at the end of the stream.
+/// at the end of the stream. So is the wallclock the runtime owns, which the core's actions start,
+/// pause and resume with the position clock and which the controller's freeze leaves running. Time
+/// passes between any two events, so a wallclock left running while the position clock stands still
+/// reads ahead of it until the two are seated together again (#739).
 /// </para>
 /// <para>
 /// The model keeps its own account of what the checks read: whether the runtime is attached,
@@ -116,6 +119,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         Assert.Contains(walk, n => n.State.DisposeRequested);
         Assert.Contains(walk, n => n.State.Phase == ItemRuntimePhase.Disposing && n.State.Status == ItemRunStatus.Stopping);
         Assert.Contains(walk, n => n.Model.Gates && n.Model.Clock == ClockModel.Paused); // frozen at the end, not paused
+        Assert.Contains(walk, n => n.Model.WallclockAhead && n.State.Command?.Reposition is { Relaunch: false }); // a hold after it
     }
 
     // ── The walk ────────────────────────────────────────────────────────────
@@ -190,7 +194,17 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
 
         public bool Gates { get; init; }
 
+        /// <summary>The position clock.</summary>
         public ClockModel Clock { get; init; }
+
+        /// <summary>The wallclock the runtime owns, while it owns one. The controller never touches it.</summary>
+        public ClockModel Wallclock { get; init; }
+
+        /// <summary>
+        /// The wallclock has run while the position clock stood still since the shell last seated the
+        /// two together, so it reads ahead of it (#739).
+        /// </summary>
+        public bool WallclockAhead { get; init; }
 
         public AudioModel Audio { get; init; }
 
@@ -358,7 +372,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
     private static Node Apply(Shape shape, Node node, Event e, Func<string> path)
     {
         if (e is FreezeClock)
-            return node with { Model = node.Model with { Clock = ClockModel.Paused } };
+            return node with { Model = Elapse(node.Model with { Clock = ClockModel.Paused }) };
 
         var input = ((Feed)e).Input;
         var (before, model) = node;
@@ -468,21 +482,35 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 case Action.SeatClocks seat:
                     Ensure(m.Working == ItemWork.None, "Seats the clocks for a reposition only once no work is pending");
                     Ensure(seat.Shared == m.Attached, "Seats the shared clocks exactly when attached");
+                    m = m with { WallclockAhead = m.WallclockAhead && !seat.Shared };
                     break;
                 case Action.SeatBaseline:
                     Ensure(m.Attached, Shared);
                     break;
                 case Action.StartClocks:
                     Ensure(m.Attached, Shared);
-                    m = m with { Clock = ClockModel.Running };
+                    m = m with
+                    {
+                        Clock = ClockModel.Running,
+                        Wallclock = (m.Alive & ItemResources.Clock) != 0 ? ClockModel.Running : m.Wallclock,
+                        WallclockAhead = false,
+                    };
                     break;
                 case Action.PauseClocks:
                     Ensure(m.Attached, Shared);
-                    m = m with { Clock = m.Clock == ClockModel.Running ? ClockModel.Paused : m.Clock };
+                    m = m with
+                    {
+                        Clock = m.Clock == ClockModel.Running ? ClockModel.Paused : m.Clock,
+                        Wallclock = m.Wallclock == ClockModel.Running ? ClockModel.Paused : m.Wallclock,
+                    };
                     break;
                 case Action.ResumeClocks:
                     Ensure(m.Attached, Shared);
-                    m = m with { Clock = m.Clock == ClockModel.Paused ? ClockModel.Running : m.Clock };
+                    m = m with
+                    {
+                        Clock = m.Clock == ClockModel.Paused ? ClockModel.Running : m.Clock,
+                        Wallclock = m.Wallclock == ClockModel.Paused ? ClockModel.Running : m.Wallclock,
+                    };
                     break;
                 case Action.StopClock:
                     Ensure(teardown && m.Attached, "Stops the position clock only in an attached runtime's teardown");
@@ -491,7 +519,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 case Action.AttachClocks:
                     Ensure(attachDue && !attached, "Seats the shared clocks once, at the attach");
                     attached = true;
-                    m = m with { Attached = true };
+                    m = m with { Attached = true, WallclockAhead = false };
                     break;
                 case Action.DeactivateAudio:
                     Ensure(teardown, "Deactivates the audio sink unawaited only in the teardown");
@@ -504,7 +532,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     Ensure((int)m.Alive < 2 * (int)free.Resource, "Frees in reverse allocation order");
                     Ensure(m.Working == ItemWork.None && m.Live is null, "Frees only once no work of any run is pending");
                     Ensure(teardown, "Frees only in the teardown");
-                    m = m with { Alive = m.Alive & ~free.Resource };
+                    m = m with
+                    {
+                        Alive = m.Alive & ~free.Resource,
+                        Wallclock = free.Resource == ItemResources.Clock ? ClockModel.Stopped : m.Wallclock,
+                    };
                     break;
                 case Action.ReportFault report:
                     faults++;
@@ -642,12 +674,13 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 && m.Live == after.Run
                 && m.Gates
                 && m.Clock == ClockModel.Running
+                && ((m.Alive & ItemResources.Clock) == 0 || m.Wallclock == ClockModel.Running)
                 && (!shape.HasAudio || m.Audio == AudioModel.Playing)
                 && !m.SettleOwed;
             switch (command.Kind)
             {
                 case ItemCommandKind.Play when m.Opened:
-                    Ensure(playing, "A play leaves a run going, the gates open, the clock running and the audio playing");
+                    Ensure(playing, "A play leaves a run going, the gates open, the clocks running and the audio playing");
                     m = m with { Played = true };
                     break;
                 case ItemCommandKind.Pause:
@@ -658,8 +691,13 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     break;
                 case ItemCommandKind.Seek or ItemCommandKind.Rewind when m.Opened:
                     Ensure(
-                        command.PlaysOn ? playing : after.Status == ItemRunStatus.Idle && !m.Gates,
-                        "A reposition of an item that plays plays on from a run it started and settled, with the clock running and the audio playing; any other holds positioned with the gates shut"
+                        command.PlaysOn
+                            ? playing
+                            : after.Status == ItemRunStatus.Idle
+                                && !m.Gates
+                                && m.Clock != ClockModel.Running
+                                && m.Wallclock != ClockModel.Running,
+                        "A reposition of an item that plays plays on from a run it started and settled, with the clocks running and the audio playing; any other holds positioned with the gates shut and the clocks still (#739)"
                     );
                     break;
                 case ItemCommandKind.WarmUp when m.Opened && shape.HasVideo && !m.Played:
@@ -670,6 +708,8 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     break;
             }
         }
+
+        m = Elapse(m);
 
         // The state and the shell agree.
         var starting = after.IsStartingRun ? ItemRuntimeProtocol.WorkOf(after) & ~after.EndedBeforeStart : ItemWork.None;
@@ -717,6 +757,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
             "Frames pass the gates of a run that is still delivering only while the clock runs and the audio plays"
         );
         Ensure(
+            !(after.Phase == ItemRuntimePhase.Open && m.Gates && m.Live is not null && (m.Working & ItemWork.Graph) != 0)
+                || !m.WallclockAhead,
+            "Frames pass the gates of a run that is still delivering only while the runtime's wallclock reads with the position clock, not ahead of it (#739)"
+        );
+        Ensure(
             !(after.Phase == ItemRuntimePhase.Open && m.Audio == AudioModel.Playing) || m.Gates,
             "The audio sink plays only while frames pass the gates"
         );
@@ -740,6 +785,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
 
         return new Node(after, m);
     }
+
+    // Time passes before the next event: a wallclock that runs while the position clock stands still
+    // runs ahead of it.
+    private static Model Elapse(Model m) =>
+        m.Wallclock == ClockModel.Running && m.Clock != ClockModel.Running ? m with { WallclockAhead = true } : m;
 
     private static Owed Owe(Input.CommandInput command, Model m)
     {
