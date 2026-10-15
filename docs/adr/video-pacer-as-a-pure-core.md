@@ -231,9 +231,11 @@ an `IVideoFrame`.
   `PacerNow` as it steps each one, and performs the step's immediate actions in order. A caller that
   needs an outcome awaits a promise the reader completes: `PresentAsync` posts an offer and awaits
   its admission, and the item runtime awaits the target and the drain of a run. The other calls post
-  and return. The channel is unbounded for control inputs only: a frame enters it only as the offer
-  of a `PresentAsync` call that awaits its own admission, and the pacer has one producer, its run's
-  sink pump, so at most one offer is outstanding (rule 1).
+  and return. The channel is unbounded for control inputs only. A frame enters it only as the offer
+  of a `PresentAsync` call, which first takes a one-slot door and gives it back when its admission
+  completes, so at most one frame-bearing input is ever in the channel or waiting. A call that finds
+  the door taken is a second writer: it is refused there, before anything is posted, and its frame
+  released and logged (rule 1).
 - **The present is awaited outside the step.** The reader starts the call into the announcer and
   goes on stepping. Its end is posted as an input. At most one present is in flight.
 - **One armed wait.** `Arm(wait)` carries a number, an optional master target and an optional wall
@@ -260,9 +262,10 @@ Each rule below is today's behaviour unless it says it changes it.
    one offer waits. The pacer's only producer is its run's sink pump (`AsSinkNode`, one per graph,
    and ADR-0086 ends a run's graph before the next starts), and ADR-0081 counts the frame of that
    pump's call on the sink node, not on the pacer (ADR-0081, decision 1: `AsSinkNode` adds the
-   call). An offer that arrives while another waits comes from a second writer, which nothing in
-   the tree builds: the core refuses it, releases its frame and logs it, so the bound holds whatever
-   the callers. An offer is also refused, and its frame released, once the dispose has begun, when
+   call). A second writer, which nothing in the tree builds, is refused at the shell's door before
+   its offer is posted (decision 2), so the bound holds at ingress whatever the callers; the core
+   refuses an offer that arrives while another waits as well, so its step stays total. An offer is
+   also refused, and its frame released, once the dispose has begun, when
    it is below the run's floor (counted as before the target), and, a change, when its timeline is
    set and is not the run's (counted apart). A frame of `TimelineId.None`, such as one an
    application's configurator builds as its own frame type without carrying its input's id, is
@@ -337,7 +340,7 @@ Each rule below is today's behaviour unless it says it changes it.
     | Path | Released by |
     | ---- | ----------- |
     | An offer refused: disposing, below the floor, another timeline | The pacer, at once |
-    | An offer from a second writer, an offer abandoned by its producer, or one still waiting at the dispose | The pacer |
+    | A second writer's frame, refused at the door; an offer abandoned by its producer, or one still waiting at the dispose | The pacer |
     | A frame in the ring dropped late, flushed, or left at the dispose | The pacer; what a dispose throws is the pacer's dispose's (ADR-0086, decision 3.4) |
     | A frame presented | The announcer until the hand-off, then the sink, even when the call throws (#701) |
 
@@ -413,7 +416,8 @@ After every step, over every reachable state:
 - **Transcripts** for the decisions the walk's grid cannot place exactly, such as the hold cap's
   arithmetic, the probe's window and the starvation threshold.
 - **Shell tests** on `FakeTimeProvider` and a fake `IClockSource` whose waits the test completes,
-  barriered on the reader's idle signal: backpressure on a full ring, a present held inside the sink
+  barriered on the reader's idle signal: backpressure on a full ring, a second writer refused at
+  the door with nothing posted, a present held inside the sink
   while other inputs are stepped, a stale wake, a clock read that throws, the announcer's
   ownership, and the dispose.
 - **What moves.** Of `ClockSelectVideoSinkTests`' 43 tests, the eight on `ClockSelectBuffer` and
@@ -574,3 +578,7 @@ the run's end are the signals the hold and the wait are for.
   only the backstop opens it. Rule 4 now has a release end the settle for its run whenever it
   comes, invariant 5 holds in either order, and the mutation list covers it. `ShellFaulted` now
   carries no reading at all, since a clock that throws may never have given one.
+- **2026-10-15, review turn 4.** The one-offer bound was enforced only once an offer reached the
+  core, so it rested on the pacer having one producer. `PresentAsync` now takes a one-slot door
+  before it posts, and a second writer is refused there, so at most one frame-bearing input is ever
+  in the channel. The core keeps its refusal so its step stays total.
