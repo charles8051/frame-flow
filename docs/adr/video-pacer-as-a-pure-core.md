@@ -270,8 +270,14 @@ Each rule below is today's behaviour unless it says it changes it.
    set and is not the run's (counted apart). A frame of `TimelineId.None`, such as one an
    application's configurator builds as its own frame type without carrying its input's id, is
    judged by the floor alone, and counted, so a test or a log can name a configurator that drops
-   the id. Refusing it instead would blank every such configurator's picture. A halted pacer leaves
-   the waiting offer waiting until its dispose, as today.
+   the id. Refusing it instead would blank every such configurator's picture. No library path
+   carries a frame from one run into the next. The run before has ended, its sink pump with it,
+   before the next starts (ADR-0086, decision 2). The ring is flushed at the break, and a seek
+   builds a fresh graph. So an untagged frame from an earlier run can only come from state an
+   application's configurator keeps across runs, and the pacer cannot tell that frame from the
+   configurator's own output. ADR-0084 decision 3 makes tagging it the configurator's job, and open
+   question 5 asks whether to refuse such frames anyway. A halted pacer leaves the waiting offer
+   waiting until its dispose, as today.
 2. **Selection and the late drop.** Running, with nothing in flight and no hold in force, the
    newest frame whose PTS the master has reached is presented, and every older frame in the ring is
    released as late and counted. A frame is dropped late only in a step that presents a newer one.
@@ -561,6 +567,12 @@ the run's end are the signals the hold and the wait are for.
    on what it is handed, which is public surface.
 4. **The reader's cost.** If one hop per frame measures as too much, are offers stepped under a lock
    on the producer's thread, with every other input on the reader?
+5. **Untagged frames after a break.** Rule 1 admits a frame with no timeline on the floor alone,
+   because refusing it blanks a configurator that emits its own frame type. The alternative is
+   strict isolation: refuse untagged frames in any run that began at a break, so a configurator
+   that keeps frames across runs and drops their id cannot show one after a seek or a loop, at the
+   cost of every configurator that drops the id showing nothing after one. Either is a one-line
+   rule in the core. The record admits them, and counts them.
 
 ## Revision history
 
@@ -582,3 +594,6 @@ the run's end are the signals the hold and the wait are for.
   core, so it rested on the pacer having one producer. `PresentAsync` now takes a one-slot door
   before it posts, and a second writer is refused there, so at most one frame-bearing input is ever
   in the channel. The core keeps its refusal so its step stays total.
+- **2026-10-15, review turn 6.** Rule 1 now says why an untagged frame from an earlier run can come
+  only from state an application's configurator keeps across runs. Open question 5 records strict
+  refusal as the alternative, with its cost. The rule is unchanged.
