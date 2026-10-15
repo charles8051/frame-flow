@@ -87,6 +87,7 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
             // frame of b from before its start would fall below that.
             var aReached = video.PresentedPts.Max();
             var mark = video.Count;
+            var beforeJump = TimeProvider.System.GetUtcNow();
             Assert.True((await player.JumpToAsync(bItem)).IsSuccess);
             await video.WhenPresented(pts => pts >= b.Start + PastStart, skip: mark).WaitAsync(Bound);
 
@@ -97,8 +98,13 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
                 $"after the jump, frames fell back below {aReached}: {string.Join(", ", beforeB)}"
             );
 
-            // The shared clocks were seated on b's start when its runtime was attached.
-            Assert.InRange(player.Position, b.Start, b.Start + TimeSpan.FromSeconds(2));
+            // The shared clocks were seated on b's start when its runtime was attached, which the
+            // jump did after it began, so they have run on from there for no longer than the time
+            // measured since. That time is read off the position clock's own source, after the
+            // position, so the bound holds however long the runner took.
+            var position = player.Position;
+            var sinceJump = TimeProvider.System.GetUtcNow() - beforeJump;
+            Assert.InRange(position, b.Start, b.Start + sinceJump);
         }
 
         // a's runtime deactivated the sink when the jump disposed it, and b's when the player was

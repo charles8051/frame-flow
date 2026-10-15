@@ -167,7 +167,6 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         var audioSink = FakeOpenAlSink.Create(device);
         var videoSink = new HarnessVideoSink();
 
-        await using var pump = new FakeDevicePump(device);
         await using var player = await FrameFlowPlayer
             .Create()
             .WithMedia([File(AudioOnly)])
@@ -192,6 +191,14 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
 
         var sw = Stopwatch.StartNew();
         Assert.True((await player.PlayAsync()).IsSuccess);
+
+        // The device plays nothing until its pump starts, so every buffer the sink queues stays
+        // queued, and the producer fills the sink's pool and is held back. Waiting for that makes
+        // the pacing visible at any speed. With the device playing from the start, a producer
+        // that a loaded runner held back never got the whole pool ahead of the device, and the
+        // sink had nothing to push back on.
+        await WhenHeldBackAsync(audioSink);
+        await using var pump = new FakeDevicePump(device);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         await endedTcs.Task.WaitAsync(cts.Token);
@@ -231,6 +238,30 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
             backpressureWaits > 0,
             "The sink never waited for a buffer, so whatever paced this was not its backpressure."
         );
+    }
+
+    /// <summary>
+    /// Completes once the sink has had to wait for a buffer to recycle. The sink raises no
+    /// signal for it, so its counter is read until it moves; the count only rises, and the bound
+    /// only stops a sink that never pushes back.
+    /// </summary>
+    private static async Task WhenHeldBackAsync(FrameFlow.Audio.OpenAL.OpenAlAudioSink sink)
+    {
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (sink.BackpressureCount == 0)
+        {
+            try
+            {
+                await Task.Delay(10, bound.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Assert.Fail(
+                    "The sink filled its pool with the device playing nothing and never held "
+                        + "the producer back."
+                );
+            }
+        }
     }
 
     private static TimeSpan PlayedDuration(FakeOpenAlDevice device)

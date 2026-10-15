@@ -90,7 +90,11 @@ internal sealed class HarnessVideoSink : IVideoSink
     /// </summary>
     public ConcurrentBag<long> WallClockTicks { get; } = new();
 
-    public async Task WaitForDrainAsync(int timeoutMilliseconds = 5000)
+    /// <summary>
+    /// Waits until the pump has taken or dropped every submitted frame. The timeout only stops a
+    /// hung pump: the pump is a task of its own, which a loaded runner can hold back.
+    /// </summary>
+    public async Task WaitForDrainAsync(int timeoutMilliseconds = 30000)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMilliseconds));
 

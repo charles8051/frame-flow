@@ -1,5 +1,4 @@
 using FrameFlow.Integration.Tests.Harness;
-using FrameFlow.Integration.Tests.Harness.Capture;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 
@@ -29,11 +28,8 @@ namespace FrameFlow.Integration.Tests;
 ///   throughout. Catches cumulative state leaks across pump runs that
 ///   no single-seek test would surface.</item>
 ///   <item><see cref="ForwardSeek_PostSeekVideoFramesAdvanceWithoutStalling"/> —
-///   asserts video continues within a tight wall-clock window after a
-///   forward seek. The <c>d03e4b0</c> bug class (retained pre-seek
-///   packet contaminating post-seek timeline) freezes video for the
-///   pre-seek-to-target gap of wallclock time; if it regresses, the
-///   "did we get new frames within 2 s" assertion catches it.</item>
+///   asserts video continues after a forward seek and plays on past the
+///   target to the end.</item>
 /// </list>
 /// <para>
 /// <b>What's NOT asserted.</b> Exact post-seek first-frame PTS — the
@@ -41,10 +37,22 @@ namespace FrameFlow.Integration.Tests;
 /// to position 0 for any forward seek target. The discipline asserted
 /// here is liveness ("frames keep flowing"), not PTS positioning.
 /// </para>
+/// <para>
+/// Nor how soon frames come back. Each wait completes on the sink receiving a frame, and its
+/// bound only stops a failing run: a loaded runner resumes later on a correct build. The
+/// <c>d03e4b0</c> bug class (a retained pre-seek packet sent into the post-seek timeline) froze
+/// video for the gap between the pre-seek position and the target, which only a wall-clock
+/// window could see here. That the seek drops the retained packet is pinned without a clock by
+/// <c>DemuxPumpTests</c> (<c>Seek_WithPending_DropsItAndReturnsToNeedRead</c>,
+/// <c>Drive_SeekBeforeResume_DropsPending_ThenReads</c>).
+/// </para>
 /// </remarks>
 [Trait("Category", "Integration")]
 public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
 {
+    /// <summary>Bounds a failure only.</summary>
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     private readonly FfmpegBootstrapFixture _fixture;
 
     public SeekDisciplineTests(FfmpegBootstrapFixture fixture)
@@ -59,13 +67,13 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
     /// retained packets, stale codec buffers, gate misconfiguration,
     /// clock-source state drift — manifests as a freeze somewhere in
     /// the seek sequence. The test asserts at least one new video
-    /// frame is captured after each seek, plus an overall liveness
-    /// budget of N seeks worth of forward progress.
+    /// frame is presented after each seek, plus an overall liveness
+    /// floor of N seeks worth of forward progress.
     /// </summary>
     [RequiresFfmpegAndCorpusFact]
     public async Task MultiSeek_PlaybackKeepsFlowing()
     {
-        var videoSink = new CapturingVideoSink();
+        var videoSink = new PtsRecordingVideoSink();
         var audioSink = new HarnessAudioSink();
         var controller = FrameFlow.Playback.PlaybackController.Create(
             videoSink: videoSink,
@@ -119,7 +127,7 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
 
             foreach (var target in seekTargets)
             {
-                var framesBeforeSeek = videoSink.Captures.Count;
+                var framesBeforeSeek = videoSink.Count;
 
                 var seek = await controller.SeekAsync(target);
                 Assert.True(
@@ -130,15 +138,13 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
                 // Wait for the seek state machine to settle.
                 await WaitForSeekStateAsync(controller, SeekState.NotSeeking);
 
-                // Liveness assertion: at least one new frame must
-                // arrive within a generous wallclock budget. A freeze
-                // here means seek N invalidated long-lived state that
-                // seek N-1 didn't.
-                await WaitForConditionAsync(
-                    () => videoSink.Captures.Count > framesBeforeSeek,
-                    timeoutMilliseconds: 5000,
-                    failureMessage: $"No new frames captured within 5 s after seek to {target}. "
-                        + $"Captured count stayed at {framesBeforeSeek}. "
+                // Liveness assertion: a new frame must arrive. A freeze here means seek N
+                // invalidated long-lived state that seek N-1 didn't.
+                await WaitForFrameAsync(
+                    videoSink,
+                    framesBeforeSeek,
+                    () => $"No new frames presented after seek to {target}. "
+                        + $"Presented count stayed at {framesBeforeSeek}. "
                         + $"Likely a long-lived-state leak across the {seekTargets.Length}-seek sequence."
                 );
             }
@@ -181,30 +187,25 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink: null);
         }
 
-        // Final accumulated liveness check: total captured frames
-        // should exceed the pre-seek baseline by a generous margin —
-        // each seek opens up another window of forward playback.
+        // Final accumulated liveness check: each seek opens up another window of forward
+        // playback. Not a count load can push down: the pacer holds at most three frames and
+        // presents the newest one due, so it presents at least one in every three it is given,
+        // and the 2 s played on after the last seek alone is 60 frames.
         Assert.True(
-            videoSink.Captures.Count >= 10,
-            $"Expected at least 10 captured frames across the 5-seek sequence; "
-                + $"got {videoSink.Captures.Count}. Indicates playback froze somewhere mid-sequence."
+            videoSink.Count >= 10,
+            $"Expected at least 10 presented frames across the 5-seek sequence; "
+                + $"got {videoSink.Count}. Indicates playback froze somewhere mid-sequence."
         );
     }
 
     /// <summary>
-    /// Single forward seek mid-playback, then asserts video frames
-    /// continue to arrive within 2 s of wallclock. The
-    /// <c>d03e4b0</c> bug class (retained pre-seek packet) freezes
-    /// video for the pre-seek-to-target gap measured in real seconds
-    /// — a 1.5 s forward seek with the bug active produced ~1.5 s of
-    /// no-new-frames before the master clock caught up. A 2 s budget
-    /// catches the regression with margin without being flaky on
-    /// slow hosts.
+    /// Single forward seek mid-playback, then asserts video frames continue to arrive and play
+    /// on past the target to the end.
     /// </summary>
     [RequiresFfmpegAndCorpusFact]
     public async Task ForwardSeek_PostSeekVideoFramesAdvanceWithoutStalling()
     {
-        var videoSink = new CapturingVideoSink();
+        var videoSink = new PtsRecordingVideoSink();
         var audioSink = new HarnessAudioSink();
         var controller = FrameFlow.Playback.PlaybackController.Create(
             videoSink: videoSink,
@@ -247,37 +248,27 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
             // seek isn't first-frame (the regression target is the
             // mid-stream seek case where the demux pump has retained a
             // pre-seek packet across the cancellation).
-            await WaitForConditionAsync(
-                () => videoSink.Captures.Count >= 3,
-                timeoutMilliseconds: 5000,
-                failureMessage: $"Expected at least 3 pre-seek frames, got {videoSink.Captures.Count}."
+            await WaitForFrameAsync(
+                videoSink,
+                skip: 2,
+                () => $"Expected at least 3 pre-seek frames, got {videoSink.Count}."
             );
 
-            var framesBeforeSeek = videoSink.Captures.Count;
-            var lastPtsBeforeSeek = videoSink.Captures[^1].Pts;
+            var framesBeforeSeek = videoSink.Count;
+            var lastPtsBeforeSeek = videoSink.PresentedPts[^1];
 
-            // Forward seek to mid-stream. The d03e4b0 bug surfaced as
-            // a freeze whose duration matched (seek-target - last-pre-
-            // seek-frame-pts). A 1.5 s target on a file playing
-            // around the 0.3 s mark would freeze for ~1.2 s; the 2 s
-            // wallclock budget below catches that with margin.
+            // Forward seek to mid-stream, from around the 0.3 s mark.
             var seek = await controller.SeekAsync(TimeSpan.FromSeconds(1.5));
             Assert.True(seek.IsSuccess, $"Seek failed: {seek.Error?.Message}");
 
             await WaitForSeekStateAsync(controller, SeekState.NotSeeking);
 
-            // Liveness assertion: at least 3 NEW frames must arrive
-            // within 2 s of wallclock. With the d03e4b0 bug active,
-            // PaceUntil would freeze waiting for the master clock to
-            // advance through the stale-PTS gap and no new frames
-            // would land in this window.
-            await WaitForConditionAsync(
-                () => videoSink.Captures.Count >= framesBeforeSeek + 3,
-                timeoutMilliseconds: 2000,
-                failureMessage: $"Expected at least 3 new frames within 2 s after forward seek to 1.5 s; "
-                    + $"got {videoSink.Captures.Count - framesBeforeSeek} new frames. "
-                    + $"Likely a regression of the pending-packet retention bug (d03e4b0) — "
-                    + $"the post-seek pipeline is waiting on stale-PTS frames instead of producing forward frames."
+            // Liveness assertion: at least 3 NEW frames must arrive.
+            await WaitForFrameAsync(
+                videoSink,
+                skip: framesBeforeSeek + 2,
+                () => $"Expected at least 3 new frames after forward seek to 1.5 s; "
+                    + $"got {videoSink.Count - framesBeforeSeek} new frames."
             );
 
             // Wait for natural completion.
@@ -309,8 +300,8 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
             // seek target (we played from 1.5 s forward to EOS, so
             // last-frame-PTS should be > 1.5 s by some margin).
             Assert.True(
-                videoSink.Captures[^1].Pts > TimeSpan.FromSeconds(1.5),
-                $"Expected last captured PTS to exceed seek target 1.5 s, got {videoSink.Captures[^1].Pts.TotalSeconds:F3} s. "
+                videoSink.PresentedPts[^1] > TimeSpan.FromSeconds(1.5),
+                $"Expected last presented PTS to exceed seek target 1.5 s, got {videoSink.PresentedPts[^1].TotalSeconds:F3} s. "
                     + $"Pre-seek last PTS was {lastPtsBeforeSeek.TotalSeconds:F3} s."
             );
 
@@ -332,24 +323,23 @@ public sealed class SeekDisciplineTests : IClassFixture<FfmpegBootstrapFixture>
         }
     }
 
-    private static async Task WaitForConditionAsync(
-        Func<bool> predicate,
-        int timeoutMilliseconds,
-        string failureMessage
+    /// <summary>
+    /// Completes when the sink is handed a frame after the first <paramref name="skip"/>, and
+    /// fails with <paramref name="failureMessage"/> at <see cref="Bound"/>.
+    /// </summary>
+    private static async Task WaitForFrameAsync(
+        PtsRecordingVideoSink videoSink,
+        int skip,
+        Func<string> failureMessage
     )
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(timeoutMilliseconds));
-
-        while (!predicate())
+        try
         {
-            try
-            {
-                await Task.Delay(25, cts.Token);
-            }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
-            {
-                throw new TimeoutException(failureMessage);
-            }
+            await videoSink.WhenPresented(_ => true, skip).WaitAsync(Bound);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException(failureMessage());
         }
     }
 }
