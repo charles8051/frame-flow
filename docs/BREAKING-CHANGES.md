@@ -11,7 +11,7 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased — since `v0.15.1`
+## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out
 
