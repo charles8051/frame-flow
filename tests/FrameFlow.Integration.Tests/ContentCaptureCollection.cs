@@ -15,12 +15,12 @@ namespace FrameFlow.Integration.Tests;
 /// FFmpeg competing for the same cores.
 /// </para>
 /// <para>
-/// That matters because the content assertions require zero frame loss. Frame
-/// loss is a real signal when the pipeline is at fault and noise when the
-/// machine simply could not decode in real time, and the assertion cannot tell
-/// the two apart. Serialising the heavy classes keeps the premise the zero-loss
-/// budget rests on — that decode can keep up — closer to true on a shared CI
-/// runner.
+/// No assertion depends on the serialisation. A frame the pacer drops because
+/// the runner fell behind is counted, and the video comparison accounts for it
+/// rather than failing (#299). What contention still costs is coverage: a
+/// dropped frame is one fewer presented frame compared against the reference.
+/// Serialising the heavy classes keeps that cost down and bounds the memory
+/// they hold at once.
 /// </para>
 /// <para>
 /// This does not make the suite hermetic. Other integration classes still run

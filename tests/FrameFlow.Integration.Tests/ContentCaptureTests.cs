@@ -134,7 +134,7 @@ public sealed class ContentCaptureTests : IClassFixture<FfmpegBootstrapFixture>
     /// <summary>
     /// Asserts every frame the playback runtime presented is byte-identical
     /// to the frame a bare decode of the same file produces at that PTS, and
-    /// that no frame went missing.
+    /// that every frame it did not present is one it counted as dropped late.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -151,13 +151,24 @@ public sealed class ContentCaptureTests : IClassFixture<FfmpegBootstrapFixture>
     /// decoders directly), so byte-exact equality is the right expectation.
     /// </para>
     /// <para>
-    /// The frame-loss budget stays at its default of zero. These clips are
-    /// 3 seconds at 320x240, with two at 1080p, and none of them sheds a
-    /// packet on any machine that can run the suite: measured on the pre-#137
-    /// build, every one reports <c>shed=0</c>. So every reference frame must
-    /// arrive. A clip chosen to overload decode needs a stated budget and
-    /// belongs in its own test, not in this set with the budget loosened to
-    /// accommodate it.
+    /// <b>Not every frame has to be presented (#299).</b> The run plays in
+    /// real time against the session's wallclock, and the pacer presents the
+    /// newest frame that is due, dropping any older one the clock has also
+    /// passed. A runner descheduled for longer than a frame interval therefore
+    /// drops a frame on purpose and counts it. Demanding zero loss made this a
+    /// test of the runner: it failed on a shared CI host with every delivered
+    /// frame matching. So the loss is accounted rather than budgeted: each
+    /// reference frame was presented or counted as dropped late, with nothing
+    /// lost uncounted. How many frames land on each side varies with load; the
+    /// sum does not. Zero late drops is not asserted anywhere, for the reason
+    /// <c>NominalRunHealthTests</c> gives.
+    /// </para>
+    /// <para>
+    /// The account has no term for a shed before decode, and none is needed
+    /// here. Each clip has at most 90 video packets and the video packet queue
+    /// holds at least <see cref="FrameFlow.Decoding.ReadAheadCapacity.MinCapacity"/>,
+    /// so drop-newest cannot fire at any speed. A clip chosen to overload decode
+    /// belongs in its own test, with its shed accounted for there.
     /// </para>
     /// </remarks>
     [RequiresFfmpegAndCorpusTheory]
@@ -176,8 +187,20 @@ public sealed class ContentCaptureTests : IClassFixture<FfmpegBootstrapFixture>
         );
         Assert.Equal(PlaybackState.Ended, result.FinalState);
 
+        var decoder = result.Diagnostics.Pipeline.Stream.VideoDecoder;
+        Assert.True(
+            decoder.PacketsDroppedForBackpressure == 0,
+            $"{corpusFilename}: the decoder shed {decoder.PacketsDroppedForBackpressure} packets, "
+                + "which a clip this short cannot do at any speed, and which the frame account "
+                + "below has no term for."
+        );
+
         var reference = await ReferenceDecoder.DecodeAsync(corpusFilename);
 
-        PlaybackInvariants.VideoFramePixelsMatchReference(result.Video, reference.Video);
+        PlaybackInvariants.VideoFramePixelsMatchReference(
+            result.Video,
+            reference.Video,
+            droppedLate: result.Diagnostics.Pipeline.VideoFramesDroppedForSync
+        );
     }
 }
