@@ -138,16 +138,15 @@ public sealed class SdlPauseResumeRegressionTests : IClassFixture<FfmpegBootstra
                     remainingDuration = TimeSpan.Zero;
                 }
 
+                // A floor only: the pause was held and the rest of the clip was paced. A ceiling on
+                // the same interval measured the runner, since a loaded machine finishes later on a
+                // correct build. A resume that restarts the clock from zero is the backward jump
+                // the observation above looks for.
                 var lowerBound = remainingDuration + pauseDuration - TimeSpan.FromMilliseconds(350);
-                var upperBound = remainingDuration + pauseDuration + TimeSpan.FromSeconds(1.5);
 
                 Assert.True(
                     stopwatch.Elapsed >= lowerBound,
                     $"Playback finished too quickly after pause/resume. elapsed={stopwatch.Elapsed.TotalSeconds:F3}s, lowerBound={lowerBound.TotalSeconds:F3}s."
-                );
-                Assert.True(
-                    stopwatch.Elapsed <= upperBound,
-                    $"Playback took too long after pause/resume. elapsed={stopwatch.Elapsed.TotalSeconds:F3}s, upperBound={upperBound.TotalSeconds:F3}s."
                 );
             }
         }

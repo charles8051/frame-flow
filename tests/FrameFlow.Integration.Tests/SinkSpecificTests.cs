@@ -164,7 +164,12 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
                 Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
                 Assert.True(playResult.IsSuccess, $"Play failed: {playResult.Error}");
 
-                await Task.Delay(200);
+                // Stop the render tick, then take what it left in the slot, so the count does not
+                // depend on how often a loaded runner let the tick run: the clip's last frame was
+                // presented, and either the tick rendered it or it is still waiting there.
+                pumpCts.Cancel();
+                await pumpTask;
+                avaloniaSink.RenderPendingFrame()?.Dispose();
 
                 Assert.True(
                     avaloniaSink.RenderedFrameCount > 0,
@@ -207,10 +212,9 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
 
         var avaloniaSink = AvaloniaVideoSink.CreateHeadless();
 
-        using var pumpCts = new CancellationTokenSource();
-        // Deliberately slow pump (50ms) to force frame drops.
-        var pumpTask = Task.Run(() => AvaloniaPumpLoopAsync(avaloniaSink, 50, pumpCts.Token));
-
+        // No render tick at all, so every frame the pacer presents but the last is superseded
+        // before anything takes it. A slow tick raced the pacer instead, and a loaded runner
+        // that slowed the pacer as well could leave it nothing to drop.
         try
         {
             var (controller, _) = IntegrationTestHelper.CreateController(avaloniaSink);
@@ -226,24 +230,14 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
                 Assert.True(loadResult.IsSuccess, $"Load failed: {loadResult.Error}");
                 Assert.True(playResult.IsSuccess, $"Play failed: {playResult.Error}");
 
-                await Task.Delay(200);
-
                 Assert.True(
                     avaloniaSink.DroppedFrameCount > 0,
-                    $"DroppedFrameCount should be > 0 with slow pump, got {avaloniaSink.DroppedFrameCount}"
+                    $"DroppedFrameCount should be > 0 with nothing taking frames, got {avaloniaSink.DroppedFrameCount}"
                 );
             }
         }
         finally
         {
-            pumpCts.Cancel();
-            try
-            {
-                await pumpTask.WaitAsync(TimeSpan.FromSeconds(5));
-            }
-            catch (OperationCanceledException) { }
-            catch (TimeoutException) { }
-
             await avaloniaSink.DisposeAsync();
         }
     }

@@ -88,12 +88,17 @@ public sealed class PauseResumeTests : IClassFixture<FfmpegBootstrapFixture>
 
             // Let some playback happen before pausing.
             await Task.Delay(500);
-            var framesAtPauseStart = videoSink.FrameCount;
 
             // Pause.
             var pause = await controller.PauseAsync();
             Assert.True(pause.IsSuccess, $"Pause failed: {pause.Error?.Message}");
             Assert.Equal(PlaybackState.Paused, controller.State);
+
+            // Counted from once the pause has returned, as frames the pipeline handed the sink.
+            // Taken before the pause, the count also took in whatever played while the pause
+            // was on its way, which a loaded runner makes as long as it likes; and the sink's
+            // own pump is a task of its own that a loaded runner can hold back.
+            var framesAtPauseStart = videoSink.SubmittedFrameCount;
 
             // Stay paused — the gate should keep frames from flowing.
             var pauseDuration = TimeSpan.FromSeconds(2);
@@ -103,7 +108,7 @@ public sealed class PauseResumeTests : IClassFixture<FfmpegBootstrapFixture>
             // the pause (tolerate a small number of in-flight frames
             // that drained through the sink-side edge before the gate
             // fully sealed off).
-            var framesAfterPauseHold = videoSink.FrameCount;
+            var framesAfterPauseHold = videoSink.SubmittedFrameCount;
             Assert.InRange(
                 framesAfterPauseHold,
                 framesAtPauseStart,
@@ -123,11 +128,12 @@ public sealed class PauseResumeTests : IClassFixture<FfmpegBootstrapFixture>
             Assert.Equal(PlaybackState.Ended, controller.State);
             Assert.Empty(errors);
 
-            // After resume, frames should have flowed past the pre-pause count.
+            // After resume, frames should have flowed past the pre-pause count. The clip's last
+            // frame is presented however late the pacer ran, and it was not before the pause.
             Assert.True(
-                videoSink.FrameCount > framesAfterPauseHold,
+                videoSink.SubmittedFrameCount > framesAfterPauseHold,
                 $"Expected video frames to flow after resume; pre-pause={framesAtPauseStart}, "
-                    + $"after-pause-hold={framesAfterPauseHold}, final={videoSink.FrameCount}."
+                    + $"after-pause-hold={framesAfterPauseHold}, final={videoSink.SubmittedFrameCount}."
             );
 
             // Wall-clock check: real run must take at least (file

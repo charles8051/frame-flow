@@ -556,10 +556,12 @@ public sealed class PlaybackContractIntegrationTests : IClassFixture<FfmpegBoots
                 $"{rowId}: Expected loop restart to reactivate audio (initial + restart), but got {audioSink.ActivateCount}."
             );
 
+            // Bounded as the file's other waits are: the count is the harness sink's pump, a task
+            // of its own that a loaded runner can hold back for a few seconds on a correct build.
             await WaitForConditionAsync(
                 rowId,
                 () => videoSink.FrameCount > framesBeforeLoop,
-                timeoutMilliseconds: 5000,
+                timeoutMilliseconds: 15000,
                 failureMessage: () =>
                     $"Expected {rowId} to continue presenting frames after loop restart, but frame count stayed at {videoSink.FrameCount} (baseline {framesBeforeLoop})."
             );

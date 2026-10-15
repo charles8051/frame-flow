@@ -99,8 +99,9 @@ public sealed class DiagnosticsSurfaceTests : IClassFixture<FfmpegBootstrapFixtu
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await playingTcs.Task.WaitAsync(cts.Token);
 
-            // Let some frames flow.
-            await Task.Delay(500);
+            // Let some frames flow: a block has reached the audio sink, so the audio decoder
+            // has produced at least one.
+            await audioSink.FirstBlockPresented.WaitAsync(cts.Token);
 
             var snapshot = controller.GetDiagnostics();
             // Either video or audio decoder should have produced frames
@@ -110,7 +111,7 @@ public sealed class DiagnosticsSurfaceTests : IClassFixture<FfmpegBootstrapFixtu
             Assert.True(
                 snapshot.Pipeline.Stream.VideoDecoder.FramesDecoded > 0
                     || snapshot.Pipeline.Stream.AudioDecoder.BuffersDecoded > 0,
-                "Expected at least one decoder to have produced frames after 500ms of playback."
+                "Expected at least one decoder to have produced frames once audio reached the sink."
             );
 
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);

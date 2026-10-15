@@ -21,10 +21,9 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
     private const string Clip = "test-video-h264-yuv420p.mp4";
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
-    // The clip presents 72 frames. A pending jump is also taken when the item before it ends,
-    // so a test that a jump took effect at once checks that the item before it presented fewer
-    // than half of those.
-    private const int HalfTheClip = 36;
+    // The clip is 72 frames at 24 fps, so its last frame is at 71/24 s.
+    private static readonly TimeSpan LastFrame = TimeSpan.FromSeconds(71.0 / 24);
+    private static readonly TimeSpan HalfFrame = TimeSpan.FromSeconds(0.5 / 24);
 
     public PlaylistQueueTests(FfmpegBootstrapFixture fixture)
     {
@@ -91,7 +90,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
 
         Assert.Equal([a, b, c, b], run.Transitions.Select(t => t.Item.Source));
         // The kept item did not play through first.
-        Assert.InRange(run.Sink.Presented - framesAtPlay, 0, HalfTheClip - 1);
+        AssertDidNotPlayThrough(run, from: framesAtPlay, toTransition: 3);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -117,7 +116,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         await aAgain.WaitAsync(Bound);
 
         Assert.Equal([a, b, a], run.Transitions.Select(t => t.Item.Source));
-        Assert.InRange(run.Sink.Presented - framesAtJump, 0, HalfTheClip - 1);
+        AssertDidNotPlayThrough(run, from: framesAtJump, toTransition: 2);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -140,7 +139,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         await aAgain.WaitAsync(Bound);
 
         Assert.Equal([a, b, a], run.Transitions.Select(t => t.Item.Source));
-        Assert.InRange(run.Sink.Presented - framesAtJump, 0, HalfTheClip - 1);
+        AssertDidNotPlayThrough(run, from: framesAtJump, toTransition: 2);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -222,6 +221,28 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
 
         Assert.Equal([a, b, c], run.Transitions.Select(t => t.Item.Source));
         Assert.DoesNotContain(bItem, run.Coordinator.Snapshot().Playlist);
+    }
+
+    /// <summary>
+    /// Asserts that the item playing from <paramref name="from"/> frames on did not play to its
+    /// end before transition <paramref name="toTransition"/> was raised: none of the frames it
+    /// presented in between is the clip's last.
+    /// </summary>
+    /// <remarks>
+    /// A pending jump is also taken when the item before it ends, so this is what tells a jump
+    /// taken at once from one taken at the end. An item that plays to its end presents its last
+    /// frame, since a late drop never takes the newest one, so this does not depend on how many
+    /// frames the runner managed to present in between.
+    /// </remarks>
+    private static void AssertDidNotPlayThrough(PlaylistRun run, int from, int toTransition)
+    {
+        var until = run.PresentedAtTransitions[toTransition];
+        var between = run.Sink.PresentedPts.Skip(from).Take(Math.Max(0, until - from)).ToArray();
+        Assert.True(
+            between.All(pts => pts < LastFrame - HalfFrame),
+            $"the item played on to its last frame before the transition: {between.Length} frames, "
+                + $"the furthest at {between.DefaultIfEmpty().Max()}"
+        );
     }
 
     private static async Task PlayToEndAsync(PlaylistRun run)

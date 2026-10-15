@@ -39,7 +39,8 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
     [RequiresFfmpegAndCorpusFact]
     public async Task RepeatOne_ThreeLoops_VideoFramesFlowEachPass()
     {
-        var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
+        var videoSink = new PtsRecordingVideoSink();
+        var (controller, audioSink) = IntegrationTestHelper.CreateController(videoSink);
         await using (controller)
         {
             var source = MediaSource.FromFile(
@@ -47,7 +48,6 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
             );
 
             var loopEvents = new List<LoopRestarted>();
-            var framesAtLoop = new List<int>();
             var threeLoopsTcs = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -55,7 +55,6 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
                 new ActionObserver<LoopRestarted>(e =>
                 {
                     loopEvents.Add(e);
-                    framesAtLoop.Add(videoSink.FrameCount);
                     if (loopEvents.Count >= 3)
                         threeLoopsTcs.TrySetResult();
                 })
@@ -75,7 +74,7 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
 
             var stopResult = await controller.UnloadAsync();
             Assert.True(stopResult.IsSuccess, $"Unload failed: {stopResult.Error}");
-            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink);
             sw.Stop();
 
             // Loop event assertions: 3 restarts with incrementing counts.
@@ -88,21 +87,10 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
             Assert.Equal(3, loopEvents[2].LoopCount);
 
             // Each loop pass must have shown video frame motion before the next
-            // restart fires. Exact counts are not pinned: the pace+gate
-            // operators split consumed/dropped differently from pass to pass.
-            // What must hold is that frames flowed.
-            Assert.True(
-                framesAtLoop[0] > 0,
-                $"Expected video frames before first loop restart, got {framesAtLoop[0]}."
-            );
-            Assert.True(
-                framesAtLoop[1] > framesAtLoop[0],
-                $"Expected video frames to advance between loop 1 and 2: {framesAtLoop[0]} -> {framesAtLoop[1]}."
-            );
-            Assert.True(
-                framesAtLoop[2] > framesAtLoop[1],
-                $"Expected video frames to advance between loop 2 and 3: {framesAtLoop[1]} -> {framesAtLoop[2]}."
-            );
+            // restart fires. Exact counts are not pinned: the pacer splits
+            // presented/dropped differently from pass to pass. What must hold is
+            // that frames flowed.
+            AssertEachPassPresented(videoSink, loopEvents.Count);
 
             // Wall-clock floor: 3 loops × file duration minus a small tolerance.
             var expected = IntegrationTestHelper
@@ -135,7 +123,8 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
     [RequiresFfmpegAndCorpusFact]
     public async Task RepeatOne_VideoOnly_ThreeLoops_FramesFlowEachPass()
     {
-        var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
+        var videoSink = new PtsRecordingVideoSink();
+        var (controller, audioSink) = IntegrationTestHelper.CreateController(videoSink);
         await using (controller)
         {
             var source = MediaSource.FromFile(
@@ -143,7 +132,6 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
             );
 
             var loopEvents = new List<LoopRestarted>();
-            var framesAtLoop = new List<int>();
             var threeLoopsTcs = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -151,7 +139,6 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
                 new ActionObserver<LoopRestarted>(e =>
                 {
                     loopEvents.Add(e);
-                    framesAtLoop.Add(videoSink.FrameCount);
                     if (loopEvents.Count >= 3)
                         threeLoopsTcs.TrySetResult();
                 })
@@ -171,7 +158,7 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
 
             var stopResult = await controller.UnloadAsync();
             Assert.True(stopResult.IsSuccess, $"Unload failed: {stopResult.Error}");
-            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink);
             sw.Stop();
 
             // Loop event assertions: 3 restarts with incrementing counts.
@@ -184,18 +171,7 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
             Assert.Equal(3, loopEvents[2].LoopCount);
 
             // Frames flowed before each restart.
-            Assert.True(
-                framesAtLoop[0] > 0,
-                $"Expected video frames before first loop restart, got {framesAtLoop[0]}."
-            );
-            Assert.True(
-                framesAtLoop[1] > framesAtLoop[0],
-                $"Expected video frames to advance between loop 1 and 2: {framesAtLoop[0]} -> {framesAtLoop[1]}."
-            );
-            Assert.True(
-                framesAtLoop[2] > framesAtLoop[1],
-                $"Expected video frames to advance between loop 2 and 3: {framesAtLoop[1]} -> {framesAtLoop[2]}."
-            );
+            AssertEachPassPresented(videoSink, loopEvents.Count);
 
             // Wall-clock floor: 3 loops × file duration minus a small tolerance.
             var expected = IntegrationTestHelper
@@ -223,5 +199,28 @@ public sealed class LoopVideoTests : IClassFixture<FfmpegBootstrapFixture>
                     + $"(3 loops × {singleDuration:F3}s - 2 s tolerance; see docs/DEFERRED_WORK.md)"
             );
         }
+    }
+
+    /// <summary>
+    /// Asserts that each pass a loop ended presented frames, found where the presented PTS go
+    /// back. Not by counting in a <see cref="LoopRestarted"/> observer: the event is raised a
+    /// command hop after the rewind, so a count read there can take in the next pass's frames.
+    /// Every pass presents its newest frame, so a pass that played shows here however the
+    /// runner was scheduled.
+    /// </summary>
+    private static void AssertEachPassPresented(PtsRecordingVideoSink videoSink, int loops)
+    {
+        var presented = videoSink.PresentedPts;
+        var passes = presented.Count == 0 ? 0 : 1;
+        for (var i = 1; i < presented.Count; i++)
+        {
+            if (presented[i] < presented[i - 1])
+                passes++;
+        }
+
+        Assert.True(
+            passes >= loops,
+            $"{loops} loops ended passes, but only {passes} passes presented frames."
+        );
     }
 }

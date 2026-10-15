@@ -6,12 +6,19 @@ using FrameFlow.Playback;
 namespace FrameFlow.Integration.Tests;
 
 /// <summary>
-/// Pacing-accuracy coverage for the
-/// controller. Asserts the wall-clock elapsed time from Playing →
-/// Ended is within tolerance of the file duration, proving the
-/// <see cref="FrameFlow.Playback.PaceUntil"/> operator throttles
-/// frames correctly against the master clock.
+/// Pacing coverage for the controller. Asserts the wall-clock elapsed time from Playing →
+/// Ended is no shorter than the file duration less a tolerance, proving the pacer
+/// throttles frames against the master clock rather than presenting at decode speed.
 /// </summary>
+/// <remarks>
+/// A floor only. A ceiling on the same interval measured the runner: a loaded machine takes
+/// longer to play a clip on a correct build. That a due frame is presented when the clock
+/// reaches it, and the clip ends when its last frame has finished displaying rather than
+/// later, is pinned without a wall clock by <c>ClockSelectVideoSinkTests</c>
+/// (<c>DeliversFramesInOrder_AtTheirClockTime</c>,
+/// <c>WaitForDrain_CompletesOnlyAfterLastFrameFinishesDisplaying</c>), and that the wallclock's
+/// waits end at their targets by <c>WallClockSourceManualTimeTests</c>.
+/// </remarks>
 [Trait("Category", "Integration")]
 public sealed class ElapsedPlaytimeTests : IClassFixture<FfmpegBootstrapFixture>
 {
@@ -23,7 +30,7 @@ public sealed class ElapsedPlaytimeTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task PacedPlayback_ElapsedTimeMatchesFileDuration()
+    public async Task PacedPlayback_TakesAtLeastTheFileDuration()
     {
         var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
         await using (controller)
@@ -83,22 +90,20 @@ public sealed class ElapsedPlaytimeTests : IClassFixture<FfmpegBootstrapFixture>
 
             Assert.Equal(PlaybackState.Ended, controller.State);
 
-            // Playing → Ended elapsed should be within tolerance of the
-            // file duration. The substrate paces video against the
-            // wallclock source (when no IClockSource audio sink), so a
-            // 3-second file should take ~3 seconds.
+            // Playing → Ended should take at least the file duration less a tolerance. The
+            // substrate paces video against the wallclock source (when no IClockSource audio
+            // sink), so a 3-second file takes ~3 seconds, and load only makes it longer.
             var elapsed = Stopwatch.GetElapsedTime(
                 Volatile.Read(ref playingTimestamp),
                 Volatile.Read(ref endedTimestamp)
             );
             var expectedDuration = TimeSpan.FromSeconds(expected.DurationSeconds);
             var tolerance = IntegrationTestHelper.WallClockTolerance(expected.DurationSeconds);
-            var delta = (elapsed - expectedDuration).Duration();
 
             Assert.True(
-                delta <= tolerance,
-                $"Playing→Ended elapsed {elapsed.TotalSeconds:F3}s outside tolerance of "
-                    + $"{expectedDuration.TotalSeconds:F3}s ±{tolerance.TotalMilliseconds:F0}ms."
+                elapsed >= expectedDuration - tolerance,
+                $"Playing→Ended elapsed {elapsed.TotalSeconds:F3}s, under "
+                    + $"{expectedDuration.TotalSeconds:F3}s -{tolerance.TotalMilliseconds:F0}ms."
             );
 
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
