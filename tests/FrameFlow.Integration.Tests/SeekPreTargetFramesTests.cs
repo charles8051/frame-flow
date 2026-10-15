@@ -32,10 +32,37 @@ namespace FrameFlow.Integration.Tests;
 /// rather than the handful a normal GOP would produce. Chosen to make a regression
 /// unmissable rather than marginal.
 /// </para>
+/// <para>
+/// <b>What is read, and when.</b> Each wait completes on the sink receiving a frame, or on the
+/// controller reporting the seek settled; the bound only stops a failing run. Where playback
+/// had reached is read from what was presented rather than assumed from how long it ran, and
+/// what the pacer presents before the seek's destination runs on without going back or
+/// skipping ahead: it holds a few frames and presents the newest one due, and a frame that
+/// leaked through the flush continues where playback was. The burst restarted from the
+/// keyframe, so it goes back.
+/// </para>
 /// </remarks>
 [Trait("Category", "Integration")]
 public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixture>
 {
+    private static readonly TimeSpan Target = TimeSpan.FromSeconds(7);
+
+    /// <summary>Where playback has reached before the seek.</summary>
+    private static readonly TimeSpan Played = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>How far past the target to watch, so frames presented after it are seen.</summary>
+    private static readonly TimeSpan Watched = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The most two frames presented one after the other may skip while playback runs on: a few
+    /// the pacer dropped, or the frames between the last presented and one that leaked through
+    /// the flush. The span the defect skipped from the keyframe to the target is seconds.
+    /// </summary>
+    private static readonly TimeSpan MaxGap = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>Bounds a failure only: the fixture's decode walk from its one keyframe to the target.</summary>
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     private readonly FfmpegBootstrapFixture _fixture;
 
     public SeekPreTargetFramesTests(FfmpegBootstrapFixture fixture) => _fixture = fixture;
@@ -43,7 +70,6 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
     [RequiresFfmpegAndCorpusFact]
     public async Task SeekingIntoAGop_DoesNotPresentTheFramesBeforeTheTarget()
     {
-        var target = TimeSpan.FromSeconds(7);
         var video = new PtsRecordingVideoSink();
         var controller = PlaybackController.Create(
             videoSink: video,
@@ -53,58 +79,38 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
 
         await using (controller)
         {
-            var source = MediaSource.FromFile(
-                IntegrationTestEnvironment.GetCorpusFile("test-1080p60-h264-aac.mp4")!
-            );
-            Assert.True((await controller.LoadAsync(source)).IsSuccess);
+            Assert.True((await controller.LoadAsync(Fixture())).IsSuccess);
             Assert.True((await controller.PlayAsync()).IsSuccess);
 
             // Reach steady playback well before the target, so the seek is a real forward
             // jump over a span the decoder has to walk.
-            await Task.Delay(1500);
-            Assert.True((await controller.SeekAsync(target)).IsSuccess);
-            await Task.Delay(2500);
+            await video.WhenPresented(pts => pts >= Played).WaitAsync(Bound);
+            Assert.True((await controller.SeekAsync(Target)).IsSuccess);
+            await video.WhenPresented(pts => pts >= Target + Watched).WaitAsync(Bound);
             await controller.PauseAsync();
 
             var presented = video.PresentedPts;
-            var firstAtTarget = presented
-                .Select((pts, i) => (pts, i))
-                .Where(x => x.pts >= target)
-                .Select(x => (int?)x.i)
-                .FirstOrDefault();
+            var firstAtTarget = FirstAtTarget(presented);
 
-            Assert.True(
-                firstAtTarget is not null,
-                "playback never reached the seek target — the floor discarded everything"
-            );
-
-            // Everything from the seek destination onward must be at or after it. Frames
-            // before firstAtTarget are pre-seek content: playback up to 1.5 s, plus at most
-            // one frame that leaked through the flush (a separate, already-documented
-            // defect — see SubstrateSession's class doc and docs/DEFERRED_WORK.md).
-            var afterArrival = presented.Skip(firstAtTarget!.Value).ToArray();
+            // Everything from the seek destination onward must be at or after it.
+            var afterArrival = presented.Skip(firstAtTarget).ToArray();
             Assert.All(
                 afterArrival,
                 pts =>
                     Assert.True(
-                        pts >= target,
+                        pts >= Target,
                         $"a frame at {pts.TotalSeconds:F3}s presented after the seek reached "
-                            + $"{target.TotalSeconds:F1}s — pre-target reference frames are "
+                            + $"{Target.TotalSeconds:F1}s — pre-target reference frames are "
                             + "being displayed again"
                     )
             );
 
-            // The defect delivered the entire 0.0 -> 7.0 s run, so the count is the signal
-            // that matters: 420 pre-target frames then, at most a handful of pre-seek ones
-            // now.
-            var beforeArrival = presented.Take(firstAtTarget.Value).Count(pts => pts >= TimeSpan.Zero);
-            var preSeekTail = presented.Take(firstAtTarget.Value).Count(pts => pts > TimeSpan.FromSeconds(2));
-            Assert.True(
-                preSeekTail <= 2,
-                $"{preSeekTail} frames between 2 s and the target presented before playback "
-                    + $"reached it (of {beforeArrival} before arrival) — the seek is "
-                    + "fast-forwarding through the GOP again"
-            );
+            // Frames before the destination are pre-seek content: playback up to where the
+            // seek found it, plus at most one frame that leaked through the flush (a separate,
+            // already-documented defect — see SubstrateSession's class doc and
+            // docs/DEFERRED_WORK.md). They run on from the start of the clip. The defect
+            // delivered the whole 0.0 -> 7.0 s run from the keyframe after them.
+            AssertRunsOnUntilTheTarget(presented, from: 0, "before playback reached the target");
         }
     }
 
@@ -114,7 +120,6 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
         // Load, seek, then play. The seek before the first play holds, and the first play starts
         // the run from where the clock stands, the one start that does not follow a reposition
         // directly, so it is where the floor is taken from the run's origin.
-        var target = TimeSpan.FromSeconds(7);
         var video = new PtsRecordingVideoSink();
         var controller = PlaybackController.Create(
             videoSink: video,
@@ -124,13 +129,10 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
 
         await using (controller)
         {
-            var source = MediaSource.FromFile(
-                IntegrationTestEnvironment.GetCorpusFile("test-1080p60-h264-aac.mp4")!
-            );
-            Assert.True((await controller.LoadAsync(source)).IsSuccess);
-            Assert.True((await controller.SeekAsync(target)).IsSuccess);
+            Assert.True((await controller.LoadAsync(Fixture())).IsSuccess);
+            Assert.True((await controller.SeekAsync(Target)).IsSuccess);
             Assert.True((await controller.PlayAsync()).IsSuccess);
-            await Task.Delay(2500);
+            await video.WhenPresented(pts => pts >= Target + Watched).WaitAsync(Bound);
             await controller.PauseAsync();
 
             var presented = video.PresentedPts;
@@ -141,9 +143,9 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
                 presented,
                 pts =>
                     Assert.True(
-                        pts >= target,
+                        pts >= Target,
                         $"a frame at {pts.TotalSeconds:F3}s presented on a first play that "
-                            + $"was seeked to {target.TotalSeconds:F1}s beforehand"
+                            + $"was seeked to {Target.TotalSeconds:F1}s beforehand"
                     )
             );
         }
@@ -157,7 +159,6 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
         // run that plays from the target. The floor therefore has to survive from the seek
         // to that later launch, which is why it is carried on the session rather than
         // applied at the flush or at the seek's own relaunch.
-        var target = TimeSpan.FromSeconds(7);
         var video = new PtsRecordingVideoSink();
         var controller = PlaybackController.Create(
             videoSink: video,
@@ -167,44 +168,92 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
 
         await using (controller)
         {
-            var source = MediaSource.FromFile(
-                IntegrationTestEnvironment.GetCorpusFile("test-1080p60-h264-aac.mp4")!
-            );
-            Assert.True((await controller.LoadAsync(source)).IsSuccess);
+            Assert.True((await controller.LoadAsync(Fixture())).IsSuccess);
             Assert.True((await controller.PlayAsync()).IsSuccess);
-            await Task.Delay(1000);
+            await video.WhenPresented(pts => pts >= Played).WaitAsync(Bound);
 
             Assert.True((await controller.PauseAsync()).IsSuccess);
-            await Task.Delay(200);
-            Assert.True((await controller.SeekAsync(target)).IsSuccess);
+            await SeekAndSettleAsync(controller, Target);
 
-            // Let any frame still in flight from before the seek land, so the snapshot
-            // below is a clean boundary rather than a race.
-            await Task.Delay(200);
-            var beforeResume = video.PresentedPts.Count;
+            var beforeResume = video.Count;
             Assert.True((await controller.PlayAsync()).IsSuccess);
-            await Task.Delay(2500);
+            await video
+                .WhenPresented(pts => pts >= Target + Watched, skip: beforeResume)
+                .WaitAsync(Bound);
             await controller.PauseAsync();
 
-            var afterResume = video.PresentedPts.Skip(beforeResume).ToArray();
-            Assert.NotEmpty(afterResume);
-            Assert.Contains(afterResume, pts => pts >= target);
+            var presented = video.PresentedPts;
+            Assert.Contains(presented.Skip(beforeResume), pts => pts >= Target);
 
             // Asserted over the gap between where playback had reached and the target, not
             // over "everything is at or past the target". A frame that leaked through the
-            // flush continues the pre-seek position and can land after this snapshot — a
+            // flush continues the pre-seek position and can land after the resume — a
             // separate, already-documented defect, and one this test would otherwise fail
             // on intermittently. The gap is where the burst lived: it delivered the whole
             // 0 -> 7 s run, hundreds of frames of it in here.
-            var inTheGap = afterResume
-                .Where(pts => pts > TimeSpan.FromSeconds(2) && pts < target)
-                .ToArray();
-            Assert.True(
-                inTheGap.Length == 0,
-                $"{inTheGap.Length} frames between 2 s and the {target.TotalSeconds:F1}s "
-                    + "target presented after resuming from a paused seek — the floor did "
-                    + "not survive to the launch that used it"
+            AssertRunsOnUntilTheTarget(
+                presented,
+                from: beforeResume,
+                "after resuming from a paused seek — the floor did not survive to the launch "
+                    + "that used it"
             );
         }
+    }
+
+    private static MediaSource Fixture() =>
+        MediaSource.FromFile(IntegrationTestEnvironment.GetCorpusFile("test-1080p60-h264-aac.mp4")!);
+
+    private static int FirstAtTarget(IReadOnlyList<TimeSpan> presented)
+    {
+        for (var i = 0; i < presented.Count; i++)
+        {
+            if (presented[i] >= Target)
+                return i;
+        }
+
+        Assert.Fail("playback never reached the seek target — the floor discarded everything");
+        return -1;
+    }
+
+    /// <summary>
+    /// Asserts that the frames presented from <paramref name="from"/> until the first at or past
+    /// the target run on from the frame before them, never going back and never skipping more
+    /// than <see cref="MaxGap"/>.
+    /// </summary>
+    private static void AssertRunsOnUntilTheTarget(
+        IReadOnlyList<TimeSpan> presented,
+        int from,
+        string when
+    )
+    {
+        var arrival = FirstAtTarget(presented);
+        for (var i = Math.Max(from, 1); i < arrival; i++)
+        {
+            var step = presented[i] - presented[i - 1];
+            Assert.True(
+                step > TimeSpan.Zero && step <= MaxGap,
+                $"a frame at {presented[i].TotalSeconds:F3}s followed one at "
+                    + $"{presented[i - 1].TotalSeconds:F3}s {when}, and {arrival - i} more came "
+                    + "before the target: frames between the keyframe and the target are being "
+                    + "presented, so the seek is fast-forwarding through the GOP again"
+            );
+        }
+    }
+
+    /// <summary>Seeks, and returns once the controller reports the seek finished.</summary>
+    private static async Task SeekAndSettleAsync(IPlaybackController controller, TimeSpan target)
+    {
+        var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = controller.SeekStateChanged.Subscribe(
+            new ActionObserver<StateTransition<SeekState>>(t =>
+            {
+                if (t.Current == SeekState.NotSeeking)
+                    settled.TrySetResult();
+            })
+        );
+
+        var seek = await controller.SeekAsync(target);
+        Assert.True(seek.IsSuccess, $"Seek failed: {seek.Error?.Message}");
+        await settled.Task.WaitAsync(Bound);
     }
 }

@@ -15,6 +15,7 @@ internal sealed class PlaylistRun : IAsyncDisposable
     private readonly Lock _gate = new();
     private readonly List<PlaybackError> _errors = [];
     private readonly List<PlaylistTransition> _transitions = [];
+    private readonly List<int> _presentedAtTransitions = [];
     private readonly List<(PlaybackState State, TaskCompletionSource Signal)> _stateWaiters = [];
     private readonly List<(IMediaSource Source, TaskCompletionSource Signal)> _sourceWaiters = [];
     private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
@@ -54,6 +55,7 @@ internal sealed class PlaylistRun : IAsyncDisposable
                     lock (_gate)
                     {
                         _transitions.Add(t);
+                        _presentedAtTransitions.Add(Sink.Presented);
                         foreach (var (source, signal) in _sourceWaiters)
                         {
                             if (ReferenceEquals(source, t.Item.Source))
@@ -121,6 +123,20 @@ internal sealed class PlaylistRun : IAsyncDisposable
         {
             lock (_gate)
                 return _transitions.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// How many frames the sink had been handed as each of <see cref="Transitions"/> was raised.
+    /// The session raises a transition as the item it names starts, on its own thread, so every
+    /// frame the item before it presented is counted.
+    /// </summary>
+    public IReadOnlyList<int> PresentedAtTransitions
+    {
+        get
+        {
+            lock (_gate)
+                return _presentedAtTransitions.ToArray();
         }
     }
 
@@ -262,16 +278,27 @@ internal sealed class PlaylistRun : IAsyncDisposable
 }
 
 /// <summary>
-/// A video sink that counts the frames presented to it and discards them, and completes a
-/// signal when the count reaches a given value.
+/// A video sink that counts the frames presented to it, records their timestamps and discards
+/// them, and completes a signal when the count reaches a given value.
 /// </summary>
 internal sealed class PresentCountingVideoSink : IVideoSink
 {
     private readonly Lock _gate = new();
     private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
+    private readonly List<TimeSpan> _presentedPts = [];
     private int _presented;
 
     public int Presented => Volatile.Read(ref _presented);
+
+    /// <summary>Every presented frame's PTS, in the order presented.</summary>
+    public IReadOnlyList<TimeSpan> PresentedPts
+    {
+        get
+        {
+            lock (_gate)
+                return _presentedPts.ToArray();
+        }
+    }
 
     /// <summary>Completes once at least <paramref name="count"/> frames have been presented.</summary>
     public Task WhenPresented(int count)
@@ -289,9 +316,11 @@ internal sealed class PresentCountingVideoSink : IVideoSink
 
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
+        var pts = frame.Pts;
         frame.Dispose();
         lock (_gate)
         {
+            _presentedPts.Add(pts);
             var presented = Interlocked.Increment(ref _presented);
             foreach (var (count, signal) in _waiters)
             {

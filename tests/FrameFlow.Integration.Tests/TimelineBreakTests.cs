@@ -28,6 +28,12 @@ namespace FrameFlow.Integration.Tests;
 /// run decodes; its stretches are checked for where they start and that they run forward.
 /// </para>
 /// <para>
+/// A video stretch may start a frame or two late, never early. The pacer holds a few frames and
+/// presents the newest one due, so a pacer that comes back late to a new run drops the frames
+/// before that one: how late depends on how the runner was scheduled, and the ring's depth bounds
+/// it. Nothing from before the start is ever on the new timeline, which is what is under test.
+/// </para>
+/// <para>
 /// These tests play in real time, which is why they are in this suite (ADR-0072 rule 6). Each wait
 /// completes on a sink receiving an item; the bound only stops a failing run. The player is
 /// disposed before the record is read, so nothing is delivered while it is.
@@ -53,6 +59,9 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
 
     /// <summary>The audio a run starts with is cut at its start, to within a sample.</summary>
     private static readonly TimeSpan AudioTolerance = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>Where an audio stretch may start: at its start, to within a sample.</summary>
+    private static readonly (TimeSpan Early, TimeSpan Late) AudioStart = (AudioTolerance, AudioTolerance);
 
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
@@ -242,8 +251,8 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Single(video);
         Assert.Single(audio);
         AssertSameTimelines(video, audio);
-        AssertRunsForwardFrom(video[0], Target, HalfFrame, "video");
-        AssertRunsForwardFrom(audio[0], Target, AudioTolerance, "audio");
+        AssertRunsForwardFrom(video[0], Target, VideoStart(Fixture), "video");
+        AssertRunsForwardFrom(audio[0], Target, AudioStart, "audio");
         Assert.Single(rig.Log.Launches);
     }
 
@@ -286,8 +295,8 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True(video.Count >= 3, $"video went through {video.Count} timelines");
         var promoted = video[^1];
         var lastLoop = video[^2];
-        AssertRunsForwardFrom(promoted, Target, HalfFrame, "video");
-        AssertRunsForwardFrom(audio[^1], Target, AudioTolerance, "audio");
+        AssertRunsForwardFrom(promoted, Target, VideoStart(Fixture), "video");
+        AssertRunsForwardFrom(audio[^1], Target, AudioStart, "audio");
         Assert.All(video.SkipLast(1).SelectMany(s => s.Pts), pts => Assert.True(pts < TimeSpan.FromMilliseconds(600)));
 
         // The scenario: the promoted item's run launched before the last loop's did.
@@ -350,12 +359,12 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         // the old position is on it, first or later.
         var (video, audio) = rig.Segments();
         Assert.Equal(2, video.Count);
-        AssertContinuesFrom(video[1], to, HalfFrame, "video");
+        AssertContinuesFrom(video[1], to, VideoStart(fixture), "video");
         if (withAudio)
         {
             Assert.Equal(2, audio.Count);
             AssertSameTimelines(video, audio);
-            AssertContinuesFrom(audio[1], to, AudioTolerance, "audio");
+            AssertContinuesFrom(audio[1], to, AudioStart, "audio");
         }
     }
 
@@ -374,9 +383,9 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         AssertSameTimelines(video, audio);
 
         AssertContinues(video[0], "video");
-        AssertContinuesFrom(video[1], after, HalfFrame, "video");
+        AssertContinuesFrom(video[1], after, VideoStart(Fixture), "video");
         AssertContinues(audio[0], "audio");
-        AssertContinuesFrom(audio[1], after, AudioTolerance, "audio");
+        AssertContinuesFrom(audio[1], after, AudioStart, "audio");
     }
 
     /// <summary>
@@ -390,29 +399,59 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(2, audio.Count);
         AssertSameTimelines(video, audio);
 
-        AssertRunsForwardFrom(video[0], from, HalfFrame, "video");
-        AssertRunsForwardFrom(audio[0], from, AudioTolerance, "audio");
+        AssertRunsForwardFrom(video[0], from, VideoStart(Fixture), "video");
+        AssertRunsForwardFrom(audio[0], from, AudioStart, "audio");
         AssertContinues(video[1], "video");
         AssertContinues(audio[1], "audio");
         Assert.True(video[1].Pts[0] < from - HalfFrame, $"video after the break starts at {video[1].Pts[0]}");
         Assert.True(audio[1].Pts[0] < from - AudioTolerance, $"audio after the break starts at {audio[1].Pts[0]}");
     }
 
-    /// <summary>A stretch that starts at <paramref name="start"/> and runs forward from it.</summary>
-    private static void AssertRunsForwardFrom(Segment segment, TimeSpan start, TimeSpan tolerance, string stream)
+    /// <summary>
+    /// A stretch that starts at <paramref name="start"/>, no further before it and no further past
+    /// it than <paramref name="tolerance"/> allows, and runs forward from it.
+    /// </summary>
+    private static void AssertRunsForwardFrom(
+        Segment segment,
+        TimeSpan start,
+        (TimeSpan Early, TimeSpan Late) tolerance,
+        string stream
+    )
     {
         Assert.True(
-            (segment.Pts[0] - start).Duration() <= tolerance,
+            segment.Pts[0] >= start - tolerance.Early && segment.Pts[0] <= start + tolerance.Late,
             $"{stream}: a timeline starts at {segment.Pts[0]}, not {start}: {Describe(segment)}"
         );
         AssertRunsForward(segment, stream);
     }
 
     /// <summary>
+    /// Where a video stretch of <paramref name="fixture"/> may start: within half a frame before
+    /// its start, and at most the frames before the pacer's first after it, since the pacer drops
+    /// all but the newest of the frames it holds when it comes back to them late.
+    /// </summary>
+    private static (TimeSpan Early, TimeSpan Late) VideoStart(string fixture)
+    {
+        var framesPerSecond = fixture switch
+        {
+            OneKeyframe => 60.0,
+            Reordered => 24.0,
+            _ => 30.0,
+        };
+        var dropped = TimeSpan.FromSeconds((ClockSelectVideoSink.DefaultCapacity - 1) / framesPerSecond);
+        return (HalfFrame, dropped + HalfFrame);
+    }
+
+    /// <summary>
     /// A stretch that starts at <paramref name="start"/> and runs on from it without a jump wider
     /// than <see cref="MaxGap"/>.
     /// </summary>
-    private static void AssertContinuesFrom(Segment segment, TimeSpan start, TimeSpan tolerance, string stream)
+    private static void AssertContinuesFrom(
+        Segment segment,
+        TimeSpan start,
+        (TimeSpan Early, TimeSpan Late) tolerance,
+        string stream
+    )
     {
         AssertRunsForwardFrom(segment, start, tolerance, stream);
         AssertContinues(segment, stream);

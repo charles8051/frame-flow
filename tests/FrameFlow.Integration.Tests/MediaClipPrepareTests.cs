@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using FrameFlow.Graph;
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
@@ -61,8 +62,10 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
         int deactivations;
         await using (player)
         {
-            var bItem = await player.AddAsync(b);
+            // b goes last, so nothing follows it: a run slow enough for b to play to its end
+            // finds the queue ended rather than c started in its place.
             var cItem = await player.AddAsync(c);
+            var bItem = await player.AddAsync(b);
 
             Assert.True((await player.PlayAsync()).IsSuccess);
             await video.WhenPresented(pts => pts >= a.Start + PastStart).WaitAsync(Bound);
@@ -87,6 +90,26 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
             // frame of b from before its start would fall below that.
             var aReached = video.PresentedPts.Max();
             var mark = video.Count;
+
+            // The position is read as b's first frame past its start is presented, on the
+            // presenting thread, so b is the item playing when it is read however long the
+            // runner takes to get back to the test. The time since the jump began is read there
+            // too, after the position, on the position clock's own source and on a monotonic
+            // one, and the longer is taken: an adjustment of the system clock during the run
+            // then shortens neither the bound nor what it is compared with alone.
+            (TimeSpan Position, TimeSpan SinceJump)? atB = null;
+            var beforeJump = TimeProvider.System.GetUtcNow();
+            var beforeJumpTicks = Stopwatch.GetTimestamp();
+            video.Presenting = pts =>
+            {
+                if (atB is null && pts >= b.Start + PastStart)
+                {
+                    var position = player.Position;
+                    var onClock = TimeProvider.System.GetUtcNow() - beforeJump;
+                    var monotonic = Stopwatch.GetElapsedTime(beforeJumpTicks);
+                    atB = (position, onClock > monotonic ? onClock : monotonic);
+                }
+            };
             Assert.True((await player.JumpToAsync(bItem)).IsSuccess);
             await video.WhenPresented(pts => pts >= b.Start + PastStart, skip: mark).WaitAsync(Bound);
 
@@ -97,8 +120,11 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
                 $"after the jump, frames fell back below {aReached}: {string.Join(", ", beforeB)}"
             );
 
-            // The shared clocks were seated on b's start when its runtime was attached.
-            Assert.InRange(player.Position, b.Start, b.Start + TimeSpan.FromSeconds(2));
+            // The shared clocks were seated on b's start when its runtime was attached, which the
+            // jump did after it began, so they have run on from there for no longer than the time
+            // measured since. Read before the frame's waiter was released.
+            var (position, sinceJump) = atB!.Value;
+            Assert.InRange(position, b.Start, b.Start + sinceJump);
         }
 
         // a's runtime deactivated the sink when the jump disposed it, and b's when the player was

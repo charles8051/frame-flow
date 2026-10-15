@@ -1,5 +1,6 @@
 using FrameFlow.Decoding;
 using FrameFlow.Graph;
+using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 
@@ -14,8 +15,8 @@ namespace FrameFlow.Integration.Tests;
 /// <para>
 /// <b>Why this lives in the integration suite.</b> Moved from <c>FrameFlow.Playback.Tests</c>.
 /// These tests drive real FFmpeg decode through the whole playback stack, and several assert real
-/// durations — that pacing keeps playback near real time, that a loop seam is close to gapless in
-/// wall-clock terms. ADR-0072 rule 6 names this suite as the one allowed to measure elapsed time,
+/// durations — that pacing keeps playback from running ahead of real time, across loops as well.
+/// ADR-0072 rule 6 names this suite as the one allowed to measure elapsed time,
 /// so tests of that kind belong here rather than behind an exemption in a unit project. They take
 /// the suite's <see cref="FfmpegBootstrapFixture"/> instead of bootstrapping FFmpeg themselves.
 /// xUnit builds one fixture instance per class and may build them in parallel; the fixture's
@@ -25,6 +26,9 @@ namespace FrameFlow.Integration.Tests;
 /// </remarks>
 public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBootstrapFixture>
 {
+    /// <summary>Bounds a failure only.</summary>
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     public PlaybackControllerIntegrationTests(FfmpegBootstrapFixture fixture) => _ = fixture;
 
     [RequiresFfmpegAndCorpusFact]
@@ -72,8 +76,9 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.True(ended == endedTcs.Task, "Timed out waiting for Ended state.");
 
         Assert.Equal(PlaybackState.Ended, controller.State);
-        // Corpus file is 3s @ 24fps → ~72 frames.
-        Assert.InRange(presented, 60, 80);
+        // Every frame of the file was presented or counted as dropped late. How many of each
+        // depends on how the runner was scheduled; the sum does not.
+        AssertEveryFrameAccountedFor(controller, "test-video-h264-yuv420p.mp4", presented);
         // Pacing should keep playback to roughly wallclock — allow a wide
         // tolerance for first-frame headstart, ticker latency, and the
         // last-frame "race to EOS" (no enforcement of pacing past the
@@ -135,18 +140,18 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         );
         Assert.Equal(PlaybackState.Ended, controller.State);
 
-        // Video played to completion (3s @ 30fps ≈ 90 frames) — far past the
-        // ~512-packet audio-buffer boundary the deadlock froze at.
-        Assert.InRange(presented, 70, 100);
+        // Video played to completion (3s @ 30fps = 90 frames, each presented or counted as
+        // dropped late) — far past the ~512-packet audio-buffer boundary the deadlock froze at.
+        var videoFrames = AssertEveryFrameAccountedFor(controller, "test-av-h264-aac.mp4", presented);
 
         // Discard proof: the demux pump read only video packets. Pre-fix it also
         // pumped the ~129 audio packets, pushing the count well above the video
         // total; discarding the audio stream keeps it in the video-only band.
         var packetsRead = controller.GetDiagnostics().Pipeline.Stream.Demux.PacketsRead;
         Assert.True(
-            packetsRead < presented + 40,
-            $"Demux read {packetsRead} packets but only {presented} video frames were "
-                + "presented; the surplus means the audio stream was pumped, not discarded."
+            packetsRead < videoFrames + 40,
+            $"Demux read {packetsRead} packets for {videoFrames} video frames; the surplus "
+                + "means the audio stream was pumped, not discarded."
         );
     }
 
@@ -162,8 +167,7 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.NotNull(path);
 
 
-        var presented = 0;
-        var sink = new CountingVideoSink(_ => Interlocked.Increment(ref presented));
+        var sink = new PresentCountingVideoSink();
 
         await using var controller = PlaybackController.Create(
             videoSink: sink,
@@ -177,24 +181,23 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.True(play.IsSuccess);
         Assert.Equal(PlaybackState.Playing, controller.State);
 
-        // Wait for ~3 paced frames (~125ms at 24fps).
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-        while (presented < 3 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(20);
-        Assert.True(presented >= 3, $"Expected ≥3 frames before pause; saw {presented}.");
+        // Wait for 3 paced frames (~125ms at 24fps).
+        await sink.WhenPresented(3).WaitAsync(Bound);
 
         var pause = await controller.PauseAsync();
         Assert.True(pause.IsSuccess, $"Pause failed: {pause.Error?.Message}");
         Assert.Equal(PlaybackState.Paused, controller.State);
 
-        var pausedCount = presented;
+        var pausedCount = sink.Presented;
 
         // After pause, the sink should stop receiving frames. Tolerate a
         // couple of in-flight frames between the source and the gate
         // (the pacing operator may have one queued; the source may have
-        // one in the source→pace edge).
+        // one in the source→pace edge). Counted from after the pause
+        // returned, so how many can land is bounded by the pipeline's
+        // structure rather than by how long the pause took.
         await Task.Delay(300);
-        var afterPauseCount = presented;
+        var afterPauseCount = sink.Presented;
         Assert.InRange(afterPauseCount, pausedCount, pausedCount + 3);
 
         // Resume — gate re-opens, frames flow again.
@@ -202,13 +205,7 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.True(resume.IsSuccess, $"Resume failed: {resume.Error?.Message}");
         Assert.Equal(PlaybackState.Playing, controller.State);
 
-        deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (presented < afterPauseCount + 3 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(20);
-        Assert.True(
-            presented >= afterPauseCount + 3,
-            $"Expected resume to produce more frames; saw {presented} (after-pause was {afterPauseCount})."
-        );
+        await sink.WhenPresented(afterPauseCount + 3).WaitAsync(Bound);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -225,12 +222,7 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.NotNull(path);
 
 
-        var ptsValues = new List<TimeSpan>();
-        var sink = new CountingVideoSink(frame =>
-        {
-            lock (ptsValues)
-                ptsValues.Add(frame.Pts);
-        });
+        var sink = new PtsRecordingVideoSink();
 
         await using var controller = PlaybackController.Create(
             videoSink: sink,
@@ -244,16 +236,7 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.True(play.IsSuccess);
 
         // Wait for a few paced frames before seeking.
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-        while (true)
-        {
-            int count;
-            lock (ptsValues)
-                count = ptsValues.Count;
-            if (count >= 3 || DateTimeOffset.UtcNow >= deadline)
-                break;
-            await Task.Delay(20);
-        }
+        await sink.WhenPresented(_ => true, skip: 2).WaitAsync(Bound);
 
         // 3-second corpus file → seek to 1.5s (mid-stream) to leave
         // headroom for post-seek frames to arrive before EOS.
@@ -261,27 +244,13 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         var seek = await controller.SeekAsync(seekTarget);
         Assert.True(seek.IsSuccess, $"Seek failed: {seek.Error?.Message}");
 
-        // Capture the pre-seek frame count so we can assert post-seek
-        // frames have new PTS values.
-        int preSeekCount;
-        lock (ptsValues)
-            preSeekCount = ptsValues.Count;
+        // Capture the pre-seek frame count so we can wait for frames after it.
+        var preSeekCount = sink.Count;
 
-        // Wait for post-seek frames to arrive (up to 5s for any frame).
-        deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (true)
-        {
-            int count;
-            lock (ptsValues)
-                count = ptsValues.Count;
-            if (count > preSeekCount || DateTimeOffset.UtcNow >= deadline)
-                break;
-            await Task.Delay(20);
-        }
+        // Wait for post-seek frames to arrive.
+        await sink.WhenPresented(_ => true, skip: preSeekCount).WaitAsync(Bound);
 
-        List<TimeSpan> postSeekPts;
-        lock (ptsValues)
-            postSeekPts = ptsValues.Skip(preSeekCount).ToList();
+        var postSeekPts = sink.PresentedPts.Skip(preSeekCount).ToList();
 
         Assert.NotEmpty(postSeekPts);
         // After seek, frames should arrive at PTS values consistent
@@ -351,20 +320,13 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         //   (3) the master clock re-seats to the loop epoch correctly — playback
         //       stays near realtime across loops with no PaceUntil stall (a drifted
         //       epoch would hang the pacer and frame flow would stop advancing);
-        //   (4) no frame leaks across the boundary / no native fault — a sustained
-        //       multi-loop run with the sink disposing every frame stays alive.
+        //   (4) no frame leaks across the boundary / no native fault — every pass
+        //       that ended played through to the clip's last frame.
         var path = IntegrationTestEnvironment.GetCorpusFile("test-subsecond.mp4");
         Assert.NotNull(path);
 
 
-        var loopCount = 0; // updated by the LoopRestarted observer (loop epoch id)
-        var samples = new List<(int Loop, TimeSpan Pts)>();
-        var sink = new CountingVideoSink(frame =>
-        {
-            var epoch = Volatile.Read(ref loopCount);
-            lock (samples)
-                samples.Add((epoch, frame.Pts));
-        });
+        var sink = new PtsRecordingVideoSink();
 
         await using var controller = PlaybackController.Create(
             videoSink: sink,
@@ -373,13 +335,23 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
             initialRepeatMode: RepeatMode.One
         );
 
+        // Let the 0.5s clip loop for several iterations. A correct cheap rewind
+        // keeps producing frames the whole time; a broken clock epoch would stall
+        // the pacer and the loop count would stop climbing.
+        const int targetLoops = 3;
         var loopEvents = new List<int>();
+        var targetReached = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         using var loopSub = controller.LoopRestarted.Subscribe(
             new InlineObserver<LoopRestarted>(e =>
             {
-                Volatile.Write(ref loopCount, e.LoopCount);
                 lock (loopEvents)
+                {
                     loopEvents.Add(e.LoopCount);
+                    if (loopEvents.Count >= targetLoops)
+                        targetReached.TrySetResult();
+                }
             })
         );
 
@@ -391,21 +363,7 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         var play = await controller.PlayAsync();
         Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
 
-        // Let the 0.5s clip loop for several iterations. Stop once we have at
-        // least 3 loop boundaries (or a generous wall-clock cap). A correct
-        // cheap rewind keeps producing frames the whole time; a broken clock
-        // epoch would stall the pacer and the loop count would stop climbing.
-        const int targetLoops = 3;
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(12);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            int loops;
-            lock (loopEvents)
-                loops = loopEvents.Count;
-            if (loops >= targetLoops)
-                break;
-            await Task.Delay(25);
-        }
+        await targetReached.Task.WaitAsync(Bound);
         var elapsedToTargetLoops = playStart.Elapsed;
 
         // The controller stays in Playing across RepeatMode.One loops (it never
@@ -415,9 +373,6 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         List<int> observedLoops;
         lock (loopEvents)
             observedLoops = [.. loopEvents];
-        List<(int Loop, TimeSpan Pts)> observed;
-        lock (samples)
-            observed = [.. samples];
 
         // (1) The loop fired repeatedly, with a strictly increasing 1-based count.
         Assert.True(
@@ -427,42 +382,60 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         for (int i = 0; i < observedLoops.Count; i++)
             Assert.Equal(i + 1, observedLoops[i]);
 
-        // (4) Frames kept flowing across the loops without a fault.
+        // The passes, split where the presented PTS go back. Not by LoopRestarted: it is raised
+        // a command hop after the rewind, so the next pass's first frames can be presented before
+        // an observer of it runs. Every pass presents its newest frame, so each pass that ended
+        // before the last loop event is one of these, and the one playing now may be another.
+        var passes = new List<List<TimeSpan>>();
+        foreach (var pts in sink.PresentedPts)
+        {
+            if (passes.Count == 0 || pts < passes[^1][^1])
+                passes.Add([]);
+            passes[^1].Add(pts);
+        }
         Assert.True(
-            observed.Count >= 20,
-            $"Expected sustained frame flow across loops; saw {observed.Count} frames."
+            passes.Count >= observedLoops.Count,
+            $"{observedLoops.Count} loops, but only {passes.Count} passes presented frames."
         );
 
-        // (2) Each loop epoch re-decodes from frame 0: the first frame presented
-        // in a given epoch starts near zero, and the max PTS within an epoch never
-        // exceeds the clip duration (a continuation-past-EOS would keep climbing).
-        // Look at epochs >= 1 (post-first-loop) since epoch 0 is the initial play.
-        var byEpoch = observed
-            .Where(s => s.Loop >= 1)
-            .GroupBy(s => s.Loop)
-            .OrderBy(g => g.Key)
-            .ToList();
-        Assert.NotEmpty(byEpoch);
-
-        var tolerance = TimeSpan.FromMilliseconds(200);
-        foreach (var epoch in byEpoch)
+        // (4) Every pass that ended played through to the clip's last frame. A late drop never
+        // takes the newest frame, so this holds however the runner was scheduled.
+        var clip = IntegrationTestHelper.GetCorpusExpectation("test-subsecond.mp4")!;
+        var frameInterval = TimeSpan.FromSeconds(1.0 / clip.Fps!.Value);
+        var lastFrame = frameInterval * (clip.ExpectedVideoFrames!.Value - 1);
+        for (int i = 0; i < passes.Count - 1; i++)
         {
-            var ptsList = epoch.Select(s => s.Pts).ToList();
-            var first = ptsList[0];
-            var max = ptsList.Max();
+            Assert.True(
+                passes[i].Max() >= lastFrame - frameInterval / 2,
+                $"Pass {i} ended at {passes[i].Max().TotalMilliseconds:F0}ms, short of the clip's "
+                    + $"last frame at {lastFrame.TotalMilliseconds:F0}ms."
+            );
+        }
 
-            // Restart from frame 0: first presented PTS of the epoch is near zero.
+        // (2) Each loop pass re-decodes from frame 0: the first frame presented in a
+        // pass starts near zero, and the max PTS within a pass never exceeds the clip
+        // duration (a continuation-past-EOS would keep climbing). Look at passes >= 1
+        // (post-first-loop) since pass 0 is the initial play. The pacer holds at most
+        // three frames, and a pass starts on an empty one, so its first frame is one
+        // of the first three however late the pacer ran.
+        var tolerance = TimeSpan.FromMilliseconds(200);
+        for (int i = 1; i < passes.Count; i++)
+        {
+            var first = passes[i][0];
+            var max = passes[i].Max();
+
+            // Restart from frame 0: first presented PTS of the pass is near zero.
             Assert.True(
                 first <= tolerance,
-                $"Loop epoch {epoch.Key}: first presented PTS was {first.TotalMilliseconds:F0}ms, "
+                $"Loop pass {i}: first presented PTS was {first.TotalMilliseconds:F0}ms, "
                     + "expected a restart at/near 0 (a clean rewind to frame 0)."
             );
 
-            // No drift / no continuation: PTS within the epoch stays within the
+            // No drift / no continuation: PTS within the pass stays within the
             // clip's own [0, duration] timeline (allowing a frame of slack).
             Assert.True(
                 max <= duration + tolerance,
-                $"Loop epoch {epoch.Key}: max PTS {max.TotalMilliseconds:F0}ms exceeded clip "
+                $"Loop pass {i}: max PTS {max.TotalMilliseconds:F0}ms exceeded clip "
                     + $"duration {duration.TotalMilliseconds:F0}ms — frames did not restart at the loop epoch."
             );
         }
@@ -539,6 +512,28 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         Assert.Empty(states);
 
         await controller.PauseAsync();
+    }
+
+    /// <summary>
+    /// Asserts that each of <paramref name="filename"/>'s video frames was presented or counted
+    /// as dropped late, and returns how many it has. Read once the run has ended, so the counts
+    /// are final.
+    /// </summary>
+    private static int AssertEveryFrameAccountedFor(
+        IPlaybackController controller,
+        string filename,
+        int presented
+    )
+    {
+        var expected = IntegrationTestHelper.GetCorpusExpectation(filename)?.ExpectedVideoFrames;
+        Assert.True(expected is not null, $"No video frame count recorded for {filename}.");
+        var droppedLate = controller.GetDiagnostics().Pipeline.VideoFramesDroppedForSync;
+        Assert.True(
+            presented + droppedLate == expected,
+            $"{filename} has {expected} frames: {presented} presented and {droppedLate} counted "
+                + "as dropped late."
+        );
+        return expected!.Value;
     }
 
     private sealed class CountingVideoSink : IVideoSink

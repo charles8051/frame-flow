@@ -120,11 +120,18 @@ public sealed class VideoSinkFailureTests
     {
         // Each item has fewer frames than the run of failures that faults. Counted per item, no
         // item would ever fault, and a broken sink would play the queue through to its end.
+        //
+        // Enough items that the run reaches the limit however many frames were dropped late. The
+        // pacer holds at most three frames and presents the newest one due, so of an item's six
+        // it presents one of the first three and the last: at least two. Four items present at
+        // least eight, and the fifth takes the run past the limit at the latest.
         var sink = new ThrowingVideoSink(_ => true);
         var path = Corpus(LongerClip);
         await using var player = await BuildAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem), sink);
-        var second = await player.EnqueueAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem));
-        var third = await player.EnqueueAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem));
+        var rest = new List<PlaylistItem>();
+        for (var i = 0; i < 4; i++)
+            rest.Add(await player.EnqueueAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem)));
+        var last = rest[^1];
         var failed = new List<PlaylistItemFailed>();
         using var onItemFailed = player.ItemFailed.Subscribe(f =>
         {
@@ -140,12 +147,13 @@ public sealed class VideoSinkFailureTests
         PlaylistItemFailed[] failures;
         lock (failed)
             failures = [.. failed];
-        // The run reaches the limit in the second item, or in the third when frames were dropped
-        // late, and once the sink has faulted, the item after it faults at its first frame.
+        // The run reaches the limit in the second item, or later when frames were dropped late,
+        // and once the sink has faulted, each item after it faults at its first frame. The first
+        // item's six frames are not enough to fault it.
         Assert.NotEmpty(failures);
         Assert.All(failures, f => Assert.Equal(PlaylistItemFailure.FaultedDuringPlayback, f.Failure));
-        Assert.Contains(failures, f => f.Item == third);
-        Assert.All(failures, f => Assert.True(f.Item == second || f.Item == third));
+        Assert.Contains(failures, f => f.Item == last);
+        Assert.All(failures, f => Assert.Contains(f.Item, rest));
     }
 
     [RequiresFfmpegAndCorpusFact]

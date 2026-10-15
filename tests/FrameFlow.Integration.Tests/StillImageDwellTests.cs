@@ -138,16 +138,18 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
             var sw = Stopwatch.StartNew();
             Assert.True((await controller.PlayAsync()).IsSuccess);
             await Task.Delay(Window);
-            sw.Stop();
             await controller.PauseAsync();
 
+            // Counted, then timed: every loop counted happened before the stopwatch is read, so
+            // the interval below covers all of them however long the pause took to land.
             var observed = Volatile.Read(ref loops);
+            sw.Stop();
 
             // An upper bound only, and it fails in the one direction that matters. Pacing is
             // clock-driven, so a faster machine cannot exceed the rate; a slower or busier
             // one produces fewer loops and still passes. Only pacing being absent puts the
             // count above the ceiling. The still probes to 25 fps, so the ceiling is four
-            // times what a paced loop reaches over the window.
+            // times what a paced loop reaches over the measured interval.
             var ceiling = (int)(sw.Elapsed.TotalSeconds * 25 * 4);
 
             Assert.True(

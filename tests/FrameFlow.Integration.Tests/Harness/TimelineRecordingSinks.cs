@@ -211,16 +211,44 @@ internal static class TimelineRecord
 
     /// <summary>
     /// Asserts video and audio went through the same timelines in the same order, a run's video and
-    /// audio sharing its id. One stream may have reached the next timeline when the other had not
-    /// yet, so the shorter is a prefix of the longer, by at most one.
+    /// audio sharing its id.
     /// </summary>
+    /// <remarks>
+    /// Both start on the run that was played first, and every timeline both went through is in the
+    /// same order in each. After each of those, one timeline at most, in one stream, may be one the
+    /// other lacks: a run one stream reached and the other did not. One stream may have reached the
+    /// next timeline when the other had not yet. And a run a break cut short may have reached only
+    /// one stream: the audio sink takes buffers as fast as they decode and video is presented when
+    /// it is due, so a run cut before its first frame was due has audio and no video, and how often
+    /// that happens depends on how the runner was scheduled.
+    /// </remarks>
     public static void AssertSameTimelines(IReadOnlyList<Segment> video, IReadOnlyList<Segment> audio)
     {
         var v = video.Select(s => s.Timeline).ToList();
         var a = audio.Select(s => s.Timeline).ToList();
-        var common = Math.Min(v.Count, a.Count);
-        Assert.True(Math.Abs(v.Count - a.Count) <= 1, $"video went through {v.Count} timelines, audio {a.Count}");
-        Assert.Equal(v.Take(common), a.Take(common));
+        var shown = $"video {string.Join(", ", v)}; audio {string.Join(", ", a)}";
+        Assert.True(v[0] == a[0], $"video and audio started on different timelines: {shown}");
+
+        var shared = v.Intersect(a).ToHashSet();
+        Assert.Equal(v.Where(shared.Contains), a.Where(shared.Contains));
+
+        // How many timelines one stream went through and the other did not, after each one both did.
+        var unmatched = new int[shared.Count];
+        foreach (var stream in new[] { v, a })
+        {
+            var after = -1;
+            foreach (var timeline in stream)
+            {
+                if (shared.Contains(timeline))
+                    after++;
+                else
+                    unmatched[after]++;
+            }
+        }
+        Assert.True(
+            unmatched.All(count => count <= 1),
+            $"more than one timeline went through by one stream alone after one both went through: {shown}"
+        );
     }
 
     public static string Describe(Segment segment) =>

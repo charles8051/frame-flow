@@ -150,19 +150,26 @@ public sealed class SeekTests : IClassFixture<FfmpegBootstrapFixture>
             // Controller is Paused after load. Seek without playing.
             Assert.Equal(PlaybackState.Paused, controller.State);
 
+            // The seek runs on after SeekAsync returns; the controller reports its end by
+            // returning to NotSeeking. Subscribed first, so the return cannot be missed, and
+            // bounded only to stop a hung seek.
+            var settled = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            using var settleSub = controller.SeekStateChanged.Subscribe(
+                new ActionObserver<StateTransition<SeekState>>(t =>
+                {
+                    if (t.Current == SeekState.NotSeeking)
+                        settled.TrySetResult();
+                })
+            );
+
             var seek = await controller.SeekAsync(TimeSpan.FromSeconds(1.0));
             Assert.True(seek.IsSuccess, $"Seek failed: {seek.Error?.Message}");
 
             // After seek-while-paused, controller should still be Paused
             // and SeekingState should normalise to NotSeeking.
-            using var settleCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (
-                controller.SeekingState != SeekState.NotSeeking
-                && !settleCts.IsCancellationRequested
-            )
-            {
-                await Task.Delay(50);
-            }
+            await settled.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(SeekState.NotSeeking, controller.SeekingState);
             Assert.Equal(PlaybackState.Paused, controller.State);
 

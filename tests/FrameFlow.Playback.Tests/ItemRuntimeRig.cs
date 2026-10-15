@@ -493,6 +493,12 @@ internal sealed class FakeWork
 /// piece of a run's work as a <see cref="FakeWork"/> the test controls. A seek, a reset, a run's
 /// start, a flush of the pacer or a free made while any work is in flight is a violation.
 /// </summary>
+/// <remarks>
+/// A piece of work is set up from the hooks (<see cref="IgnoresCancellation"/>,
+/// <see cref="FaultOnStart"/>, <see cref="ThrowOnCancel"/>, <see cref="FirstFrameOnGraphStart"/>)
+/// before it can be seen to start, so a test may change a hook once it has seen the start, and
+/// the change applies from the next piece.
+/// </remarks>
 internal sealed class FakeItemMedia : IItemMedia
 {
     private readonly RigLog _log;
@@ -546,6 +552,12 @@ internal sealed class FakeItemMedia : IItemMedia
     public Exception CancelFault { get; set; } = new InvalidOperationException("A cancellation callback threw.");
 
     public Exception StartFault { get; set; } = new InvalidOperationException("The work faulted as it started.");
+
+    /// <summary>
+    /// Called on a piece of work's own thread as soon as it can be seen to have started, before it
+    /// goes on: the earliest a test that waits for a start can act on it.
+    /// </summary>
+    public Action<FakeWork>? OnWorkSeen { get; set; }
 
     private TaskCompletionSource? _closeGatesHold;
     private readonly TaskCompletionSource _closeGatesEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -753,8 +765,9 @@ internal sealed class FakeItemMedia : IItemMedia
 
     public Task RunGraphAsync(CancellationToken cancellationToken)
     {
+        var firstFrame = FirstFrameOnGraphStart;
         var running = Run(ItemWork.Graph, cancellationToken);
-        if (FirstFrameOnGraphStart)
+        if (firstFrame)
             _firstFrame.TrySetResult();
         return running;
     }
@@ -767,7 +780,17 @@ internal sealed class FakeItemMedia : IItemMedia
         List<TaskCompletionSource<FakeWork>> started = [];
         lock (_gate)
         {
+            // Set up from the hooks before anything can see it start (#750): a test that waits for
+            // the start and then changes a hook changes the next work's, not this one's.
             work = new FakeWork(kind, _runs, token, (IgnoresCancellation & kind) != 0);
+            if ((FaultOnStart & kind) != 0)
+                work.Fault(StartFault);
+            if ((ThrowOnCancel & kind) != 0)
+            {
+                var fault = CancelFault;
+                token.Register(() => throw fault);
+            }
+
             _works.Add(work);
             var now = _inFlight.GetValueOrDefault(kind) + 1;
             _inFlight[kind] = now;
@@ -781,16 +804,10 @@ internal sealed class FakeItemMedia : IItemMedia
                 return true;
             });
         }
+        OnWorkSeen?.Invoke(work);
         _log.Add($"{kind} started");
         foreach (var s in started)
             s.TrySetResult(work);
-        if ((FaultOnStart & kind) != 0)
-            work.Fault(StartFault);
-        if ((ThrowOnCancel & kind) != 0)
-        {
-            var fault = CancelFault;
-            token.Register(() => throw fault);
-        }
         return work.RunAsync(Exit);
     }
 

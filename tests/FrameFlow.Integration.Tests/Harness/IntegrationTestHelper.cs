@@ -169,8 +169,8 @@ internal static class IntegrationTestHelper
     }
 
     /// <summary>
-    /// Computes the wall-clock tolerance for a given expected duration using the D015 formula:
-    /// ±350 ms per 3 s (proportional), with a 300 ms floor.
+    /// Computes how far under a given expected duration a paced run may finish, using the D015
+    /// formula: 350 ms per 3 s (proportional), with a 300 ms floor.
     /// </summary>
     /// <param name="expectedSeconds">The expected playback duration in seconds.</param>
     /// <returns>A <see cref="TimeSpan"/> representing the acceptable timing tolerance.</returns>
@@ -185,11 +185,16 @@ internal static class IntegrationTestHelper
     /// Tries to bring the controller to a quiescent state before disposal so native
     /// decoder/pipeline teardown does not race the next integration test.
     /// </summary>
+    /// <remarks>
+    /// The timeout only stops a hung teardown, as the suite's other bounds do. The video sink's
+    /// drain waits on its pump task, which a loaded runner can hold back for longer than a few
+    /// seconds on a correct build.
+    /// </remarks>
     internal static async Task StabilizeForDisposeAsync(
         IPlaybackController controller,
         HarnessAudioSink? audioSink = null,
         HarnessVideoSink? videoSink = null,
-        int timeoutMilliseconds = 5000
+        int timeoutMilliseconds = 30000
     )
     {
         var expectAudioDeactivation = audioSink?.IsActive == true;

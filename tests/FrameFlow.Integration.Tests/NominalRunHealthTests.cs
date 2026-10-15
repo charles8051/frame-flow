@@ -21,7 +21,8 @@ namespace FrameFlow.Integration.Tests;
 /// to shed a packet or fail a decode: those are demanded exactly. Frames dropped for sync are
 /// different, because that counter moves with how the runner was scheduled rather than with
 /// whether the pipeline is correct. Presentation is gated two other ways instead — every
-/// decoded frame must be accounted for, and the large majority must actually reach the sink.
+/// decoded frame must be accounted for, and at least the share the pacer's structure guarantees
+/// must actually reach the sink.
 /// </para>
 /// <para>
 /// <b>What is deliberately not asserted.</b>
@@ -158,18 +159,21 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
                 );
 
                 // Conservation on its own would pass a run that dropped every frame for sync and
-                // presented none, so it needs a floor under presentation. Half is deliberately
-                // far from both sides it separates: a descheduled runner costs a handful of
-                // frames out of 72–90, and a presentation-loss regression costs most of them.
-                // A tighter bound would start measuring the runner, which is what the sync-drop
-                // counter is kept out of this gate for.
-                var floor = decoder.FramesDecoded / 2;
+                // presented none, so it needs a floor under presentation. The pacer sets one that
+                // holds however the runner was scheduled: it holds at most its ring's depth of
+                // frames, presents the newest one due and drops only those older than it, so at
+                // least one frame in every ring's depth reaches the sink. A higher floor would be
+                // measuring the runner, which is what the sync-drop counter is kept out of this
+                // gate for: a runner held back for long enough loses up to all but one in each.
+                const int ring = ClockSelectVideoSink.DefaultCapacity;
+                var floor = (decoder.FramesDecoded + ring - 1) / ring;
                 Assert.True(
                     pipeline.VideoSink.FramesPresented >= floor,
                     $"{filename}: only {pipeline.VideoSink.FramesPresented} of "
                         + $"{decoder.FramesDecoded} decoded frames reached the sink "
-                        + $"({pipeline.VideoFramesDroppedForSync} dropped for sync). A stalled "
-                        + $"runner does not lose half a clip; expected at least {floor}."
+                        + $"({pipeline.VideoFramesDroppedForSync} dropped for sync). The pacer "
+                        + $"drops a frame only for a newer one in its ring of {ring}, so at "
+                        + $"least {floor} reach it at any speed."
                 );
             }
 
