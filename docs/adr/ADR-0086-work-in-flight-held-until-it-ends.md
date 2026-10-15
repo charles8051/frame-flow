@@ -359,15 +359,15 @@ Each slice carries its own BREAKING-CHANGES entry where an app can see a change.
 | 5b | The interop view's live-path converter disposals through `PresenterTeardownReaper`; `PresenterStallWatchdog` joined to its timer through a new `DisposeAsync`; `OpenAlAudioSink`'s shutdown source never disposed (#723) | 28 | #727 |
 | 6 | Amendment notes on ADR-0013, ADR-0026, ADR-0044, ADR-0056, ADR-0062, ADR-0076 and ADR-0081; notes on ADR-0048, ADR-0084 and the graph blueprint draft, which name what slice 4 removed; the comments that still described it; this section | | #741 |
 
-Three local fixes landed first:
+Three local fixes landed first, each closing the issues named with it:
 
-- #710 fixed #696. A pass's dispose cancels its run and waits for it before it frees the pipeline,
+- #710, for #696. A pass's dispose cancels its run and waits for it before it frees the pipeline,
   the decoders and the demux session, and releases its claims last (BREAKING-CHANGES entry 24).
   Slice 5a put the pass on a scope and `DisposeOnce`; its pure `PassLifecycle` stays.
-- #711 fixed #703. A video sink that throws costs its frame, the failures are reported at most once
+- #711, for #703. A video sink that throws costs its frame, the failures are reported at most once
   every five seconds, and more than eight in a row fault the item (entry 25). It is decision 5's
   instance for sink failures, and it stays as it is.
-- #715 fixed #707 and #714. It held the pump, the graph and the lateness-recovery walk in a pure
+- #715, for #707 and #714. It held the pump, the graph and the lateness-recovery walk in a pure
   `RunTasks<T>` until each ended, made a cut-short wait throw rather than forget them, moved the
   end-of-stream flush onto the run's token, and made a play after a cut-short seek reposition first
   (entry 26). That is the alternative "Join the tasks and stop there", and it did more than the
