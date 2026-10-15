@@ -107,8 +107,8 @@ jobs:
       # carries openh264 or kvazaar, so generate-test-corpus.cs cannot produce a
       # complete corpus on this runner. Running the decode suites here would
       # report green while skipping the tests that matter, which is worse than
-      # not running them. build.yml generates no corpus either; closing that is
-      # its own piece of work.
+      # not running them. build.yml generates the corpus on Windows and Linux and,
+      # for the same reason, not on macOS.
       - name: Test
         run: |
           dotnet test tests/FrameFlow.Native.Tests/FrameFlow.Native.Tests.csproj --configuration Release -p:FrameFlowLocalFeedDisable=true
