@@ -202,8 +202,8 @@ an `IVideoFrame`.
   shell keeps the frames by id. Every action that ends the pacer's hold on a frame names its id.
 - **State.** The phase (Running, Halted, Disposing, Disposed); the configuration (capacity, the pace
   cap); the run (its timeline, floor, hold-for-settle, the settle's status and the target's
-  outcome); the ring of at most capacity descriptors in arrival order, and the offers waiting for
-  room; the present in flight, if any; whether it is paused; the wait it is in, with its deadlines
+  outcome); the ring of at most capacity descriptors in arrival order, and the offer waiting for
+  room, if any; the present in flight, if any; whether it is paused; the wait it is in, with its deadlines
   (the frame wait and its cap, the end-of-content hold with its cap and probe, the empty ring and
   its starvation threshold, the settle hold); the end of the run (input complete, the last
   presented frame's end, the last presented duration, drained); `PacerStarvation`; and the counts.
@@ -213,7 +213,9 @@ an `IVideoFrame`.
   `PresentFailed(id, verdict)`, `PresentStopped(id)` and `ShellFaulted(error)`.
 - **Time is an input.** Every input is stepped with `PacerNow(Master, Wall)`: the master clock's
   `Latest` and the elapsed time on the shell's `TimeProvider`, both read by the shell when it steps
-  the input. The core compares, subtracts and stores them, and never reads a clock.
+  the input. The core compares, subtracts and stores them, and never reads a clock. `ShellFaulted`
+  is the one input stepped without a fresh reading, because a clock read that throws is one of its
+  causes: it carries the last reading the shell took, and the rule for it reads no time.
 - **Actions.** `Admit(id)` and `Release(id, reason)` complete a producer's offer and dispose a frame;
   `Present(id)` is awaited and hands a frame to the sink; `Arm(wait)` replaces the one armed wait;
   `RaiseStarved`, `RaiseFed`, `ReportSinkFailure(verdict)` and `RaiseFault(error)` go to the
@@ -229,7 +231,9 @@ an `IVideoFrame`.
   `PacerNow` as it steps each one, and performs the step's immediate actions in order. A caller that
   needs an outcome awaits a promise the reader completes: `PresentAsync` posts an offer and awaits
   its admission, and the item runtime awaits the target and the drain of a run. The other calls post
-  and return.
+  and return. The channel is unbounded for control inputs only: a frame enters it only as the offer
+  of a `PresentAsync` call that awaits its own admission, and the pacer has one producer, its run's
+  sink pump, so at most one offer is outstanding (rule 1).
 - **The present is awaited outside the step.** The reader starts the call into the announcer and
   goes on stepping. Its end is posted as an input. At most one present is in flight.
 - **One armed wait.** `Arm(wait)` carries a number, an optional master target and an optional wall
@@ -252,12 +256,19 @@ on the loop means, as it decides what a failed present means.
 Each rule below is today's behaviour unless it says it changes it.
 
 1. **Admission and the bound.** An offer is admitted while the ring holds fewer than capacity
-   frames, and otherwise waits; that wait is the decoder's backpressure (ADR-0057 Stage 2). An offer
-   is refused, and its frame released, once the dispose has begun, when it is below the run's
-   floor (counted as before the target), and, a change, when its timeline is set and is not the
-   run's (counted apart). A frame of `TimelineId.None`, built by an application's configurator
-   without copying its input's id, is judged by the floor alone. A halted pacer leaves offers
-   waiting until its dispose, as today.
+   frames, and otherwise waits; that wait is the decoder's backpressure (ADR-0057 Stage 2). At most
+   one offer waits. The pacer's only producer is its run's sink pump (`AsSinkNode`, one per graph,
+   and ADR-0086 ends a run's graph before the next starts), and ADR-0081 counts the frame of that
+   pump's call on the sink node, not on the pacer (ADR-0081, decision 1: `AsSinkNode` adds the
+   call). An offer that arrives while another waits comes from a second writer, which nothing in
+   the tree builds: the core refuses it, releases its frame and logs it, so the bound holds whatever
+   the callers. An offer is also refused, and its frame released, once the dispose has begun, when
+   it is below the run's floor (counted as before the target), and, a change, when its timeline is
+   set and is not the run's (counted apart). A frame of `TimelineId.None`, such as one an
+   application's configurator builds as its own frame type without carrying its input's id, is
+   judged by the floor alone, and counted, so a test or a log can name a configurator that drops
+   the id. Refusing it instead would blank every such configurator's picture. A halted pacer leaves
+   the waiting offer waiting until its dispose, as today.
 2. **Selection and the late drop.** Running, with nothing in flight and no hold in force, the
    newest frame whose PTS the master has reached is presented, and every older frame in the ring is
    released as late and counted. A frame is dropped late only in a step that presents a newer one.
@@ -319,12 +330,12 @@ Each rule below is today's behaviour unless it says it changes it.
     | Path | Released by |
     | ---- | ----------- |
     | An offer refused: disposing, below the floor, another timeline | The pacer, at once |
-    | An offer abandoned by its producer, or still waiting at the dispose | The pacer |
+    | An offer from a second writer, an offer abandoned by its producer, or one still waiting at the dispose | The pacer |
     | A frame in the ring dropped late, flushed, or left at the dispose | The pacer; what a dispose throws is the pacer's dispose's (ADR-0086, decision 3.4) |
     | A frame presented | The announcer until the hand-off, then the sink, even when the call throws (#701) |
 
-13. **Disposal.** The dispose refuses new offers, releases the ring and the offers still waiting
-    (whose producers' calls end cancelled, as today), completes the run's target with null, disarms
+13. **Disposal.** The dispose refuses new offers, releases the ring and the offer still waiting
+    (whose producer's call ends cancelled, as today), completes the run's target with null, disarms
     the wait, and waits for the present in flight, which the shell cancels through its shutdown
     token. A drain still awaited ends on its waiter's token, as today. `CompleteDispose` comes when
     nothing is in flight. `DisposeOnce` keeps the second caller waiting for the first and the faults
@@ -341,10 +352,15 @@ After every step, over every reachable state:
 1. Each frame offered leaves the pacer exactly once, by one row of rule 12, and the counts account
    for it: offered equals presented, failed, dropped late, refused, flushed and released at the
    dispose, plus what is in the ring, waiting and in flight.
-2. The ring never holds more than capacity, and at most one present is in flight, so the pacer
-   holds at most capacity plus one frames, which is what it declares (ADR-0081).
+2. The ring never holds more than capacity, at most one present is in flight and at most one offer
+   waits. So the pacer holds at most capacity plus one frames once `PresentAsync` has returned,
+   which is what it declares, and the waiting offer is its producer's call, which ADR-0081 counts on
+   the sink node.
 3. Within a run, presents are in non-decreasing PTS order. Nothing presented is below the run's
-   floor, and nothing presented carries a timeline other than the run's.
+   floor, and nothing presented carries a timeline set to a run other than the current one. A frame
+   with no timeline is outside this invariant: the pacer cannot tell its run, and rule 1 judges it
+   by the floor alone. The guarantee against a stale frame therefore holds for frames that carry
+   their timeline, which ADR-0084 decision 3 requires of every in-repo producer and derived item.
 4. The newest frame offered in a run is never dropped late (#744's account).
 5. Nothing is presented while a settle hold is in force, and no hold is in force once its run has
    been replaced or the pacer disposed. No wall deadline releases a hold.
@@ -377,7 +393,7 @@ After every step, over every reachable state:
 - **A bounded walk over the core**, `PacerProtocolWalkTests`, in the shape of
   `ItemRuntimeProtocolWalkTests`. The walk plays the shell over a script of a few frames per run:
   from each state it sends every input (the next scripted offer, an offer from an older timeline, an
-  abandoned offer, a new run with and without a floor and a hold, a flush, a pause, a resume, the end
+  untagged offer, an offer from a second writer, an abandoned offer, a new run with and without a floor and a hold, a flush, a pause, a resume, the end
   of input, a release for the current and an older run, a dispose, each wake, each present outcome
   including every verdict kind, and a shell fault), each at a set of times: the master unchanged,
   at the next frame's PTS, at the last frame's end, or past it, and the wall unchanged or past the
@@ -536,3 +552,10 @@ the run's end are the signals the hold and the wait are for.
 ## Revision history
 
 - **2026-10-15, proposed.**
+- **2026-10-15, review turn 1.** The offer path was unbounded as written: the record said nothing
+  of how many offers can wait, so the capacity-plus-one bound did not follow. Rule 1 now admits one
+  waiting offer, names the pacer's one producer and where ADR-0081 counts its call, and refuses a
+  second writer; decision 2 says the channel is unbounded only for control inputs; invariant 2
+  counts the waiting offer. `ShellFaulted` carries the last reading, since a clock read that throws
+  is one of its causes. Invariant 3 claimed more than rule 1 gives for a frame with no timeline; it
+  now states that limit, and rule 1 counts such frames and says why they are not refused.
