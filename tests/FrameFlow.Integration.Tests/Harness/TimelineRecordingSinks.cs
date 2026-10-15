@@ -215,13 +215,12 @@ internal static class TimelineRecord
     /// </summary>
     /// <remarks>
     /// Both start on the run that was played first, and every timeline both went through is in the
-    /// same order in each. Two allowances, both for a run one stream reached and the other did not.
-    /// One stream may have reached the next timeline when the other had not yet, so one of them
-    /// may end with one timeline the other lacks. And a run a break cut short may have reached only
+    /// same order in each. After each of those, one timeline at most, in one stream, may be one the
+    /// other lacks: a run one stream reached and the other did not. One stream may have reached the
+    /// next timeline when the other had not yet. And a run a break cut short may have reached only
     /// one stream: the audio sink takes buffers as fast as they decode and video is presented when
     /// it is due, so a run cut before its first frame was due has audio and no video, and how often
-    /// that happens depends on how the runner was scheduled. Such a run sits between timelines both
-    /// streams went through.
+    /// that happens depends on how the runner was scheduled.
     /// </remarks>
     public static void AssertSameTimelines(IReadOnlyList<Segment> video, IReadOnlyList<Segment> audio)
     {
@@ -233,12 +232,22 @@ internal static class TimelineRecord
         var shared = v.Intersect(a).ToHashSet();
         Assert.Equal(v.Where(shared.Contains), a.Where(shared.Contains));
 
-        var videoLead = v.Count - 1 - v.FindLastIndex(shared.Contains);
-        var audioLead = a.Count - 1 - a.FindLastIndex(shared.Contains);
+        // How many timelines one stream went through and the other did not, after each one both did.
+        var unmatched = new int[shared.Count];
+        foreach (var stream in new[] { v, a })
+        {
+            var after = -1;
+            foreach (var timeline in stream)
+            {
+                if (shared.Contains(timeline))
+                    after++;
+                else
+                    unmatched[after]++;
+            }
+        }
         Assert.True(
-            videoLead + audioLead <= 1,
-            $"after the last timeline both went through, video went through {videoLead} more and "
-                + $"audio {audioLead}: {shown}"
+            unmatched.All(count => count <= 1),
+            $"more than one timeline went through by one stream alone after one both went through: {shown}"
         );
     }
 
