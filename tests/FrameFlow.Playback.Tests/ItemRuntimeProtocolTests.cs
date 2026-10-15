@@ -113,6 +113,51 @@ public sealed class ItemRuntimeProtocolTests
         );
     }
 
+    [Fact]
+    public void ASeekThatHoldsAfterTheEnd_PausesTheClocks_AndThePlayAfterItRunsThemFromTheTarget()
+    {
+        // #739: an item paced by the runtime's own wallclock plays to its end, and the controller
+        // freezes the position clock, which leaves the wallclock running. The seek reads the clock
+        // paused and holds, pausing the clocks with the gates, so the play resumes both from the
+        // target rather than from where the wallclock ran on to.
+        var t = ItemRuntimeTranscript.Playing(
+            ItemResources.Clock | ItemResources.Demux | ItemResources.VideoDecoder | ItemResources.Pipeline | ItemResources.Pacer
+        );
+        t.Ends(ItemWork.Pump, ItemWorkEnding.Completed);
+        t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
+        Assert.Equal([new Action.RaiseEndOfStream(0)], t.Actions);
+
+        var mark = t.Mark();
+        var seek = t.Seek(At3, clockPaused: true);
+        t.OkUntilIdle();
+        Assert.Equal(
+            [
+                new Action.CloseGates(),
+                new Action.PauseClocks(),
+                new Action.CancelRun(0),
+                new Action.FlushPacer(),
+                new Action.SeekDemux(At3),
+                new Action.ResetDecoders(),
+                new Action.SeatClocks(At3, Shared: true),
+                new Action.CompleteCommand(seek, ItemCommandResult.Ok),
+            ],
+            t.Since(mark)
+        );
+
+        mark = t.Mark();
+        var play = t.Play(At3, clockPaused: true);
+        t.OkUntilIdle();
+        Assert.Equal(
+            [
+                new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At3, null, HoldForSettle: false),
+                new Action.ResumeClocks(),
+                new Action.OpenGates(),
+                new Action.CompleteCommand(play, ItemCommandResult.Ok),
+            ],
+            t.Since(mark)
+        );
+    }
+
     // ── Superseding seeks coalesce ──────────────────────────────────────────
 
     [Fact]
@@ -397,10 +442,12 @@ public sealed class ItemRuntimeProtocolTests
         var play = t.Play(At1, clockPaused: true);
         t.OkUntilIdle();
 
+        // The reposition holds, so the clocks the pause stopped stay stopped until the run starts.
         Assert.Equal(
             [
                 new Action.PauseAudio(),
                 new Action.CloseGates(),
+                new Action.PauseClocks(),
                 new Action.FlushPacer(),
                 new Action.DeactivateAudio(),
                 new Action.SeekDemux(At1),
