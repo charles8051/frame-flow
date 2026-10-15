@@ -61,8 +61,10 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
         int deactivations;
         await using (player)
         {
-            var bItem = await player.AddAsync(b);
+            // b goes last, so nothing follows it: a run slow enough for b to play to its end
+            // finds the queue ended rather than c started in its place.
             var cItem = await player.AddAsync(c);
+            var bItem = await player.AddAsync(b);
 
             Assert.True((await player.PlayAsync()).IsSuccess);
             await video.WhenPresented(pts => pts >= a.Start + PastStart).WaitAsync(Bound);
@@ -87,7 +89,18 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
             // frame of b from before its start would fall below that.
             var aReached = video.PresentedPts.Max();
             var mark = video.Count;
+
+            // The position is read as b's first frame past its start is presented, on the
+            // presenting thread, so b is the item playing when it is read however long the
+            // runner takes to get back to the test. The time since the jump began is read there
+            // too, off the position clock's own source, after the position.
+            (TimeSpan Position, TimeSpan SinceJump)? atB = null;
             var beforeJump = TimeProvider.System.GetUtcNow();
+            video.Presenting = pts =>
+            {
+                if (atB is null && pts >= b.Start + PastStart)
+                    atB = (player.Position, TimeProvider.System.GetUtcNow() - beforeJump);
+            };
             Assert.True((await player.JumpToAsync(bItem)).IsSuccess);
             await video.WhenPresented(pts => pts >= b.Start + PastStart, skip: mark).WaitAsync(Bound);
 
@@ -100,10 +113,8 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
 
             // The shared clocks were seated on b's start when its runtime was attached, which the
             // jump did after it began, so they have run on from there for no longer than the time
-            // measured since. That time is read off the position clock's own source, after the
-            // position, so the bound holds however long the runner took.
-            var position = player.Position;
-            var sinceJump = TimeProvider.System.GetUtcNow() - beforeJump;
+            // measured since. Read before the frame's waiter was released.
+            var (position, sinceJump) = atB!.Value;
             Assert.InRange(position, b.Start, b.Start + sinceJump);
         }
 

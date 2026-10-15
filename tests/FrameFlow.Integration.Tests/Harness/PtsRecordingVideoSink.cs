@@ -33,6 +33,13 @@ internal sealed class PtsRecordingVideoSink : IVideoSink
     public int Count => _presented.Count;
 
     /// <summary>
+    /// Called with each frame's PTS on the presenting thread, before the frame's waiters are
+    /// released, so a test can read the player at the moment a frame is presented rather than
+    /// whenever its own continuation runs.
+    /// </summary>
+    public Action<TimeSpan>? Presenting { get; set; }
+
+    /// <summary>
     /// Completes with the PTS of the first frame <paramref name="match"/> accepts, whether it
     /// was delivered before this call or arrives after it, ignoring the first
     /// <paramref name="skip"/> frames delivered.
@@ -66,6 +73,7 @@ internal sealed class PtsRecordingVideoSink : IVideoSink
         var pts = frame.Pts;
         _presented.Enqueue(pts);
         frame.Dispose();
+        Presenting?.Invoke(pts);
 
         // Enqueued first, so a waiter registered after this point finds the frame in the queue
         // and one registered before it is found here.
