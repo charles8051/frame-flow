@@ -214,8 +214,8 @@ an `IVideoFrame`.
 - **Time is an input.** Every input is stepped with `PacerNow(Master, Wall)`: the master clock's
   `Latest` and the elapsed time on the shell's `TimeProvider`, both read by the shell when it steps
   the input. The core compares, subtracts and stores them, and never reads a clock. `ShellFaulted`
-  is the one input stepped without a fresh reading, because a clock read that throws is one of its
-  causes: it carries the last reading the shell took, and the rule for it reads no time.
+  is the one input stepped without a reading, because a clock read that throws is one of its causes
+  and may be the shell's first: it carries none, and its rule reads no time.
 - **Actions.** `Admit(id)` and `Release(id, reason)` complete a producer's offer and dispose a frame;
   `Present(id)` is awaited and hands a frame to the sink; `Arm(wait)` replaces the one armed wait;
   `RaiseStarved`, `RaiseFed`, `ReportSinkFailure(verdict)` and `RaiseFault(error)` go to the
@@ -279,13 +279,20 @@ Each rule below is today's behaviour unless it says it changes it.
    the session's cap.
 4. **The settle hold and its release.** A run begun with hold-for-settle and a floor holds delivery
    from its destination frame's admission until `ReleaseSettle` names that run, the next run
-   begins, or the dispose. Nothing is presented while it holds. A change (#746): no wall deadline
-   releases it. A hold still in force after a warning interval (for example one second) is logged
-   once, naming the run, and stays in force. `ItemRuntimeProtocolWalkTests` already checks that a
-   command that started a run to settle settles it or releases it before it ends, and cancels no
-   run whose settle is owed (`ItemRuntimeProtocolWalkTests.cs:452`,
-   `ItemRuntimeProtocolWalkTests.cs:474`, `ItemRuntimeProtocolWalkTests.cs:567`); that check, not
-   a timer, is what keeps a release from being missed.
+   begins, or the dispose. Nothing is presented while it holds. A release ends the settle for its
+   run whenever it comes: one that arrives before the destination frame, because the settle ended
+   first, cancelled or with no target reached, clears the run's hold-for-settle, and the
+   destination frame then holds nothing. A change: today the release clears the hold but not the
+   flag (`:1058-1067`), so a destination frame admitted after it closes the hold again
+   (`:826-830`), and only the backstop opens it. A change (#746): no wall deadline releases a
+   hold. A hold still in force after a warning interval (for example one second) is logged once,
+   naming the run, and stays in force. Every way a settle ends sends the release:
+   `ItemRuntimeProtocolWalkTests` already checks that a command that started a run to settle
+   settles it or releases it before it ends, and cancels no run whose settle is owed
+   (`ItemRuntimeProtocolWalkTests.cs:452`, `ItemRuntimeProtocolWalkTests.cs:474`,
+   `ItemRuntimeProtocolWalkTests.cs:567`), and the shell's `SettleAsync` releases in a `finally`
+   however its wait ends (`SubstrateSession.cs:1346-1352`). With the release ending the settle
+   whenever it comes, those checks, not a timer, are what keep a hold from being left in force.
 5. **The pace cap.** Waiting for the earliest frame, while running and not held, arms the cap as a
    wall deadline: the wall time that frame became the one waited for, plus the configured cap
    (`PaceWaitCap`, 5 s). A resume or a flush starts it again. When it passes with the
@@ -363,7 +370,8 @@ After every step, over every reachable state:
    their timeline, which ADR-0084 decision 3 requires of every in-repo producer and derived item.
 4. The newest frame offered in a run is never dropped late (#744's account).
 5. Nothing is presented while a settle hold is in force, and no hold is in force once its run has
-   been replaced or the pacer disposed. No wall deadline releases a hold.
+   been released, replaced or the pacer disposed, whichever order the release and the destination
+   frame come in. No wall deadline releases a hold.
 6. While paused, the only wall deadline armed is the hold warning, and nothing is presented that the
    master has not reached.
 7. A run's drain is raised at most once, only with its input complete, its ring empty and nothing
@@ -421,8 +429,9 @@ After every step, over every reachable state:
   they are. The integration tests (`SeekPreTargetFramesTests`, `TimelineBreakTests`,
   `SeekClockSettleTests`, `NominalRunHealthTests`, `ElapsedPlaytimeTests`) stay.
 - **Mutation.** Each invariant is shown to be load-bearing by reintroducing the defect it names in
-  the core: the backstop, admission without the timeline, a drain with a present in flight, a cap
-  armed while paused, a late drop of the newest frame. The walk goes red on each.
+  the core: the backstop, a release before the destination frame that leaves the flag set,
+  admission without the timeline, a drain with a present in flight, a cap armed while paused, a
+  late drop of the newest frame. The walk goes red on each.
 
 ### Public surface
 
@@ -559,3 +568,9 @@ the run's end are the signals the hold and the wait are for.
   counts the waiting offer. `ShellFaulted` carries the last reading, since a clock read that throws
   is one of its causes. Invariant 3 claimed more than rule 1 gives for a frame with no timeline; it
   now states that limit, and rule 1 counts such frames and says why they are not refused.
+- **2026-10-15, review turn 2.** Removing the backstop exposed a hole it was covering: today a
+  release that comes before the destination frame, because the settle was cancelled or reached no
+  target, clears the hold but not the run's hold-for-settle, so the frame closes the hold again and
+  only the backstop opens it. Rule 4 now has a release end the settle for its run whenever it
+  comes, invariant 5 holds in either order, and the mutation list covers it. `ShellFaulted` now
+  carries no reading at all, since a clock that throws may never have given one.
