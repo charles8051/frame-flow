@@ -211,16 +211,35 @@ internal static class TimelineRecord
 
     /// <summary>
     /// Asserts video and audio went through the same timelines in the same order, a run's video and
-    /// audio sharing its id. One stream may have reached the next timeline when the other had not
-    /// yet, so the shorter is a prefix of the longer, by at most one.
+    /// audio sharing its id.
     /// </summary>
+    /// <remarks>
+    /// Both start on the run that was played first, and every timeline both went through is in the
+    /// same order in each. Two allowances, both for a run one stream reached and the other did not.
+    /// One stream may have reached the next timeline when the other had not yet, so one of them
+    /// may end with one timeline the other lacks. And a run a break cut short may have reached only
+    /// one stream: the audio sink takes buffers as fast as they decode and video is presented when
+    /// it is due, so a run cut before its first frame was due has audio and no video, and how often
+    /// that happens depends on how the runner was scheduled. Such a run sits between timelines both
+    /// streams went through.
+    /// </remarks>
     public static void AssertSameTimelines(IReadOnlyList<Segment> video, IReadOnlyList<Segment> audio)
     {
         var v = video.Select(s => s.Timeline).ToList();
         var a = audio.Select(s => s.Timeline).ToList();
-        var common = Math.Min(v.Count, a.Count);
-        Assert.True(Math.Abs(v.Count - a.Count) <= 1, $"video went through {v.Count} timelines, audio {a.Count}");
-        Assert.Equal(v.Take(common), a.Take(common));
+        var shown = $"video {string.Join(", ", v)}; audio {string.Join(", ", a)}";
+        Assert.True(v[0] == a[0], $"video and audio started on different timelines: {shown}");
+
+        var shared = v.Intersect(a).ToHashSet();
+        Assert.Equal(v.Where(shared.Contains), a.Where(shared.Contains));
+
+        var videoLead = v.Count - 1 - v.FindLastIndex(shared.Contains);
+        var audioLead = a.Count - 1 - a.FindLastIndex(shared.Contains);
+        Assert.True(
+            videoLead + audioLead <= 1,
+            $"after the last timeline both went through, video went through {videoLead} more and "
+                + $"audio {audioLead}: {shown}"
+        );
     }
 
     public static string Describe(Segment segment) =>
