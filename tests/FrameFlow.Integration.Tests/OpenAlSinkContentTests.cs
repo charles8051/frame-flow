@@ -243,11 +243,32 @@ public sealed class OpenAlSinkContentTests : IClassFixture<FfmpegBootstrapFixtur
 
     /// <summary>
     /// The sink masters the pacing clock in this topology, so the video that came
-    /// out has to be right too. A sink whose clock ran away would starve or flood
-    /// the pacer, and the frame count is where that shows.
+    /// out has to be right too: every frame presented is the reference decode's
+    /// frame, and every frame not presented is one the pacer counted as dropped
+    /// late.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This asserted an exact frame count, and failed intermittently under suite
+    /// load (#400). The sink's clock follows the device, which plays in real time,
+    /// so a runner descheduled for longer than a frame interval makes the pacer
+    /// drop a frame on purpose. The count measured the runner as much as the sink.
+    /// The frame account in
+    /// <see cref="PlaybackInvariants.VideoFramePixelsMatchReference"/> holds at any
+    /// speed (#299).
+    /// </para>
+    /// <para>
+    /// What the count also stood in for, a sink clock running ahead of the device
+    /// and flooding the pacer with late frames, now shows here only as late drops,
+    /// which are accounted rather than failed. The rate limit that holds the clock
+    /// to real time is <c>AudioClockRateLimit</c>, covered without a clock by
+    /// <c>AudioClockRateLimitTests</c>. A clock that stops still fails here: each
+    /// frame then waits out the pacer's 5 s cap, so the run does not reach
+    /// <see cref="PlaybackState.Ended"/> within the harness's bound.
+    /// </para>
+    /// </remarks>
     [RequiresFfmpegAndCorpusFact]
-    public async Task PlayingAvFile_UnderTheRealSinkClock_StillDeliversEveryFrame()
+    public async Task PlayingAvFile_UnderTheRealSinkClock_PresentsOrCountsEveryFrame()
     {
         var result = await OpenAlPlaybackHarness.PlayCorpusFileAsync("test-av-h264-aac.mp4");
         Assert.Equal(PlaybackState.Ended, result.FinalState);
@@ -255,6 +276,13 @@ public sealed class OpenAlSinkContentTests : IClassFixture<FfmpegBootstrapFixtur
         var reference = await ReferenceDecoder.DecodeAsync("test-av-h264-aac.mp4");
 
         PlaybackInvariants.PtsStrictlyMonotonic(result.Video, v => v.Pts, "video");
-        Assert.Equal(reference.Video.Count, result.Video.Count);
+
+        // The clip has 90 video packets against a queue of at least 512, so the decoder
+        // cannot shed and the account needs no term for it.
+        PlaybackInvariants.VideoFramePixelsMatchReference(
+            result.Video,
+            reference.Video,
+            droppedLate: result.Diagnostics.Pipeline.VideoFramesDroppedForSync
+        );
     }
 }
