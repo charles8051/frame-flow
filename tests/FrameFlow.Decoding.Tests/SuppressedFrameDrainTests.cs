@@ -65,6 +65,8 @@ public sealed class SuppressedFrameDrainTests
 
         public int FramesReceived => _received;
 
+        public int LastReturnCode => 0;
+
         public ValueTask<bool> TryBeginNextInputAsync(CancellationToken cancellationToken)
         {
             // One input, then end of stream: every frame comes out on the flush.

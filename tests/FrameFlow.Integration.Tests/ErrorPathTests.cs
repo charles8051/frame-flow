@@ -41,9 +41,12 @@ public sealed class ErrorPathTests : IClassFixture<FfmpegBootstrapFixture>
         await using (controller)
         {
             var source = MediaSource.FromFile("/nonexistent/path/fake.mp4");
-            var playbackError = await AssertFailedLoadAndErrorAsync(rowId, controller, source);
-
-            Assert.Equal(ErrorCategory.System, playbackError.Category);
+            var playbackError = await AssertFailedLoadAndErrorAsync(
+                rowId,
+                controller,
+                source,
+                ErrorCategory.Io
+            );
             Assert.False(
                 string.IsNullOrWhiteSpace(playbackError.Message),
                 $"{rowId}: Expected a non-empty error message for non-existent file."
@@ -68,9 +71,12 @@ public sealed class ErrorPathTests : IClassFixture<FfmpegBootstrapFixture>
             await using (controller)
             {
                 var source = MediaSource.FromFile(tempPath);
-                var playbackError = await AssertFailedLoadAndErrorAsync(rowId, controller, source);
-
-                Assert.Equal(ErrorCategory.System, playbackError.Category);
+                var playbackError = await AssertFailedLoadAndErrorAsync(
+                    rowId,
+                    controller,
+                    source,
+                    ErrorCategory.Source
+                );
                 Assert.False(
                     string.IsNullOrWhiteSpace(playbackError.Message),
                     $"{rowId}: Expected a non-empty error message for corrupt file."
@@ -162,7 +168,8 @@ public sealed class ErrorPathTests : IClassFixture<FfmpegBootstrapFixture>
     private static async Task<PlaybackError> AssertFailedLoadAndErrorAsync(
         string rowId,
         IPlaybackController controller,
-        IMediaSource source
+        IMediaSource source,
+        ErrorCategory category
     )
     {
         var errorStateTcs = new TaskCompletionSource(
@@ -194,7 +201,7 @@ public sealed class ErrorPathTests : IClassFixture<FfmpegBootstrapFixture>
             loadResult.IsSuccess,
             $"{rowId}: Expected LoadAsync to fail when initialization faults before completion, but got {FormatResult(loadResult)}."
         );
-        Assert.Equal(ErrorCategory.System, loadResult.Error?.Category);
+        Assert.Equal(category, loadResult.Error?.Category);
 
         using var stateCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await errorStateTcs.Task.WaitAsync(stateCts.Token);
@@ -203,6 +210,7 @@ public sealed class ErrorPathTests : IClassFixture<FfmpegBootstrapFixture>
         var playbackError = await errorDetailsTcs.Task.WaitAsync(errorCts.Token);
 
         Assert.Equal(PlaybackState.Error, controller.State);
+        Assert.Equal(category, playbackError.Category);
         return playbackError;
     }
 

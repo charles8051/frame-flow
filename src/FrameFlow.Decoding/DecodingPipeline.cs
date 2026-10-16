@@ -391,17 +391,21 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
         return DemuxReadResultKind.Malformed;
     }
 
-    internal static InvalidOperationException CreateDemuxReadFailureException(
+    internal static MediaException CreateDemuxReadFailureException(
         int readResult,
         DemuxReadResultKind readOutcome
     ) =>
         readOutcome switch
         {
-            DemuxReadResultKind.Fault => new InvalidOperationException(
-                $"Demux pump read failed with FFmpeg error code {readResult}."
+            DemuxReadResultKind.Fault => new MediaException(
+                $"Demux pump read failed with FFmpeg error code {readResult}.",
+                readResult,
+                MediaFailureStage.DemuxRead
             ),
-            DemuxReadResultKind.Malformed => new InvalidOperationException(
-                $"Demux pump received unexpected av_read_frame result {readResult}. Expected 0 for a packet, {FFAvUtil.AvErrorEof} for EOF, or a negative FFmpeg error code."
+            DemuxReadResultKind.Malformed => new MediaException(
+                $"Demux pump received unexpected av_read_frame result {readResult}. Expected 0 for a packet, {FFAvUtil.AvErrorEof} for EOF, or a negative FFmpeg error code.",
+                readResult,
+                MediaFailureStage.DemuxRead
             ),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(readOutcome),

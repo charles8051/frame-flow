@@ -41,12 +41,13 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
         await using var demux = await OpenAsync(file.Path);
         await using var decoder = OpenOnCuda(demux, HardwareDecodeMode.Required);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        var ex = await Assert.ThrowsAsync<MediaException>(async () =>
         {
             using var frames = await DecodeAllAsync(demux, decoder);
         });
 
         Assert.Contains("avcodec_send_packet", ex.Message);
+        Assert.Equal(MediaFailureStage.SendPacket, ex.Stage);
     }
 
     [RequiresCudaMjpegFact]

@@ -337,8 +337,10 @@ public sealed class DemuxSession : IDemuxSession
                 position,
                 result
             );
-            throw new InvalidOperationException(
-                $"FFmpeg seek failed with error code {result} for position {position}."
+            throw new MediaException(
+                $"FFmpeg seek failed with error code {result} for position {position}.",
+                result,
+                MediaFailureStage.Seek
             );
         }
 
@@ -636,8 +638,10 @@ public sealed class DemuxSession : IDemuxSession
         }
 
         if (result < 0)
-            throw new InvalidOperationException(
-                $"FFmpeg av_read_frame failed with error code {result}."
+            throw new MediaException(
+                $"FFmpeg av_read_frame failed with error code {result}.",
+                result,
+                MediaFailureStage.DemuxRead
             );
 
         try

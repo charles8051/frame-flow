@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -93,9 +94,13 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="source"/> is <see langword="null"/>.
     /// </exception>
+    /// <exception cref="MediaException">
+    /// Thrown when FFmpeg cannot open the source (e.g. file not found, unsupported format),
+    /// when stream info probing fails, or when no stream can be decoded. It carries the FFmpeg
+    /// error code, the stage that failed and the <see cref="ErrorCategory"/> they map to.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when FFmpeg cannot open the source (e.g. file not found, unsupported format)
-    /// or when stream info probing fails.
+    /// Thrown when the demuxer does not recognise an option the source sets.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the open, or by the time the open
@@ -236,9 +241,11 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             );
 
             // Ensure no partial context leaks (avformat_open_input frees on failure).
-            throw new InvalidOperationException(
+            throw new MediaException(
                 $"FFmpeg could not open media source '{source.DisplayName}' "
-                    + $"(url='{url}', error code {openResult})."
+                    + $"(url='{url}', error code {openResult}).",
+                openResult,
+                MediaFailureStage.Open
             );
         }
 
@@ -276,9 +283,11 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
                 findResult
             );
 
-            throw new InvalidOperationException(
+            throw new MediaException(
                 $"FFmpeg could not find stream info for '{source.DisplayName}' "
-                    + $"(error code {findResult})."
+                    + $"(error code {findResult}).",
+                findResult,
+                MediaFailureStage.Probe
             );
         }
 
@@ -350,9 +359,11 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
                             + "such as AVIF or ICO; open those with MediaSource.FromFile."
                         : "";
 
-                throw new InvalidOperationException(
+                throw new MediaException(
                     $"FFmpeg opened media source '{source.DisplayName}' but resolved no playable "
-                        + $"stream: {detail}.{hint}"
+                        + $"stream: {detail}.{hint}",
+                    MediaErrorClassification.StreamNotFound,
+                    MediaFailureStage.StreamResolution
                 );
             }
 

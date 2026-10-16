@@ -251,7 +251,7 @@ public sealed class PlaybackContractIntegrationTests : IClassFixture<FfmpegBoots
                 loadResult.IsSuccess,
                 $"{rowId}: Expected LoadAsync to fail when initialization faults before completion, but got {FormatResult(loadResult)}."
             );
-            Assert.Equal(ErrorCategory.System, loadResult.Error?.Category);
+            Assert.Equal(ErrorCategory.Io, loadResult.Error?.Category);
             Assert.Equal(PlaybackState.Error, controller.State);
 
             await WaitForConditionAsync(
@@ -267,7 +267,7 @@ public sealed class PlaybackContractIntegrationTests : IClassFixture<FfmpegBoots
                 static transition => transition.Current == PlaybackState.Error
             );
             var error = Assert.Single(probe.Errors);
-            Assert.Equal(ErrorCategory.System, error.Category);
+            Assert.Equal(ErrorCategory.Io, error.Category);
             Assert.False(
                 string.IsNullOrWhiteSpace(error.Message),
                 $"{rowId}: Expected a non-empty error message for the load failure path."

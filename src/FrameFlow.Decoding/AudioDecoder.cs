@@ -139,6 +139,10 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     // SendCurrentInput send a null flush packet. Cleared at the start of each DecodeAsync.
     private bool _inFlushMode;
 
+    // The raw return of the last avcodec_send_packet or avcodec_receive_frame, which the
+    // DecodeDriver reads to name the FFmpeg error behind a fault (#755).
+    private int _lastReturnCode;
+
     private bool _disposed;
 
     // Debug-only: the decodes, flushes and resets in flight, which the dispose checks is zero.
@@ -352,9 +356,8 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
         nint codecPtr = _codecCtx.DangerousGetHandle();
         nint pktArg = _inFlushMode ? nint.Zero : _currentInputPtr;
 
-        CodecReturn result = DecodeDriver.Classify(
-            FFAvCodec.avcodec_send_packet(codecPtr, pktArg)
-        );
+        _lastReturnCode = FFAvCodec.avcodec_send_packet(codecPtr, pktArg);
+        CodecReturn result = DecodeDriver.Classify(_lastReturnCode);
 
         if (!_inFlushMode && _currentInputPtr != nint.Zero && result != CodecReturn.Again)
         {
@@ -371,8 +374,12 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     {
         nint codecPtr = _codecCtx.DangerousGetHandle();
         nint framePtr = _frame.DangerousGetHandle();
-        return DecodeDriver.Classify(FFAvCodec.avcodec_receive_frame(codecPtr, framePtr));
+        _lastReturnCode = FFAvCodec.avcodec_receive_frame(codecPtr, framePtr);
+        return DecodeDriver.Classify(_lastReturnCode);
     }
+
+    /// <inheritdoc/>
+    int IDecodeCodec<PcmAudioBuffer>.LastReturnCode => _lastReturnCode;
 
     /// <summary>
     /// Resamples the most recently received frame into a stereo S16 <see cref="PcmAudioBuffer"/>,

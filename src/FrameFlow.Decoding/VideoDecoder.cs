@@ -384,6 +384,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // SendCurrentInput sends a null flush packet. Cleared at the start of each DecodeAsync.
     private bool _inFlushMode;
 
+    // The raw return of the last avcodec_send_packet or avcodec_receive_frame, which the
+    // DecodeDriver reads to name the FFmpeg error behind a fault (#755).
+    private int _lastReturnCode;
+
     // ADR-0055: the managed frame built under _codecSync by ReceiveFrame and handed to the
     // immediately-following BuildFrame. Touched only by the single decode worker.
     private IVideoFrame? _builtFrame;
@@ -581,9 +585,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 return CodecReturn.EndOfStream;
 
             nint pktArg = _inFlushMode ? nint.Zero : _pendingRetryPacketPtr;
-            CodecReturn result = DecodeDriver.Classify(
-                FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
-            );
+            _lastReturnCode = FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg);
+            CodecReturn result = DecodeDriver.Classify(_lastReturnCode);
 
             // A hardware decoder can bind and then refuse the stream at its first packet (a
             // progressive JPEG on the CUDA MJPEG decoder, #572). Under Auto the same packet goes
@@ -597,9 +600,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 case FirstPacketAction.ReopenOnSoftware:
                     if (TryFallBackToSoftware())
                     {
-                        result = DecodeDriver.Classify(
-                            FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
+                        _lastReturnCode = FFAvCodec.avcodec_send_packet(
+                            _codecCtx.DangerousGetHandle(),
+                            pktArg
                         );
+                        result = DecodeDriver.Classify(_lastReturnCode);
                     }
                     break;
 
@@ -640,6 +645,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             nint ctxPtr = _codecCtx.DangerousGetHandle();
             nint framePtr = _frame.DangerousGetHandle();
             int receiveRet = FFAvCodec.avcodec_receive_frame(ctxPtr, framePtr);
+            _lastReturnCode = receiveRet;
 
             if (receiveRet >= 0)
             {
@@ -689,6 +695,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             return DecodeDriver.Classify(receiveRet);
         }
     }
+
+    /// <inheritdoc/>
+    int IDecodeCodec<IVideoFrame>.LastReturnCode => _lastReturnCode;
 
     /// <summary>
     /// Tracks <see cref="HardwareBackend"/> against each decoded frame, so it names the

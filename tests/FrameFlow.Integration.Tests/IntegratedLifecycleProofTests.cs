@@ -173,7 +173,7 @@ public sealed class IntegratedLifecycleProofTests : IClassFixture<FfmpegBootstra
                 loadResult.IsSuccess,
                 $"{rowId}: Expected missing-media load to fail, but got {FormatResult(loadResult)}."
             );
-            Assert.Equal(ErrorCategory.System, loadResult.Error?.Category);
+            Assert.Equal(ErrorCategory.Io, loadResult.Error?.Category);
 
             await WaitForConditionAsync(
                 rowId,

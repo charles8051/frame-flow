@@ -35,7 +35,18 @@ public enum ErrorCategory
 /// <param name="Category">The broad error classification.</param>
 /// <param name="Message">A human-readable description of the failure.</param>
 /// <param name="Inner">An optional inner exception that caused the failure.</param>
-public sealed record PlaybackError(ErrorCategory Category, string Message, Exception? Inner = null);
+public sealed record PlaybackError(ErrorCategory Category, string Message, Exception? Inner = null)
+{
+    /// <summary>
+    /// The FFmpeg failure behind this error: the first <see cref="MediaException"/> in
+    /// <see cref="Inner"/> or its inner exceptions, or <see langword="null"/> when there is none.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Category"/> says what kind of failure this is. This says which FFmpeg error
+    /// code caused it, and at which stage, for a caller that needs to be more specific.
+    /// </remarks>
+    public MediaException? MediaFailure => Core.MediaErrorClassification.FindMediaFailure(Inner);
+}
 
 /// <summary>
 /// The error reported by a default-initialised <see cref="Result"/> or
