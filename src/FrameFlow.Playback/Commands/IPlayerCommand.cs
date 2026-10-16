@@ -129,8 +129,8 @@ internal sealed record RecoverableErrorCommand(
 internal sealed record LoopRestartedCommand(
     int LoopCount,
     int SessionGeneration,
-    PlaylistItem? Item = null,
-    TimelineId Timeline = default
+    PlaylistItem? Item,
+    TimelineId Timeline
 ) : IPlayerCommand
 {
     public TaskCompletionSource<Result> Completion { get; } =

@@ -599,8 +599,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private void PostLoopRestarted(
         int loopCount,
         int sessionGeneration,
-        PlaylistItem? item = null,
-        TimelineId timeline = default
+        PlaylistItem? item,
+        TimelineId timeline
     )
     {
         if (_dispose.HasBegun)
