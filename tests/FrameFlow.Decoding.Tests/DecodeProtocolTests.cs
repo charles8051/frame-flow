@@ -143,11 +143,27 @@ public sealed class DecodeProtocolTests
     }
 
     [Fact]
-    public async Task Drive_ReceiveFault_Throws()
+    public async Task Drive_ReceiveFault_ThrowsTheCodecsErrorCode()
     {
         var codec = new FakeCodec([new FakeInput(0, [1])], faultOnReceiveNumber: 1);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => CollectIdsAsync(codec));
+        var fault = await Assert.ThrowsAsync<MediaException>(() => CollectIdsAsync(codec));
+
+        Assert.Equal(FakeCodec.FaultCode, fault.ErrorCode);
+        Assert.Equal(MediaFailureStage.ReceiveFrame, fault.Stage);
+        Assert.Equal(ErrorCategory.Decode, fault.Category);
+    }
+
+    [Fact]
+    public async Task Drive_SendFault_ThrowsTheCodecsErrorCode()
+    {
+        var codec = new FakeCodec([new FakeInput(0, [1])], faultOnSendNumber: 1);
+
+        var fault = await Assert.ThrowsAsync<MediaException>(() => CollectIdsAsync(codec));
+
+        Assert.Equal(FakeCodec.FaultCode, fault.ErrorCode);
+        Assert.Equal(MediaFailureStage.SendPacket, fault.Stage);
+        Assert.Equal(ErrorCategory.Decode, fault.Category);
     }
 
     [Fact]
@@ -273,7 +289,11 @@ public sealed class DecodeProtocolTests
     {
         private readonly Queue<FakeInput> _inputs;
         private readonly Queue<int> _bufferedAtEof;
+        // AVERROR_INVALIDDATA, the code a corrupt packet gets.
+        public const int FaultCode = -('I' | ('N' << 8) | ('D' << 16) | ('A' << 24));
+
         private readonly int _faultOnReceiveNumber; // 0 = never
+        private readonly int _faultOnSendNumber; // 0 = never
         private readonly Queue<int> _pending = new();
 
         private FakeInput? _current;
@@ -285,13 +305,16 @@ public sealed class DecodeProtocolTests
         public int BeginCalls { get; private set; }
         public int SendCalls { get; private set; }
         public int ReceiveCalls { get; private set; }
+        public int LastReturnCode { get; private set; }
 
         public FakeCodec(
             IEnumerable<FakeInput> inputs,
             int[]? bufferedAtEof = null,
-            int faultOnReceiveNumber = 0
+            int faultOnReceiveNumber = 0,
+            int faultOnSendNumber = 0
         )
         {
+            _faultOnSendNumber = faultOnSendNumber;
             _inputs = new Queue<FakeInput>(inputs);
             _bufferedAtEof = new Queue<int>(bufferedAtEof ?? []);
             _faultOnReceiveNumber = faultOnReceiveNumber;
@@ -315,6 +338,13 @@ public sealed class DecodeProtocolTests
         public CodecReturn SendCurrentInput()
         {
             SendCalls++;
+            LastReturnCode = 0;
+
+            if (_faultOnSendNumber != 0 && SendCalls == _faultOnSendNumber)
+            {
+                LastReturnCode = FaultCode;
+                return CodecReturn.Fault;
+            }
 
             if (_flushing)
             {
@@ -341,9 +371,11 @@ public sealed class DecodeProtocolTests
         public CodecReturn ReceiveFrame()
         {
             ReceiveCalls++;
+            LastReturnCode = 0;
 
             if (_faultOnReceiveNumber != 0 && ReceiveCalls == _faultOnReceiveNumber)
             {
+                LastReturnCode = FaultCode;
                 return CodecReturn.Fault;
             }
 

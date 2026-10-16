@@ -195,7 +195,7 @@ public sealed class Av1HardwareTests(FfmpegBootstrapFixture fixture)
     {
         var backend = Av1Hardware.WorkingBackends[0];
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<MediaException>(() =>
             DecodeAsync(
                 Av1Fixtures.Clip444,
                 HardwareDecodeMode.Required,
@@ -205,6 +205,7 @@ public sealed class Av1HardwareTests(FfmpegBootstrapFixture fixture)
         );
 
         Assert.Contains("avcodec_send_packet", ex.Message);
+        Assert.Equal(MediaFailureStage.SendPacket, ex.Stage);
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────

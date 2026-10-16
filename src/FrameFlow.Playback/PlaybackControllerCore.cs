@@ -1096,7 +1096,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     // fault (the Error entry's DisposeSession is then a no-op).
                     await DisposeSessionAsync().ConfigureAwait(false);
                     var loadFailure = new PlaybackError(
-                        ErrorCategory.System,
+                        MediaErrorClassification.Categorize(ex, ErrorCategory.System),
                         "Session initialization failed",
                         ex
                     );
@@ -1126,7 +1126,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         {
                             LogSessionInitializationFailed(ex.Message);
                             var bufferingFailure = new PlaybackError(
-                                ErrorCategory.System,
+                                MediaErrorClassification.Categorize(ex, ErrorCategory.System),
                                 "Initial buffering failed",
                                 ex
                             );
@@ -1444,7 +1444,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             if (CanFirePlayback(PlaybackTrigger.FatalError))
             {
                 var error = new PlaybackError(
-                    ErrorCategory.System,
+                    MediaErrorClassification.Categorize(outcome.Error, ErrorCategory.System),
                     outcome.Error.Message,
                     outcome.Error
                 );
@@ -1576,7 +1576,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         if (itc.Trigger == PlaybackTrigger.FatalError && itc.Error is not null)
                         {
                             var error = new PlaybackError(
-                                ErrorCategory.System,
+                                MediaErrorClassification.Categorize(itc.Error, ErrorCategory.System),
                                 itc.Error.Message,
                                 itc.Error
                             );

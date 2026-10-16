@@ -46,6 +46,46 @@ controller and loads. Both used to fail with `ErrorCategory.InvalidOperation`. `
 - To recover from `Error`, call `ReplaceAsync` with the new playlist instead of disposing the
   player.
 
+### 2. A media failure reports its own category, and decode and demux failures throw `MediaException`
+
+**A change in behaviour, not a compile error.**
+
+A source that could not be opened, read or decoded used to report `ErrorCategory.System`, on a
+failed load, on `ItemFailed` and on `ErrorOccurred` alike (#757). The category now comes from the
+FFmpeg error behind the failure:
+
+| Cause | Category |
+|---|---|
+| `ENOENT`, `EACCES` or `EIO`: the file is missing, unreadable or failed to read | `Io` |
+| `AVERROR_INVALIDDATA` while opening or probing: not media, or a damaged header | `Source` |
+| no stream FFmpeg can decode | `Source` |
+| `AVERROR_INVALIDDATA` while reading or decoding: corrupt data mid-stream | `Decode` |
+| any other code: `Source` while opening or seeking, `Decode` while reading or decoding | |
+| `ENOMEM`, `AVERROR_BUG`, and a fault in the player itself | `System` |
+
+So a missing file is now `Io`, and a text file named `.mp4` or an MP4 cut off before its index is
+`Source`. A preparing item that failed in FFmpeg was reported as `InvalidOperation`; it now takes the
+same category.
+
+The decode and demux layers throw `MediaException` where they threw a plain
+`InvalidOperationException` (#755): opening, probing, finding no playable stream, seeking, reading a
+packet, sending a packet and receiving a frame. It carries `ErrorCode`, the FFmpeg return code, and
+`Stage`, the step that failed. `PlaybackError.MediaFailure` finds it behind a reported error.
+
+**Who hits this.**
+- Code that branches on `ErrorCategory.System` to detect a bad source. It sees `Io`, `Source` or
+  `Decode` instead.
+- A test or assertion that expects `System` for a missing or corrupt file.
+- Code that matches the failure's message text to tell corrupt data from a failed read.
+- `Assert.Throws<InvalidOperationException>` around an open or a decode. xUnit's `Throws` matches
+  the exact type, so it fails against `MediaException`. A `catch (InvalidOperationException)` still
+  catches it.
+
+**What to write instead.**
+- Branch on the new categories, or on `error.MediaFailure?.ErrorCode` and `Stage` where the category
+  is not specific enough.
+- Use `Assert.Throws<MediaException>`, or `Assert.ThrowsAny<InvalidOperationException>`.
+
 ## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out

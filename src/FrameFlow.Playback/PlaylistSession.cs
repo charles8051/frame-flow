@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -768,7 +769,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             failed.Item,
             failed.What,
             new PlaybackError(
-                ErrorCategory.System,
+                MediaErrorClassification.Categorize(failed.Error, ErrorCategory.System),
                 $"Playlist item '{source}' {what}: {failed.Error?.Message}",
                 failed.Error
             )
@@ -827,13 +828,23 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             return Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': the player is disposed.", ex);
         }
+        catch (MediaException ex)
+        {
+            // Before the InvalidOperationException it derives from: the source failed, and the
+            // failure says how (#757).
+            return Result.Fail(ex.Category, $"Preparing '{item}' failed: {ex.Message}", ex);
+        }
         catch (InvalidOperationException ex)
         {
             return Result.Fail(ErrorCategory.InvalidOperation, ex.Message, ex);
         }
         catch (Exception ex)
         {
-            return Result.Fail(ErrorCategory.Source, $"Preparing '{item}' failed: {ex.Message}", ex);
+            return Result.Fail(
+                MediaErrorClassification.Categorize(ex, ErrorCategory.Source),
+                $"Preparing '{item}' failed: {ex.Message}",
+                ex
+            );
         }
     }
 

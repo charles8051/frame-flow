@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Runtime.CompilerServices;
+using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 
 namespace FrameFlow.Decoding.Internal;
@@ -39,6 +40,13 @@ internal interface IDecodeCodec<TFrame>
     /// <see cref="BuildFrame"/>.
     /// </summary>
     CodecReturn ReceiveFrame();
+
+    /// <summary>
+    /// The raw FFmpeg return of the last <see cref="SendCurrentInput"/> or
+    /// <see cref="ReceiveFrame"/>. The driver reads it after a
+    /// <see cref="CodecReturn.Fault"/> to say which error the codec reported (#755).
+    /// </summary>
+    int LastReturnCode { get; }
 
     /// <summary>
     /// Build the managed frame from the most recently received native frame. May return
@@ -80,6 +88,13 @@ internal static class DecodeDriver
             return CodecReturn.EndOfStream;
         return CodecReturn.Fault;
     }
+
+    /// <summary>
+    /// The exception for a codec call that returned <paramref name="errorCode"/>, which
+    /// <see cref="Classify"/> took for a fault.
+    /// </summary>
+    internal static MediaException Fault(string call, int errorCode, MediaFailureStage stage) =>
+        new($"{call} failed with FFmpeg error code {errorCode}.", errorCode, stage);
 
     /// <summary>
     /// Drain a codec's residual output-frame queue after <c>avcodec_flush_buffers</c>, the
@@ -161,10 +176,10 @@ internal static class DecodeDriver
                     yield break; // decoder fully drained — sequence ends
 
                 if (action == DecodeAction.FaultOnSend)
-                    throw new InvalidOperationException("avcodec_send_packet failed.");
+                    throw Fault("avcodec_send_packet", codec.LastReturnCode, MediaFailureStage.SendPacket);
 
                 if (action == DecodeAction.FaultOnReceive)
-                    throw new InvalidOperationException("avcodec_receive_frame failed.");
+                    throw Fault("avcodec_receive_frame", codec.LastReturnCode, MediaFailureStage.ReceiveFrame);
 
                 CodecReturn result;
                 switch (action)
