@@ -27,6 +27,13 @@ public enum ErrorCategory
 
     /// <summary>A system-level error (out of memory, thread pool exhaustion).</summary>
     System,
+
+    /// <summary>
+    /// The GPU device was removed or reset (#759). Every player on the device fails, and stays
+    /// failed until it is given media on a new device. <see cref="PlaybackError.DeviceLoss"/>
+    /// carries the reason the device reported.
+    /// </summary>
+    DeviceLost,
 }
 
 /// <summary>
@@ -46,6 +53,17 @@ public sealed record PlaybackError(ErrorCategory Category, string Message, Excep
     /// code caused it, and at which stage, for a caller that needs to be more specific.
     /// </remarks>
     public MediaException? MediaFailure => Core.MediaErrorClassification.FindMediaFailure(Inner);
+
+    /// <summary>
+    /// The device loss behind this error: the first <see cref="DeviceLostException"/> in
+    /// <see cref="Inner"/> or its inner exceptions, or <see langword="null"/> when there is none.
+    /// </summary>
+    /// <remarks>
+    /// Set when <see cref="Category"/> is <see cref="ErrorCategory.DeviceLost"/> because the
+    /// device reported its loss. Its <see cref="DeviceLostException.RemovedReason"/> is the
+    /// HRESULT the device gave.
+    /// </remarks>
+    public DeviceLostException? DeviceLoss => Core.MediaErrorClassification.FindDeviceLoss(Inner);
 }
 
 /// <summary>

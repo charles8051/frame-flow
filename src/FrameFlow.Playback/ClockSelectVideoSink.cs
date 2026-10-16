@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback.Core;
 using Microsoft.Extensions.Logging;
@@ -1659,7 +1660,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         Raise(
             _onSinkFailed,
             new PlaybackError(
-                ErrorCategory.System,
+                MediaErrorClassification.Categorize(ex, ErrorCategory.System),
                 $"The video sink {sinkType} threw on a frame, which was dropped{more}: {ex.Message}",
                 ex
             ),

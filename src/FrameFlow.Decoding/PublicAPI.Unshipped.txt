@@ -268,3 +268,8 @@ FrameFlow.Decoding.GpuVideoFrame.TryGetCudaPlanes(out FrameFlow.Decoding.CudaFra
 FrameFlow.Decoding.GpuVideoFrame.Rotation.get -> FrameFlow.Media.VideoRotation
 FrameFlow.Decoding.GpuVideoFrame.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
 FrameFlow.Decoding.GpuVideoFrame.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Decoding.HardwareDevice.DeviceLost -> System.EventHandler<FrameFlow.Decoding.HardwareDeviceLostEventArgs!>?
+FrameFlow.Decoding.HardwareDevice.IsLost.get -> bool
+FrameFlow.Decoding.HardwareDeviceLostEventArgs
+FrameFlow.Decoding.HardwareDeviceLostEventArgs.HardwareDeviceLostEventArgs(int removedReason) -> void
+FrameFlow.Decoding.HardwareDeviceLostEventArgs.RemovedReason.get -> int

@@ -49,6 +49,14 @@ internal interface IDecodeCodec<TFrame>
     int LastReturnCode { get; }
 
     /// <summary>
+    /// Asks the codec's hardware device, after a <see cref="CodecReturn.Fault"/>, whether it was
+    /// removed, and returns what it reported: <c>S_OK</c> (0) when it was not, or when the codec
+    /// is not on a device that reports removal. A video decoder on a shared device reports the
+    /// answer to that device too (#759).
+    /// </summary>
+    int ProbeDeviceRemoved() => 0;
+
+    /// <summary>
     /// Build the managed frame from the most recently received native frame. May return
     /// <see langword="null"/> when conversion yields nothing for this frame (the driver
     /// skips it).
@@ -95,6 +103,20 @@ internal static class DecodeDriver
     /// </summary>
     internal static MediaException Fault(string call, int errorCode, MediaFailureStage stage) =>
         new($"{call} failed with FFmpeg error code {errorCode}.", errorCode, stage);
+
+    /// <summary>
+    /// The exception to throw for <paramref name="fault"/> when the codec's device reported
+    /// <paramref name="removedReason"/>: a <see cref="DeviceLostException"/> around it when the
+    /// reason is a device loss, and the fault itself otherwise (#759). Pure.
+    /// </summary>
+    internal static Exception FaultOnDevice(MediaException fault, int removedReason) =>
+        DeviceLostException.IsDeviceLostCode(removedReason)
+            ? new DeviceLostException(
+                $"The GPU device was lost (0x{removedReason:X8}). {fault.Message}",
+                removedReason,
+                fault
+            )
+            : fault;
 
     /// <summary>
     /// Drain a codec's residual output-frame queue after <c>avcodec_flush_buffers</c>, the
@@ -176,10 +198,20 @@ internal static class DecodeDriver
                     yield break; // decoder fully drained — sequence ends
 
                 if (action == DecodeAction.FaultOnSend)
-                    throw Fault("avcodec_send_packet", codec.LastReturnCode, MediaFailureStage.SendPacket);
+                {
+                    throw FaultOnDevice(
+                        Fault("avcodec_send_packet", codec.LastReturnCode, MediaFailureStage.SendPacket),
+                        codec.ProbeDeviceRemoved()
+                    );
+                }
 
                 if (action == DecodeAction.FaultOnReceive)
-                    throw Fault("avcodec_receive_frame", codec.LastReturnCode, MediaFailureStage.ReceiveFrame);
+                {
+                    throw FaultOnDevice(
+                        Fault("avcodec_receive_frame", codec.LastReturnCode, MediaFailureStage.ReceiveFrame),
+                        codec.ProbeDeviceRemoved()
+                    );
+                }
 
                 CodecReturn result;
                 switch (action)

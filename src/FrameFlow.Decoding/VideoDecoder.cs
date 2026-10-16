@@ -72,6 +72,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // _swFrame holds the CPU-side AVFrame target for av_hwframe_transfer_data.
     // _hwPixelFormat is the AVPixelFormat int we use to detect "this frame is on the GPU."
     private nint _hwDeviceCtxRef;
+
+    // The shared device _hwDeviceCtxRef was borrowed from, lent or cached, which a device loss
+    // is reported to (#759). Null for a device the decoder created, and once it is on software.
+    private HardwareDevice? _hwDeviceOwner;
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
 
@@ -698,6 +702,23 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
     /// <inheritdoc/>
     int IDecodeCodec<IVideoFrame>.LastReturnCode => _lastReturnCode;
+
+    /// <summary>
+    /// Reads the hardware device's removed reason after a fault, and reports it to the shared
+    /// device the decoder borrowed, which raises its event the first time it is a loss (#759).
+    /// </summary>
+    int IDecodeCodec<IVideoFrame>.ProbeDeviceRemoved()
+    {
+        lock (_codecSync)
+        {
+            if (_disposed || BoundBackend is not { } backend)
+                return 0;
+
+            int reason = DeviceRemovedReason.Query(_hwDeviceCtxRef, backend);
+            _hwDeviceOwner?.ReportRemovedReason(reason);
+            return reason;
+        }
+    }
 
     /// <summary>
     /// Tracks <see cref="HardwareBackend"/> against each decoded frame, so it names the

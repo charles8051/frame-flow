@@ -173,6 +173,14 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
+- [GPU device loss reaches the device's owner, once](gpu-device-loss-reaches-the-device-owner.md) —
+  a removed or reset GPU device used to show up as one `Decode` failure per player, with nothing
+  saying the device was gone. `HardwareDevice` raises `DeviceLost` once, on the thread pool, the
+  first time a decoder on it reads a loss from `GetDeviceRemovedReason` after a fault, and each
+  player fails with the new `ErrorCategory.DeviceLost`, its `DeviceLostException` carrying the
+  HRESULT. One list of device-loss codes, now with `DXGI_ERROR_DRIVER_INTERNAL_ERROR` (#530), serves
+  the decoder, the presenter and the inference factory. Records what it cannot see: a loss that no
+  decode call reports, and backends other than D3D11VA and D3D12VA.
 - [Stream-backed media sources, via a custom AVIO context](stream-backed-media-sources.md) —
   there is no way to hand FrameFlow bytes. An in-memory clip, an embedded resource or a
   decrypted blob has to be written to a temp file first, which needs a writable filesystem

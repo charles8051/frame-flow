@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Media.Core;
 using SharpGen.Runtime;
 
 namespace FrameFlow.Avalonia.Windows;
@@ -16,22 +17,12 @@ namespace FrameFlow.Avalonia.Windows;
 /// </summary>
 internal static class D3D11DeviceLoss
 {
-    // DXGI device-loss HRESULTs (stable Win32 ABI values; Vortice's ResultCode spelling
-    // varies by version, the values do not). Matched as the unsigned 0x887A000x family.
-    private const int DXGI_ERROR_DEVICE_REMOVED = unchecked((int)0x887A0005);
-    private const int DXGI_ERROR_DEVICE_HUNG = unchecked((int)0x887A0006);
-    private const int DXGI_ERROR_DEVICE_RESET = unchecked((int)0x887A0007);
-    private const int D3DDDIERR_DEVICEREMOVED = unchecked((int)0x88760870);
-
     /// <summary>
-    /// <see langword="true"/> if <paramref name="hr"/> is one of the D3D11/DXGI
-    /// device-loss result codes (removed / hung / reset).
+    /// <see langword="true"/> if <paramref name="hr"/> is one of the D3D11/DXGI device-loss
+    /// result codes: removed, hung, reset, or a driver internal error (#530). The list is
+    /// <see cref="DeviceLoss"/>, which the decoder and the inference factory read too.
     /// </summary>
-    public static bool IsDeviceLostCode(int hr) =>
-        hr == DXGI_ERROR_DEVICE_REMOVED
-        || hr == DXGI_ERROR_DEVICE_HUNG
-        || hr == DXGI_ERROR_DEVICE_RESET
-        || hr == D3DDDIERR_DEVICEREMOVED;
+    public static bool IsDeviceLostCode(int hr) => DeviceLoss.IsDeviceLostCode(hr);
 
     /// <summary>
     /// <see langword="true"/> if <paramref name="ex"/> carries a D3D11/DXGI device-loss

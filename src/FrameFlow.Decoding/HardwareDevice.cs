@@ -4,6 +4,7 @@
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Native.Interop;
 
 namespace FrameFlow.Decoding;
@@ -24,10 +25,17 @@ namespace FrameFlow.Decoding;
 /// that backend falls back to software under <see cref="HardwareDecodeMode.Auto"/> and fails
 /// under <see cref="HardwareDecodeMode.Required"/>, as it does without one.
 /// </para>
+/// <para>
+/// When the GPU removes or resets the device, it raises <see cref="DeviceLost"/> once (#759). A
+/// lost device stays lost, so every player decoding on it fails with
+/// <see cref="ErrorCategory.DeviceLost"/>, and the way back is a new device.
+/// </para>
 /// </remarks>
 public sealed class HardwareDevice : IDisposable
 {
+    private readonly Lock _lossGate = new();
     private nint _deviceCtxRef;
+    private DeviceLossLatch _loss = DeviceLossLatch.Live;
 
     private HardwareDevice(nint deviceCtxRef, HardwareDecodeBackendKind backend, int avHwDeviceType)
     {
@@ -38,6 +46,61 @@ public sealed class HardwareDevice : IDisposable
 
     /// <summary>The backend the device decodes with.</summary>
     public HardwareDecodeBackendKind Backend { get; }
+
+    /// <summary>
+    /// Raised once, on the thread pool, when a decoder on this device finds it removed or reset.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every player decoding on the device fails with <see cref="ErrorCategory.DeviceLost"/> as
+    /// well, each on its own, so a caller with several players rebuilds them all from this one
+    /// event rather than from each failure. To recover, dispose this device and the players on it,
+    /// create another device, and build the players again on it.
+    /// </para>
+    /// <para>
+    /// It is raised on the thread pool, not on the decoder's thread, so a handler may dispose the
+    /// players on the device. A handler that subscribes after the loss is not called: read
+    /// <see cref="IsLost"/>.
+    /// </para>
+    /// <para>
+    /// Only D3D11VA and D3D12VA devices report removal. The event is never raised for another
+    /// backend.
+    /// </para>
+    /// </remarks>
+    public event EventHandler<HardwareDeviceLostEventArgs>? DeviceLost;
+
+    /// <summary>Whether <see cref="DeviceLost"/> has been raised for this device.</summary>
+    public bool IsLost
+    {
+        get
+        {
+            lock (_lossGate)
+                return _loss.Lost;
+        }
+    }
+
+    /// <summary>
+    /// Records that a decoder on this device read <paramref name="removedReason"/> from it, and
+    /// raises <see cref="DeviceLost"/> if this is the first report of a loss.
+    /// </summary>
+    /// <returns>Whether this report raised the event.</returns>
+    internal bool ReportRemovedReason(int removedReason)
+    {
+        bool raise;
+        lock (_lossGate)
+            (_loss, raise) = _loss.Observe(removedReason);
+
+        if (raise)
+        {
+            var args = new HardwareDeviceLostEventArgs(removedReason);
+            ThreadPool.UnsafeQueueUserWorkItem(
+                static state => state.Device.DeviceLost?.Invoke(state.Device, state.Args),
+                (Device: this, Args: args),
+                preferLocal: false
+            );
+        }
+        return raise;
+    }
 
     internal int AvHwDeviceType { get; }
 
