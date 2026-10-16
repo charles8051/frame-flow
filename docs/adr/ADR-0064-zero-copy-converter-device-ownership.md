@@ -16,6 +16,11 @@
 > video processor mode, and a swap that also changes the sample format, still rebuild as the
 > paragraph on mixed-resolution swaps below describes.
 
+> **Amended 2026-10-16: the shader-mode ring follows the view (#767).** The ring is the size the
+> visible part of the frame is drawn at, up to that part's coded size, and the shader reads only
+> that part through an area filter. A view-driven resize replaces the ring alone and is counted by
+> `frameflow.presenter.view_resizes`. See the amendment at the end.
+
 ## Status
 
 Accepted. Decision 1 (interim) **implemented** (2026-06-16). Decision 2 (durable —
@@ -169,3 +174,93 @@ HD 620 is the final gate, per ADR-0063.
   under the project's no-external-consumers stance.
 - The "frames not reaching the screen" class is now observable in logs, the diagnostics
   snapshot, and the `FrameFlow.Presenter` meter, instead of being structurally invisible.
+
+## Amendment (2026-10-16): the shader-mode ring follows the view
+
+### Context
+
+The shader-mode ring was the frame's size, and the compositor scaled it to the view. A 1080p source
+in a 384x216 view held 3 x 1920 x 1080 x 4 bytes = 24.9 MB of ring for a picture that needs
+3 x 384 x 216 x 4 bytes = 1.0 MB, and the compositor minified it 5:1 on every compositor frame. With
+many small views, ring memory grew with the sources' size, not with the screen area they cover
+(#767). A filled view (#766) drew the whole frame and let the control's clip cut the overflow.
+
+### Decision 1: the ring is the visible part's drawn size, capped at its coded size
+
+The view computes `VisibleVideo` for the frame and asks for a ring of `VisibleVideo.PhysicalSize`,
+held on each axis to the visible part's coded size (`ViewSizedRingPolicy.Wanted`, `Cap`). At or
+above that size the ring is the part at its coded size and the compositor scales it up, as before.
+A fitted view's part is the whole frame, so a view at least the frame's size gets the frame-sized
+ring it always had. The super-resolution choice is unchanged: for `OutputSettle` every shader ring
+is still the "shader at the frame's size" output, and only its size follows the view.
+
+### Decision 2: the shader reads only the visible part
+
+The constant buffer carries the visible part as texture coordinates (`ShaderSampling`), rewritten by
+`SetSource` when the part changes, so a filled view crops in the same pass. The surface visual is
+sized and placed to the rectangle the converter's part draws at (`VideoPlacement.Shown`), not the
+whole frame's, and the 1:1 snap compares the ring with that rectangle. The snap now applies to any
+D3D11 ring the size its rectangle is drawn at, not only the video processor's. The other producers,
+the CPU uploader and the D3D12 converter, still hold the whole frame and are laid out as before.
+
+### Decision 3: an area filter, not a grid of bilinear taps or a mip chain
+
+One bilinear sample reads a 2x2 block, so past 2:1 it skips texels and fine detail aliases. Each
+plane is read with an area (box) filter: where a ring pixel covers more than one texel of the plane,
+the shader `Load`s every texel under the pixel's footprint and weights each by how much of it the
+footprint covers. Where it covers one texel or less, it takes one bilinear sample as before, so a
+ring at the frame's size draws what it drew before.
+
+- **Not a mip chain.** An NV12 or P010 texture has one mip level. A chain would need a full-size
+  RGB copy of the frame first, which is the memory the view-sized ring saves, and a `GenerateMips`
+  per frame.
+- **Not a grid of bilinear taps.** A grid of `ceil(ratio / 2)` taps is an exact box only when the
+  taps fall on texel boundaries. At 5:1 it spaced three taps 5/3 texels apart, and one-pixel stripes
+  came out 72 levels from mid grey. The area filter's weights are exact at any ratio.
+- **Cost.** The area filter reads about one texel per source texel in total, whatever the ratio, and
+  at most 64 texels per axis per ring pixel. Past 64:1 it averages the 64 nearest the pixel's
+  centre, and fine detail can alias again.
+
+`D3D11ConverterViewRingTests` reads the ring back for synthetic one-pixel stripes. At 1:1 every
+stripe shows, and at 5:1 every ring pixel is within 40 levels of mid grey. A single bilinear sample
+leaves them 127 levels out.
+
+### Decision 4: hysteresis as a pure rule on the shell's clock
+
+Each resize builds a ring and imports it into the compositor again, so a drag must not rebuild it on
+every frame. `RingSettle.Advance` decides, with timestamps from the view's `TimeProvider`
+(`RingSizeTime`):
+
+- A ring smaller than the wanted size on either axis grows at once, to the wanted size rounded up to
+  64 px and capped. A ring too small would be scaled up by the compositor, which blurs. A drag that
+  keeps growing rebuilds once per 64 px step on either axis.
+- Any other change, a shrink or the exact size after a rounded-up grow, applies once the same size
+  has been wanted for 500 ms. A shrinking drag rebuilds once when it stops, and a grown ring settles
+  on the size it is drawn at, where the 1:1 snap holds.
+
+### Decision 5: a view-driven resize replaces only the ring
+
+`TryResizeRing` builds a new ring over the same staging texture and keeps the decode bridge, the
+device and the shader pipeline. The old ring goes to the reaper after its imports are detached, as a
+resized converter's parts do. A resize for a frame of another size (`TryResize`) builds its ring at
+the view's size at once. Each view-driven resize is counted by `frameflow.presenter.view_resizes`,
+apart from `resolution_resizes`, which still counts changes in the source's size.
+
+### Decision 6: a paused view is drawn again when its layout needs it
+
+A paused source sends no frame, so a layout change would leave a too-small ring scaled up, or a
+filled view showing a crop that no longer matches. When the view's size or `Placement` changes and
+the ring is now too small or holds another part, the view presents the frame it presented last
+again. That redraw does not raise `FramePresented`. A smaller ring waits for the next frame.
+
+### Consequences
+
+- A 1080p source in a 384x216 view holds a 1.0 MB ring instead of 24.9 MB.
+- A filled view draws only what shows, and on the driver's path upscales only that (#772,
+  ADR-0082).
+- Decode cost is unchanged. The decoder decodes at full size, and the shareable NV12 staging
+  texture stays frame-sized.
+- A change of display scaling alone, as when a paused window moves to another monitor, waits for the
+  next frame.
+- The D3D12 converter keeps a frame-sized ring. It draws in D3D12, copies into the ring and has no
+  in-place resize, so the policy does not drop in (#774).

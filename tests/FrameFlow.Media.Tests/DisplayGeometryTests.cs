@@ -242,6 +242,48 @@ public sealed class DisplayGeometryTests
     }
 
     [Theory]
+    [MemberData(nameof(Placements))]
+    public void Shown_OfTheVisibleSource_IsTheVisiblePart(
+        VideoPlacementMode mode, VideoRotation rotation, double boundsWidth, double boundsHeight,
+        int codedWidth, int codedHeight, int num, int den)
+    {
+        var p = VideoPlacement.Of(mode, boundsWidth, boundsHeight, codedWidth, codedHeight, new SampleAspectRatio(num, den), rotation);
+        var v = p.Visible(boundsWidth, boundsHeight, codedWidth, codedHeight);
+
+        var shown = p.Shown(v.SourceX, v.SourceY, v.SourceWidth, v.SourceHeight, codedWidth, codedHeight);
+
+        AssertRect((v.DrawX, v.DrawY, v.DrawWidth, v.DrawHeight), (shown.DrawX, shown.DrawY, shown.DrawWidth, shown.DrawHeight));
+        Assert.Equal(v.RotationRadians, shown.RotationRadians);
+    }
+
+    [Theory]
+    [MemberData(nameof(Placements))]
+    public void Shown_DrawsAnyPartFromTheSameCodedPixels_AsTheWholePlacement(
+        VideoPlacementMode mode, VideoRotation rotation, double boundsWidth, double boundsHeight,
+        int codedWidth, int codedHeight, int num, int den)
+    {
+        var p = VideoPlacement.Of(mode, boundsWidth, boundsHeight, codedWidth, codedHeight, new SampleAspectRatio(num, den), rotation);
+        var whole = p.Shown(0, 0, codedWidth, codedHeight, codedWidth, codedHeight);
+        AssertRect((p.DrawX, p.DrawY, p.DrawWidth, p.DrawHeight), (whole.DrawX, whole.DrawY, whole.DrawWidth, whole.DrawHeight));
+
+        // An off-centre part, as a ring left holding an earlier crop has.
+        (double X, double Y, double W, double H) part = (codedWidth * 0.1, codedHeight * 0.3, codedWidth * 0.5, codedHeight * 0.6);
+        var s = p.Shown(part.X, part.Y, part.W, part.H, codedWidth, codedHeight);
+        var (cx, cy) = (s.DrawX + s.DrawWidth / 2, s.DrawY + s.DrawHeight / 2);
+        foreach (var (fx, fy) in new[] { (0.1, 0.2), (0.9, 0.3), (0.25, 0.85), (0.5, 0.5) })
+        {
+            // A point of the part's surface, turned with it onto the view.
+            var (x, y) = Turn(s.DrawX + fx * s.DrawWidth, s.DrawY + fy * s.DrawHeight, cx, cy, s.RotationRadians);
+            var fromWhole = SourceAt(x, y, (0, 0, codedWidth, codedHeight), (p.DrawX, p.DrawY, p.DrawWidth, p.DrawHeight), p.RotationRadians);
+            var fromPart = SourceAt(x, y, part, (s.DrawX, s.DrawY, s.DrawWidth, s.DrawHeight), s.RotationRadians);
+            Assert.Equal(fromWhole.X, fromPart.X, 6);
+            Assert.Equal(fromWhole.Y, fromPart.Y, 6);
+        }
+
+        Assert.True(p.Shown(0, 0, 0, codedHeight, codedWidth, codedHeight).IsEmpty);
+    }
+
+    [Theory]
     [InlineData(1.0, 1600, 1000)]
     [InlineData(1.5, 2400, 1500)]
     [InlineData(1.25, 2000, 1250)]

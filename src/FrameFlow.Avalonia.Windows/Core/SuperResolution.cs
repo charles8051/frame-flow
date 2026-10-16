@@ -21,8 +21,13 @@ internal readonly record struct PresenterOutput(bool SuperResolution, int Width,
 /// <param name="D3D11Nv12Frame">Whether the frame is a D3D11VA texture in NV12.</param>
 /// <param name="FrameWidth">The frame's width in pixels.</param>
 /// <param name="FrameHeight">The frame's height in pixels.</param>
-/// <param name="TargetWidth">The width the view shows the frame at, in physical pixels.</param>
-/// <param name="TargetHeight">The height the view shows the frame at, in physical pixels.</param>
+/// <param name="SourceWidth">
+/// The width of the part of the frame the view shows, in coded pixels, rounded: the whole frame, or
+/// a filled view's crop (#772).
+/// </param>
+/// <param name="SourceHeight">The height of that part.</param>
+/// <param name="TargetWidth">The width the view shows that part at, in physical pixels.</param>
+/// <param name="TargetHeight">The height the view shows that part at, in physical pixels.</param>
 /// <param name="AdapterVendorId">The PCI vendor of the decoder's adapter.</param>
 /// <param name="RemoteSession">Whether the process runs in a remote session.</param>
 /// <param name="LeaseAvailable">Whether the process-wide lease is free, or already this view's.</param>
@@ -32,6 +37,8 @@ internal readonly record struct SuperResolutionInputs(
     bool D3D11Nv12Frame,
     int FrameWidth,
     int FrameHeight,
+    int SourceWidth,
+    int SourceHeight,
     int TargetWidth,
     int TargetHeight,
     uint AdapterVendorId,
@@ -51,7 +58,7 @@ internal readonly record struct SuperResolutionInputs(
 /// </para>
 /// <para>
 /// The video processor runs only on an NVIDIA adapter, whose driver the extension belongs to, and
-/// only while the view is larger than the frame. A process-wide lease admits one view at a time,
+/// only while the view shows the frame's visible part larger than it is coded. A process-wide lease admits one view at a time,
 /// because the driver upscales one stream at a time (ADR-0082, amendment of 2026-10-03).
 /// Downscaling with the extension on leaves the output unchanged, and 1:1 costs the full price for
 /// a small sharpening, so neither engages.
@@ -76,7 +83,7 @@ internal static class SuperResolutionPolicy
             return (shader, SuperResolutionStatus.RemoteSession);
         if (inputs.Failed)
             return (shader, SuperResolutionStatus.Unavailable);
-        if (inputs.TargetWidth <= inputs.FrameWidth || inputs.TargetHeight <= inputs.FrameHeight)
+        if (inputs.TargetWidth <= inputs.SourceWidth || inputs.TargetHeight <= inputs.SourceHeight)
             return (shader, SuperResolutionStatus.NotUpscaling);
         if (!inputs.LeaseAvailable)
             return (shader, SuperResolutionStatus.InUseByAnotherView);

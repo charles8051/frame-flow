@@ -31,7 +31,7 @@ public sealed class D3D11ConverterResizeTests
             using var converter = Build(small);
             var smallAsBuilt = Present(converter, compositor, 0, small);
 
-            using (var replaced = converter.TryResize(large.Texture, large.Frame.Width, large.Frame.Height))
+            using (var replaced = converter.TryResize(large.Texture, large.Frame.Width, large.Frame.Height, new RingSize(large.Frame.Width, large.Frame.Height)))
                 Assert.NotNull(replaced);
             Assert.Equal((large.Frame.Width, large.Frame.Height), (converter.Width, converter.Height));
             Assert.Equal(PresenterOutput.Shader(large.Frame.Width, large.Frame.Height), converter.Output);
@@ -41,7 +41,7 @@ public sealed class D3D11ConverterResizeTests
             using (var built = Build(large))
                 AssertSame(Present(built, compositor, 0, large), largeResized, "up to 1920x1080");
 
-            using (var replaced = converter.TryResize(small.Texture, small.Frame.Width, small.Frame.Height))
+            using (var replaced = converter.TryResize(small.Texture, small.Frame.Width, small.Frame.Height, new RingSize(small.Frame.Width, small.Frame.Height)))
                 Assert.NotNull(replaced);
             AssertSame(smallAsBuilt, Present(converter, compositor, 2, small), "back down to 320x240");
         }
@@ -64,7 +64,7 @@ public sealed class D3D11ConverterResizeTests
             using var converter = Build(large);
             var before = Present(converter, compositor, 0, large);
 
-            Assert.Null(converter.TryResize(tenBit.Texture, tenBit.Frame.Width, tenBit.Frame.Height));
+            Assert.Null(converter.TryResize(tenBit.Texture, tenBit.Frame.Width, tenBit.Frame.Height, new RingSize(tenBit.Frame.Width, tenBit.Frame.Height)));
 
             Assert.Equal((large.Frame.Width, large.Frame.Height), (converter.Width, converter.Height));
             AssertSame(before, Present(converter, compositor, 1, large), "after the refused resize");
@@ -88,7 +88,7 @@ public sealed class D3D11ConverterResizeTests
                 small.Texture, small.Frame.Width, small.Frame.Height, output, NullLogger.Instance);
             Assert.Equal(output, converter.Output);
 
-            Assert.Null(converter.TryResize(large.Texture, large.Frame.Width, large.Frame.Height));
+            Assert.Null(converter.TryResize(large.Texture, large.Frame.Width, large.Frame.Height, new RingSize(large.Frame.Width, large.Frame.Height)));
             Assert.Equal((small.Frame.Width, small.Frame.Height), (converter.Width, converter.Height));
         }
         finally

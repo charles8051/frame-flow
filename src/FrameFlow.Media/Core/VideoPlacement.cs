@@ -127,6 +127,46 @@ internal readonly record struct VideoPlacement(
         static double Cut(double overflow) => overflow > 1e-9 ? overflow : 0;
     }
 
+    /// <summary>
+    /// Where a part of the <paramref name="codedWidth"/> x <paramref name="codedHeight"/> frame
+    /// this placement placed draws: the rectangle, before rotation, that the coded pixels from
+    /// (<paramref name="sourceX"/>, <paramref name="sourceY"/>), <paramref name="sourceWidth"/> x
+    /// <paramref name="sourceHeight"/> cover when the whole frame is drawn here (#767). A surface
+    /// that holds only that part, sized to the rectangle and turned about its own centre, shows it
+    /// where the whole frame would. For <see cref="Visible"/>'s source it is
+    /// <see cref="Visible"/>.
+    /// </summary>
+    public VisibleVideo Shown(
+        double sourceX,
+        double sourceY,
+        double sourceWidth,
+        double sourceHeight,
+        int codedWidth,
+        int codedHeight)
+    {
+        if (IsEmpty || codedWidth <= 0 || codedHeight <= 0 || !(sourceWidth > 0) || !(sourceHeight > 0))
+            return default;
+
+        // The part's rectangle inside the frame's draw rectangle, before rotation.
+        double scaleX = DrawWidth / codedWidth;
+        double scaleY = DrawHeight / codedHeight;
+        double width = sourceWidth * scaleX;
+        double height = sourceHeight * scaleY;
+        double offsetX = DrawX + sourceX * scaleX + width / 2 - (DrawX + DrawWidth / 2);
+        double offsetY = DrawY + sourceY * scaleY + height / 2 - (DrawY + DrawHeight / 2);
+
+        // The frame turns about its draw rectangle's centre, which moves the part's centre with it;
+        // the part then turns about its own centre by the same angle.
+        double cos = Math.Cos(RotationRadians), sin = Math.Sin(RotationRadians);
+        double centreX = DrawX + DrawWidth / 2 + offsetX * cos - offsetY * sin;
+        double centreY = DrawY + DrawHeight / 2 + offsetX * sin + offsetY * cos;
+
+        return new VisibleVideo(
+            sourceX, sourceY, sourceWidth, sourceHeight,
+            centreX - width / 2, centreY - height / 2, width, height,
+            RotationRadians);
+    }
+
     private static VideoPlacement Place(
         double boundsWidth,
         double boundsHeight,

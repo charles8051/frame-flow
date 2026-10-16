@@ -14,6 +14,8 @@ public sealed class SuperResolutionPolicyTests
         D3D11Nv12Frame: true,
         FrameWidth: 1280,
         FrameHeight: 720,
+        SourceWidth: 1280,
+        SourceHeight: 720,
         TargetWidth: 3840,
         TargetHeight: 2160,
         AdapterVendorId: SuperResolutionPolicy.NvidiaVendorId,
@@ -71,6 +73,19 @@ public sealed class SuperResolutionPolicyTests
     }
 
     [Fact]
+    public void AFilledViewsCrop_IsComparedWithTheTarget_NotTheWholeFrame()
+    {
+        // 720p filling a 1000x2000 portrait view: 360x720 of it shows, drawn at 1000x2000. The view
+        // is narrower than the frame, but the part it shows is upscaled (#772).
+        var crop = Engaged with { SourceWidth = 360, SourceHeight = 720, TargetWidth = 1000, TargetHeight = 2000 };
+        Assert.Equal((new PresenterOutput(true, 1000, 2000), SuperResolutionStatus.Requested), SuperResolutionPolicy.Decide(crop));
+
+        // A crop shown smaller than it is coded is not.
+        var shrunk = Engaged with { SourceWidth = 1280, SourceHeight = 540, TargetWidth = 3000, TargetHeight = 500 };
+        Assert.Equal(SuperResolutionStatus.NotUpscaling, SuperResolutionPolicy.Decide(shrunk).Status);
+    }
+
+    [Fact]
     public void TheStatusNamesTheFirstFailingCondition_InTheOrderChecked()
     {
         // Every condition fails. Off comes first, so a view with the feature off never reports a
@@ -78,7 +93,7 @@ public sealed class SuperResolutionPolicyTests
         // never reports another view as the reason.
         var allFail = new SuperResolutionInputs(
             Enabled: false, D3D11Nv12Frame: false, FrameWidth: 1280, FrameHeight: 720,
-            TargetWidth: 640, TargetHeight: 360, AdapterVendorId: 0x8086, RemoteSession: true,
+            SourceWidth: 1280, SourceHeight: 720, TargetWidth: 640, TargetHeight: 360, AdapterVendorId: 0x8086, RemoteSession: true,
             LeaseAvailable: false, Failed: true);
 
         Assert.Equal(SuperResolutionStatus.Off, SuperResolutionPolicy.Decide(allFail).Status);
