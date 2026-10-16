@@ -90,6 +90,19 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
     }
 
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D11Va, H264)]
+    public async Task AThrowingHandler_WithALoggerThatThrows_IsStillContained()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D11Va, logger: new RecordingLogger(throws: true));
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        device.DeviceLost += (_, _) => throw new InvalidOperationException("handler failed");
+        device.DeviceLost += (_, _) => second.TrySetResult();
+
+        Assert.True(device.ReportRemovedReason(DeviceReset));
+
+        await second.Task.WaitAsync(FailureBound);
+    }
+
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D11Va, H264)]
     public void ALiveD3D11Device_ReportsNoRemovedReason() =>
         AssertLive(HardwareDecodeBackendKind.D3D11Va);
 
@@ -121,7 +134,7 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
         Assert.False(device.IsLost);
     }
 
-    private sealed class RecordingLogger : ILogger
+    private sealed class RecordingLogger(bool throws = false) : ILogger
     {
         private readonly List<Exception> _errors = [];
 
@@ -148,6 +161,8 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
             Func<TState, Exception?, string> formatter
         )
         {
+            if (throws)
+                throw new InvalidOperationException("logger failed");
             if (logLevel == LogLevel.Error && exception is not null)
             {
                 lock (_errors)

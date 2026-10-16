@@ -126,7 +126,15 @@ public sealed partial class HardwareDevice : IDisposable
             }
             catch (Exception ex)
             {
-                LogDeviceLostHandlerFailed(_logger, ex, Backend.ToString());
+                try
+                {
+                    LogDeviceLostHandlerFailed(_logger, ex, Backend.ToString());
+                }
+                catch (Exception)
+                {
+                    // A logger that throws here would escape the thread-pool callback too. The
+                    // handler's failure goes unrecorded rather than ending the process.
+                }
             }
         }
     }
