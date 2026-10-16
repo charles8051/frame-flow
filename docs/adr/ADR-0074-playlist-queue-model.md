@@ -634,3 +634,11 @@ the clip's 72 frames.
   gains the builder's entry point and a Stop command, both raised while implementing.
 - **Amendment (2026-09-14), review of #199.** A jump to a current item that has been removed is now
   refused, and a replace discards a replay's reserved item. Decisions 5, 6 and 12 say so.
+- **Amendment (2026-10-16), #758.** Two changes to decisions 2 and 6. A failed start ends the
+  queue once every playlist item has failed to start since an item last ended, was skipped, or
+  played long enough to break a run of failures, under every repeat mode; next and queued items
+  are still taken first. Reporting an item does not count, because an item opened while paused
+  is reported before the Play that can still fail. Before, a one-item playlist whose
+  reopen failed wrapped back to the same item until the failure count gave up. And
+  `ReplaceAsync` in `Error` is no longer refused: it replaces the queue and loads the first new
+  item, which leaves `Error`. A jump in `Error` is still refused, so row 25 holds for jumps only.

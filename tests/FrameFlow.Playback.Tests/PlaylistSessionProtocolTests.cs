@@ -1075,9 +1075,14 @@ public sealed class PlaylistSessionProtocolTests
         },
         // The repeat's open fails, so the item opened after it is a failed start's successor.
         // The in-place rewind fails, so the item is rebuilt, and the rebuild's open fails too.
+        // The playlist holds b as well: with a alone, the failed pass would end the queue (#758).
         ["a repeat that fails to start"] = () =>
         {
-            var (state, queue) = Setup(PlaylistRunState.Paused, Slot.Played, Next.Replay);
+            var (state, _) = Setup(PlaylistRunState.Paused, Slot.Played, Next.Replay);
+            var a = state.Item!.Item;
+            var queue = PlaylistQueue.Create([a, new PlaylistItem(new FakeSource("b"))], RepeatMode.One);
+            (queue, _) = queue.TakeStart();
+            (queue, _) = queue.ReportCurrent(a, Info);
             var opens = 0;
             return Result(RunToIdle(state with { LoopCount = 2 }, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun), fail: a => a is PlaylistSessionAction.RewindItem || (a is PlaylistSessionAction.OpenItem && opens++ == 0)));
         },

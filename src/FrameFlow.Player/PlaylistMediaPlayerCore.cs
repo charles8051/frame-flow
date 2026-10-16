@@ -270,7 +270,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     )
     {
         ArgumentNullException.ThrowIfNull(sources);
-        return ReplaceAsync(sources.Select(s => new MediaClip(s)), nameof(sources));
+        return ReplaceAsync(sources.Select(s => new MediaClip(s)), nameof(sources), cancellationToken);
     }
 
     public Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
@@ -279,12 +279,13 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     )
     {
         ArgumentNullException.ThrowIfNull(clips);
-        return ReplaceAsync(clips, nameof(clips));
+        return ReplaceAsync(clips, nameof(clips), cancellationToken);
     }
 
-    private Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+    private async Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
         IEnumerable<MediaClip> clips,
-        string paramName
+        string paramName,
+        CancellationToken cancellationToken
     )
     {
         var list = clips.ToList();
@@ -294,16 +295,30 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
                 paramName
             );
 
-        if (RefusalWhileUnusable("replace the playlist") is { } refused)
-            return Task.FromResult(Result<IReadOnlyList<PlaylistItem>>.Fail(refused));
+        if (_dispose.HasBegun)
+            return Result<IReadOnlyList<PlaylistItem>>.Fail(Disposed("replace the playlist"));
 
-        return Task.FromResult(
-            Result<IReadOnlyList<PlaylistItem>>.Ok(_coordinator.Replace(list))
-        );
+        var items = _coordinator.Replace(list);
+        if (_controller.State != PlaybackState.Error)
+            return Result<IReadOnlyList<PlaylistItem>>.Ok(items);
+
+        // In Error there is no session to take the jump. The load resets the controller and
+        // opens the new playlist, whose first take is the jump the replace recorded (#758).
+        var load = await _controller.LoadAsync(items[0].Source, cancellationToken).ConfigureAwait(false);
+
+        // A load refused because another call has already left Error is not a failure: the live
+        // session takes the jump this replace recorded.
+        return load.IsSuccess
+            || (
+                _controller.State != PlaybackState.Error
+                && load.Error.Category == ErrorCategory.InvalidOperation
+            )
+            ? Result<IReadOnlyList<PlaylistItem>>.Ok(items)
+            : Result<IReadOnlyList<PlaylistItem>>.Fail(load.Error);
     }
 
-    // A jump or replace needs a player that can still play. In Error the player accepts no
-    // further playback, and once disposed there is no session to take the jump.
+    // A jump or a prepare needs a player that can still play. In Error there is no session to
+    // take it until a replace or a load recovers the player, and once disposed there is none.
     //
     // Returns the error rather than a refusing Result so that both callers can wrap it in
     // whichever Result shape they return. A Result? would carry the refusal in a type whose
@@ -311,10 +326,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     private PlaybackError? RefusalWhileUnusable(string what)
     {
         if (_dispose.HasBegun)
-            return new PlaybackError(
-                ErrorCategory.InvalidOperation,
-                $"Cannot {what}: the player is disposed."
-            );
+            return Disposed(what);
         if (_controller.State == PlaybackState.Error)
             return new PlaybackError(
                 ErrorCategory.InvalidOperation,
@@ -322,6 +334,9 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
             );
         return null;
     }
+
+    private static PlaybackError Disposed(string what) =>
+        new(ErrorCategory.InvalidOperation, $"Cannot {what}: the player is disposed.");
 
     // ── Lifetime ────────────────────────────────────────────────────────────
 

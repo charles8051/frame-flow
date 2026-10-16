@@ -11,6 +11,41 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.16.0`
+
+### 1. A playlist whose every item fails to start ends, and `Error` can be left
+
+**A change in behaviour, not a compile error.**
+
+A player whose items had all failed to start used to reopen them until the consecutive-failure
+guard gave up, and then sat in `PlaybackState.Error` for good (#758). A one-item playlist under
+`RepeatMode.One` or `RepeatMode.All` whose file went away after it played reopened that one file
+until the guard gave up. `Error` accepted no command that could leave it, so the only way out was to dispose
+the player.
+
+Now a failed start ends the queue once every playlist item has failed to start since an item last
+ended, was skipped, or played long enough to break a run of failures. Next and queued items are
+still taken first. The player raises `ItemFailed` for each failure and ends in `Ended`, under every
+repeat mode. The guard still enters `Error` for a long playlist that fails more than eight items in
+a row.
+
+`Error` can now be left. `IMediaPlayer.ReplaceAsync` from `Error` replaces the queue and loads its
+first item, leaving the player `Paused`. `IPlaybackController.LoadAsync` from `Error` resets the
+controller and loads. Both used to fail with `ErrorCategory.InvalidOperation`. `JumpToAsync` and
+`PrepareAsync` are still refused in `Error`.
+
+**Who hits this.**
+- Code that waits for `Error` after a run of failed starts. It sees `Ended` once every item has
+  failed.
+- Code that treats `ReplaceAsync` failing in `Error` as the signal to rebuild the player. The call
+  now succeeds.
+
+**What to write instead.**
+- Watch `ItemFailed` for item failures, and treat `Ended` after them as the playlist having no
+  playable item left. Re-enqueue an item to try it again.
+- To recover from `Error`, call `ReplaceAsync` with the new playlist instead of disposing the
+  player.
+
 ## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out

@@ -937,6 +937,30 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task LoadFromError_ResetsAndLoads()
+    {
+        // #758: Error accepted only Reset, which nothing fired, so a controller there could only
+        // be disposed. A load now leaves it.
+        var session = new FakeSession { InitializeThrows = new InvalidOperationException("nope") };
+        var clock = new PlaybackClock(new FakeTimeProvider());
+        await using var controller = new PlaybackControllerCore(
+            NullLogger<PlaybackControllerCore>.Instance,
+            new FakeSessionFactory(session),
+            clock,
+            Microsoft.Extensions.Options.Options.Create(new FrameFlowPlaybackOptions())
+        );
+        Assert.False((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        Assert.Equal(PlaybackState.Error, controller.State);
+
+        session.InitializeThrows = null;
+        var result = await controller.LoadAsync(new FakeSource());
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PlaybackState.Paused, controller.State);
+        Assert.Equal(2, session.InitializeCalls);
+    }
+
+    [Fact]
     public async Task WarmUpFailure_RoutesToError_AsLoadFailure()
     {
         // The second loading-fault path (distinct from InitializeSession): WarmUp faults
