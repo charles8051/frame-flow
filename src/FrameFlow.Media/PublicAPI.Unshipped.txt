@@ -698,3 +698,9 @@ FrameFlow.Media.MediaFailureStage.Seek = 3 -> FrameFlow.Media.MediaFailureStage
 FrameFlow.Media.MediaFailureStage.SendPacket = 5 -> FrameFlow.Media.MediaFailureStage
 FrameFlow.Media.MediaFailureStage.StreamResolution = 2 -> FrameFlow.Media.MediaFailureStage
 FrameFlow.Media.PlaybackError.MediaFailure.get -> FrameFlow.Media.MediaException?
+FrameFlow.Media.ErrorCategory.DeviceLost = 6 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.DeviceLostException
+FrameFlow.Media.DeviceLostException.DeviceLostException(string! message, int removedReason, System.Exception? innerException = null) -> void
+FrameFlow.Media.DeviceLostException.RemovedReason.get -> int
+static FrameFlow.Media.DeviceLostException.IsDeviceLostCode(int hresult) -> bool
+FrameFlow.Media.PlaybackError.DeviceLoss.get -> FrameFlow.Media.DeviceLostException?

@@ -247,8 +247,8 @@ FrameFlow.Decoding.HardwareDevice.Dispose() -> void
 FrameFlow.Decoding.HardwareDevice.TryGetD3D12Device(out nint device) -> bool
 FrameFlow.Decoding.VideoDecoderOptions.Device.get -> FrameFlow.Decoding.HardwareDevice?
 FrameFlow.Decoding.VideoDecoderOptions.Device.init -> void
-static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null) -> FrameFlow.Decoding.HardwareDevice!
-static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device) -> FrameFlow.Decoding.HardwareDevice!
+static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> FrameFlow.Decoding.HardwareDevice!
+static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device, Microsoft.Extensions.Logging.ILogger? logger = null) -> FrameFlow.Decoding.HardwareDevice!
 FrameFlow.Decoding.CudaFramePlanes
 FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes() -> void
 FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes(nint Luma, int LumaPitch, nint Chroma, int ChromaPitch, nint Context, nint Stream) -> void
@@ -268,3 +268,8 @@ FrameFlow.Decoding.GpuVideoFrame.TryGetCudaPlanes(out FrameFlow.Decoding.CudaFra
 FrameFlow.Decoding.GpuVideoFrame.Rotation.get -> FrameFlow.Media.VideoRotation
 FrameFlow.Decoding.GpuVideoFrame.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
 FrameFlow.Decoding.GpuVideoFrame.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Decoding.HardwareDevice.DeviceLost -> System.EventHandler<FrameFlow.Decoding.HardwareDeviceLostEventArgs!>?
+FrameFlow.Decoding.HardwareDevice.IsLost.get -> bool
+FrameFlow.Decoding.HardwareDeviceLostEventArgs
+FrameFlow.Decoding.HardwareDeviceLostEventArgs.HardwareDeviceLostEventArgs(int removedReason) -> void
+FrameFlow.Decoding.HardwareDeviceLostEventArgs.RemovedReason.get -> int

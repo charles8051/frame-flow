@@ -16,6 +16,9 @@ namespace FrameFlow.Decoding.Tests;
 /// </remarks>
 public sealed class DecodeProtocolTests
 {
+    private const int DeviceReset = unchecked((int)0x887A0007); // DXGI_ERROR_DEVICE_RESET
+    private const int DriverInternalError = unchecked((int)0x887A0020); // DXGI_ERROR_DRIVER_INTERNAL_ERROR
+
     // ── The pure transition table ───────────────────────────────────────────
 
     [Fact]
@@ -167,6 +170,72 @@ public sealed class DecodeProtocolTests
     }
 
     [Fact]
+    public async Task Drive_ReceiveFaultOnALostDevice_ThrowsDeviceLost_AroundTheCodecsError()
+    {
+        var codec = new FakeCodec([new FakeInput(0, [1])], faultOnReceiveNumber: 1, removedReason: DeviceReset);
+
+        var lost = await Assert.ThrowsAsync<DeviceLostException>(() => CollectIdsAsync(codec));
+
+        Assert.Equal(DeviceReset, lost.RemovedReason);
+        var fault = Assert.IsType<MediaException>(lost.InnerException);
+        Assert.Equal(FakeCodec.FaultCode, fault.ErrorCode);
+        Assert.Equal(MediaFailureStage.ReceiveFrame, fault.Stage);
+        Assert.Equal(1, codec.ProbeCalls);
+    }
+
+    [Fact]
+    public async Task Drive_SendFaultOnALostDevice_ThrowsDeviceLost_AroundTheCodecsError()
+    {
+        var codec = new FakeCodec([new FakeInput(0, [1])], faultOnSendNumber: 1, removedReason: DriverInternalError);
+
+        var lost = await Assert.ThrowsAsync<DeviceLostException>(() => CollectIdsAsync(codec));
+
+        Assert.Equal(DriverInternalError, lost.RemovedReason);
+        Assert.Equal(MediaFailureStage.SendPacket, Assert.IsType<MediaException>(lost.InnerException).Stage);
+    }
+
+    [Fact]
+    public async Task Drive_AFaultOnALiveDevice_IsTheCodecsErrorAlone()
+    {
+        var codec = new FakeCodec([new FakeInput(0, [1])], faultOnReceiveNumber: 1, removedReason: 0);
+
+        var fault = await Assert.ThrowsAsync<MediaException>(() => CollectIdsAsync(codec));
+
+        Assert.Equal(ErrorCategory.Decode, fault.Category);
+        Assert.Equal(1, codec.ProbeCalls);
+    }
+
+    [Fact]
+    public async Task Drive_WithoutAFault_NeverProbesTheDevice()
+    {
+        var codec = new FakeCodec([new FakeInput(0, [1, 2])], removedReason: DeviceReset);
+
+        Assert.Equal(new[] { 1, 2 }, await CollectIdsAsync(codec));
+        Assert.Equal(0, codec.ProbeCalls);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(unchecked((int)0x887A0001))] // DXGI_ERROR_INVALID_CALL is not a loss
+    public void FaultOnDevice_KeepsTheFault_WhenTheDeviceIsNotLost(int removedReason)
+    {
+        var fault = DecodeDriver.Fault("avcodec_receive_frame", FakeCodec.FaultCode, MediaFailureStage.ReceiveFrame);
+
+        Assert.Same(fault, DecodeDriver.FaultOnDevice(fault, removedReason));
+    }
+
+    [Fact]
+    public void FaultOnDevice_WrapsTheFault_WhenTheDeviceIsLost()
+    {
+        var fault = DecodeDriver.Fault("avcodec_receive_frame", FakeCodec.FaultCode, MediaFailureStage.ReceiveFrame);
+
+        var lost = Assert.IsType<DeviceLostException>(DecodeDriver.FaultOnDevice(fault, DeviceReset));
+
+        Assert.Equal(DeviceReset, lost.RemovedReason);
+        Assert.Same(fault, lost.InnerException);
+    }
+
+    [Fact]
     public async Task Drive_CancelledToken_StopsCleanly()
     {
         var codec = new FakeCodec([new FakeInput(0, [1])]);
@@ -293,6 +362,7 @@ public sealed class DecodeProtocolTests
         public const int FaultCode = -('I' | ('N' << 8) | ('D' << 16) | ('A' << 24));
 
         private readonly int _faultOnReceiveNumber; // 0 = never
+        private readonly int _removedReason;
         private readonly int _faultOnSendNumber; // 0 = never
         private readonly Queue<int> _pending = new();
 
@@ -306,14 +376,17 @@ public sealed class DecodeProtocolTests
         public int SendCalls { get; private set; }
         public int ReceiveCalls { get; private set; }
         public int LastReturnCode { get; private set; }
+        public int ProbeCalls { get; private set; }
 
         public FakeCodec(
             IEnumerable<FakeInput> inputs,
             int[]? bufferedAtEof = null,
             int faultOnReceiveNumber = 0,
-            int faultOnSendNumber = 0
+            int faultOnSendNumber = 0,
+            int removedReason = 0
         )
         {
+            _removedReason = removedReason;
             _faultOnSendNumber = faultOnSendNumber;
             _inputs = new Queue<FakeInput>(inputs);
             _bufferedAtEof = new Queue<int>(bufferedAtEof ?? []);
@@ -395,5 +468,12 @@ public sealed class DecodeProtocolTests
         }
 
         public FakeFrame? BuildFrame() => new(_lastBuilt);
+
+        // What the device reports when asked, as GetDeviceRemovedReason would.
+        public int ProbeDeviceRemoved()
+        {
+            ProbeCalls++;
+            return _removedReason;
+        }
     }
 }

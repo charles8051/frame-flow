@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Text.RegularExpressions;
+using FrameFlow.Media;
 
 namespace FrameFlow.Inference.Core;
 
@@ -31,11 +32,6 @@ internal enum ConstructFailureKind
 internal static partial class ConstructFailure
 {
     private const int EOutOfMemory = unchecked((int)0x8007000E);
-
-    // DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_HUNG, DXGI_ERROR_DEVICE_RESET and
-    // D3DDDIERR_DEVICEREMOVED, the codes FrameFlow.Avalonia.Windows treats as device loss.
-    private static readonly int[] DeviceLostCodes =
-        [unchecked((int)0x887A0005), unchecked((int)0x887A0006), unchecked((int)0x887A0007), unchecked((int)0x88760870)];
 
     // DXGI_ERROR_NOT_FOUND (no adapter at the index asked for) and DXGI_ERROR_UNSUPPORTED.
     private static readonly int[] UnavailableCodes = [unchecked((int)0x887A0002), unchecked((int)0x887A0004)];
@@ -100,7 +96,8 @@ internal static partial class ConstructFailure
     private static ConstructFailureKind Of(Exception exception)
     {
         // The type and the HRESULT say what the exception is, so they are read before its text.
-        if (DeviceLostCodes.Contains(exception.HResult))
+        // The device-loss codes are the ones the decoder and the presenter use (#530).
+        if (DeviceLostException.IsDeviceLostCode(exception.HResult))
             return ConstructFailureKind.DeviceLost;
         if (exception is OutOfMemoryException || exception.HResult == EOutOfMemory)
             return ConstructFailureKind.OutOfMemory;
@@ -113,7 +110,7 @@ internal static partial class ConstructFailure
         // says nothing about why it failed.
         string text = Quoted().Replace(exception.Message, " ");
         var codes = HexCodes(text);
-        if (codes.Overlaps(DeviceLostCodes))
+        if (codes.Any(DeviceLostException.IsDeviceLostCode))
             return ConstructFailureKind.DeviceLost;
         if (codes.Contains(EOutOfMemory)
             || OutOfMemoryTexts.Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase)))

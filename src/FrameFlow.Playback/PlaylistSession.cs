@@ -832,6 +832,12 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             return Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': the player is disposed.", ex);
         }
+        catch (DeviceLostException ex)
+        {
+            // Before the InvalidOperationException it derives from: the GPU device was lost
+            // (#759).
+            return Result.Fail(ErrorCategory.DeviceLost, $"Preparing '{item}' failed: {ex.Message}", ex);
+        }
         catch (MediaException ex)
         {
             // Before the InvalidOperationException it derives from: the source failed, and the

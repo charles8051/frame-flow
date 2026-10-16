@@ -42,8 +42,17 @@ internal sealed partial class HardwareDeviceCache : IDisposable
     /// created, and the decoder then creates its own, as it would without a cache.
     /// </summary>
     /// <remarks>Taken under the cache's lock, so a concurrent drop or dispose cannot race it.</remarks>
-    internal nint Borrow(HardwareDecodeBackendKind backend)
+    internal nint Borrow(HardwareDecodeBackendKind backend) => Borrow(backend, out _);
+
+    /// <inheritdoc cref="Borrow(HardwareDecodeBackendKind)"/>
+    /// <param name="backend">The backend.</param>
+    /// <param name="owner">
+    /// The cached device the reference was taken from, for the decoder to report a device loss to
+    /// (#759). Null when the result is zero.
+    /// </param>
+    internal nint Borrow(HardwareDecodeBackendKind backend, out HardwareDevice? owner)
     {
+        owner = null;
         lock (_gate)
         {
             if (_disposed)
@@ -53,7 +62,7 @@ internal sealed partial class HardwareDeviceCache : IDisposable
             {
                 try
                 {
-                    device = HardwareDevice.Create(backend);
+                    device = HardwareDevice.Create(backend, logger: _logger);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
@@ -64,6 +73,7 @@ internal sealed partial class HardwareDeviceCache : IDisposable
                 LogCreated(_logger, backend.ToString());
             }
 
+            owner = device;
             return device.Borrow();
         }
     }

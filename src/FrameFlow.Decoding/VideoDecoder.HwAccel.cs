@@ -336,6 +336,7 @@ public sealed partial class VideoDecoder
             decoder._boundBackend = (int)hwBinding.Backend;
             decoder._hardwareBackend = (int)hwBinding.Backend;
             decoder._hwDeviceCtxRef = hwBinding.DeviceCtxRef; // ownership transfers
+            decoder._hwDeviceOwner = hwBinding.Owner;
             decoder._hwPixelFormat = hwBinding.HwPixelFormat;
             decoder._extraHwFrames = hwBinding.ExtraHwFrames;
             decoder._swFrame = swFrame;
@@ -603,10 +604,19 @@ public sealed partial class VideoDecoder
             // A cached device is borrowed the same way, and when the cache has none for this
             // backend the decoder creates its own, as it would without one.
             int rc = 0;
+            HardwareDevice? owner = null;
             if (device is not null)
+            {
                 deviceCtxRef = device.Borrow();
-            else if (deviceCache?.Borrow(candidate.Kind) is { } cached && cached != nint.Zero)
+                owner = device;
+            }
+#pragma warning disable CA2000 // The cache owns the device; the decoder only reports a loss to it.
+            else if (deviceCache?.Borrow(candidate.Kind, out var cachedOwner) is { } cached && cached != nint.Zero)
+#pragma warning restore CA2000
+            {
                 deviceCtxRef = cached;
+                owner = cachedOwner;
+            }
             else
                 rc = FFAvUtil.av_hwdevice_ctx_create(
                     out deviceCtxRef,
@@ -693,6 +703,7 @@ public sealed partial class VideoDecoder
                 AvHwDeviceType: candidate.AvHwDeviceType,
                 HwPixelFormat: candidate.HwPixelFormat,
                 DeviceCtxRef: deviceCtxRef,
+                Owner: owner,
                 CodecCtx: codecCtx,
                 ExtraHwFrames: extraHwFrames
             );
@@ -854,6 +865,7 @@ public sealed partial class VideoDecoder
         _swFrame = null;
         if (_hwDeviceCtxRef != nint.Zero)
             FFAvUtil.av_buffer_unref(ref _hwDeviceCtxRef);
+        _hwDeviceOwner = null;
         _hwPixelFormat = -1;
         _extraHwFrames = 0;
 
@@ -946,6 +958,7 @@ public sealed partial class VideoDecoder
         int AvHwDeviceType,
         int HwPixelFormat,
         nint DeviceCtxRef,
+        HardwareDevice? Owner,
         CodecContextHandle CodecCtx,
         int ExtraHwFrames
     );

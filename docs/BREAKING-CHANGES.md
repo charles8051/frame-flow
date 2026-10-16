@@ -106,6 +106,43 @@ carries it too. The positional constructors and deconstruction are unchanged.
   transition's, rather than for the first frame of any new timeline. A loop of the item that is
   ending also starts one.
 
+### 4. `ErrorCategory` gains `DeviceLost`, and a decode failure on a lost GPU device throws `DeviceLostException`
+
+**A new enum member, and a change in behaviour.**
+
+When the GPU device a player decodes on is removed or reset, the player now fails with
+`ErrorCategory.DeviceLost` (#759). It used to report `Decode` or `System`, like any other item
+failure. `PlaybackError.DeviceLoss` carries the `DeviceLostException` behind it, and its
+`RemovedReason` is the HRESULT the device reported, such as `DXGI_ERROR_DEVICE_RESET`
+(`0x887A0007`).
+
+A decoder whose `avcodec_send_packet` or `avcodec_receive_frame` fails on a D3D11VA or D3D12VA
+device asks the device whether it was removed. If it was, the decoder throws `DeviceLostException`
+with the `MediaException` it would have thrown as its inner exception. Any exception in a failure's
+chain that carries a device-loss HRESULT, a `COMException` from a D3D call for instance, now reports
+`DeviceLost` too, and so does a video sink that throws one.
+
+`HardwareDevice.DeviceLost` is raised once, on the thread pool, the first time a decoder on the
+device reports the loss. `HardwareDevice.IsLost` reads it afterwards.
+
+`DXGI_ERROR_DRIVER_INTERNAL_ERROR` (`0x887A0020`) now counts as device loss everywhere, in the
+presenter and the inference factory as well as the decoder (#530). An inference provider that fails
+with it is ruled out for later models, as the other device-loss codes already were.
+
+**Who hits this.**
+- A `switch` over `ErrorCategory` with no default arm. A switch expression warns that `DeviceLost`
+  is not handled (CS8509) and throws `SwitchExpressionException` if it meets one.
+- Code that treats every non-`Source` failure as one item's problem. A `DeviceLost` failure is the
+  device's, and every player on the device has it.
+- `Assert.Throws<MediaException>` around a decode on a device that a test removes. The decoder
+  throws `DeviceLostException` there. `catch (InvalidOperationException)` still catches both.
+
+**What to write instead.**
+- Handle `ErrorCategory.DeviceLost` where you branch on the category.
+- With several players on one `HardwareDevice`, subscribe to `HardwareDevice.DeviceLost` and rebuild
+  them all on a new device from that one event. A player without a lent device drops its own device
+  when an item faults, so loading again on the same player is enough.
+
 ## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out

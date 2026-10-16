@@ -18,6 +18,7 @@ namespace FrameFlow.Media.Core;
 ///   <item><term><c>AVERROR_INVALIDDATA</c> before the first packet</term><description><see cref="ErrorCategory.Source"/></description></item>
 ///   <item><term><c>AVERROR_INVALIDDATA</c> mid-stream</term><description><see cref="ErrorCategory.Decode"/></description></item>
 ///   <item><term>no decodable stream, <c>AVERROR_STREAM_NOT_FOUND</c></term><description><see cref="ErrorCategory.Source"/></description></item>
+///   <item><term>a <see cref="DeviceLostException"/>, or a device-loss HRESULT, anywhere in the chain</term><description><see cref="ErrorCategory.DeviceLost"/></description></item>
 ///   <item><term>any other code</term><description><see cref="ErrorCategory.Source"/> while opening or seeking, <see cref="ErrorCategory.Decode"/> while reading or decoding</description></item>
 /// </list>
 /// <para>
@@ -96,6 +97,11 @@ internal static class MediaErrorClassification
     /// </param>
     public static ErrorCategory Categorize(Exception? exception, ErrorCategory fallback)
     {
+        // Device loss wins wherever it is in the chain: a decode failure on a lost device is the
+        // loss, not the code FFmpeg returned for it (#759).
+        if (IsDeviceLoss(exception))
+            return ErrorCategory.DeviceLost;
+
         for (var current = exception; current is not null; current = current.InnerException)
         {
             switch (current)
@@ -110,6 +116,34 @@ internal static class MediaErrorClassification
         }
 
         return fallback;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="exception"/> or one of its inner exceptions is a
+    /// <see cref="DeviceLostException"/> or carries a device-loss HRESULT, as a
+    /// <c>COMException</c> or a Vortice <c>SharpGenException</c> from a removed device does.
+    /// </summary>
+    public static bool IsDeviceLoss(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DeviceLostException || DeviceLoss.IsDeviceLostCode(current.HResult))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The first <see cref="DeviceLostException"/> in <paramref name="exception"/> or its inner exceptions.</summary>
+    public static DeviceLostException? FindDeviceLoss(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DeviceLostException lost)
+                return lost;
+        }
+
+        return null;
     }
 
     /// <summary>The first <see cref="MediaException"/> in <paramref name="exception"/> or its inner exceptions.</summary>

@@ -45,6 +45,21 @@ public sealed class ConstructFailureTests
             new COMException("Device reset.", unchecked((int)0x887A0007)),
             nameof(ConstructFailureKind.DeviceLost)
         },
+        {
+            "DXGI_ERROR_DRIVER_INTERNAL_ERROR by HRESULT alone (#530)",
+            new COMException("The driver encountered a problem.", unchecked((int)0x887A0020)),
+            nameof(ConstructFailureKind.DeviceLost)
+        },
+        {
+            "DXGI_ERROR_DRIVER_INTERNAL_ERROR in ONNX Runtime's message text (#530)",
+            new InvalidOperationException("887A0020 The driver encountered a problem and was put into the device removed state."),
+            nameof(ConstructFailureKind.DeviceLost)
+        },
+        {
+            "DXGI_ERROR_INVALID_CALL is the application's mistake, not device loss",
+            new COMException("Invalid call.", unchecked((int)0x887A0001)),
+            nameof(ConstructFailureKind.Unknown)
+        },
 
         // Out of memory.
         {

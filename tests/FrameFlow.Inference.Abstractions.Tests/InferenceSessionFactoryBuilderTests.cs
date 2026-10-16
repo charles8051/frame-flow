@@ -110,6 +110,27 @@ public class InferenceSessionFactoryBuilderTests
         Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
     }
 
+    /// <summary>
+    /// #530: DXGI_ERROR_DRIVER_INTERNAL_ERROR leaves the device removed, so it rules the provider
+    /// out like the other device-loss codes and the provider that opened becomes active.
+    /// </summary>
+    [Fact]
+    public void Open_DriverInternalError_RulesTheProviderOut()
+    {
+        var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+        {
+            [ExecutionProvider.DirectML] = _ => throw new InvalidOperationException("887A0020 The driver encountered a problem."),
+            [ExecutionProvider.Cpu] = path => new FakeInferenceSession($"cpu:{path}"),
+        };
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: providers);
+
+        using var session = (FakeInferenceSession)factory.Open("model.onnx");
+
+        Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
+    }
+
     // ── EP selection: all fail ─────────────────────────────────────────
 
     [Fact]
