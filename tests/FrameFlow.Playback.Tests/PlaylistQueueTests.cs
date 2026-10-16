@@ -464,6 +464,88 @@ public sealed class PlaylistQueueTests
         Assert.Equal("|", Next(ref queue));
     }
 
+    // ── Failed passes (#758) ────────────────────────────────────────────────
+
+    /// <summary>Reports the current item as started, as the session does when it opens.</summary>
+    private static void Started(ref PlaylistQueue queue) =>
+        (queue, _) = queue.ReportCurrent(queue.Current!, Info());
+
+    [Fact]
+    public void FailedPass_OneItemUnderOne_EndsWhenItsReopenFails()
+    {
+        var queue = Queue(RepeatMode.One, "a");
+        Assert.Equal("a a", Walk(ref queue, 1));
+        Started(ref queue);
+
+        Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_OneItemUnderAll_EndsWhenItsReopenFails()
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        _ = Take(ref queue);
+        Started(ref queue);
+        Assert.Equal("^a", Next(ref queue));
+
+        Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_EveryItemFailingUnderAll_EndsAfterOnePass()
+    {
+        var queue = Queue(RepeatMode.All, "a", "b", "c");
+        _ = Take(ref queue);
+        Started(ref queue);
+        Assert.Equal("b", Next(ref queue));
+
+        Assert.Equal("c ^a |", Advance(ref queue, 4, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_AnItemThatStarts_BeginsANewPass()
+    {
+        var queue = Queue(RepeatMode.All, "a", "b");
+        _ = Take(ref queue);
+        Started(ref queue);
+        Assert.Equal("b", Next(ref queue));
+        Assert.Equal("^a", Next(ref queue, PlaylistAdvance.FailedStart));
+        Started(ref queue);
+        Assert.Equal("b", Next(ref queue));
+        Started(ref queue);
+        Assert.Equal("^a", Next(ref queue));
+
+        // b failed once, but it has started since. Only a has failed in this pass.
+        Assert.Equal("b", Next(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_StillTakesQueuedItems_ThenEnds()
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        _ = Take(ref queue);
+        Started(ref queue);
+        Assert.Equal("^a", Next(ref queue));
+        queue = queue.Enqueue(Item("x"));
+
+        Assert.Equal("x |", Advance(ref queue, 2, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_Replace_GivesTheNewPlaylistAFreshPass()
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        var a = Take(ref queue)!;
+        Started(ref queue);
+        Assert.Equal("^a", Next(ref queue));
+        Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
+
+        // a failed in the old pass. The new playlist tries it again after b fails.
+        queue = queue.Replace([Item("b"), a]);
+
+        Assert.Equal("b a |", Advance(ref queue, 3, PlaylistAdvance.FailedStart));
+    }
+
     // ── Validation rows ─────────────────────────────────────────────────────
 
     [Fact]

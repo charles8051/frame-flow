@@ -25,6 +25,10 @@ public interface IPlaybackController : IAsyncDisposable
     // ── Commands ──────────────────────────────────────────────────────────
 
     /// <summary>Load a media source and prepare the pipeline for playback.</summary>
+    /// <remarks>
+    /// Accepted from <see cref="PlaybackState.Idle"/>, after an unload, and from
+    /// <see cref="PlaybackState.Error"/>, which the load resets and leaves.
+    /// </remarks>
     Task<Result> LoadAsync(IMediaSource source, CancellationToken cancellationToken = default);
 
     /// <summary>Unload the media source and tear down the pipeline.</summary>
@@ -146,7 +150,8 @@ public interface IPlaybackController : IAsyncDisposable
     /// <summary>Fires when an error occurs during playback.</summary>
     /// <remarks>
     /// An error that stops playback is raised as the controller enters
-    /// <see cref="PlaybackState.Error"/>. A playlist controller also raises an error for
+    /// <see cref="PlaybackState.Error"/>, which a <see cref="LoadAsync"/> leaves. A playlist
+    /// controller also raises an error for
     /// each item that fails to start or faults while it plays, and then moves on without
     /// changing state. Failed items put it in <see cref="PlaybackState.Error"/> only when
     /// they keep failing in a row. A controller created with lateness recovery enabled

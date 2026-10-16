@@ -485,7 +485,7 @@ public class PlaybackProtocolTests
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Error — reset only
+    // Error — reset, and load (#758)
     // ─────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -497,11 +497,31 @@ public class PlaybackProtocolTests
     }
 
     [Fact]
-    public void Error_RejectsEverythingButReset()
+    public void Error_Load_ResetsThenLoads()
+    {
+        // A load is how a caller leaves Error. It does what a reset followed by a load does.
+        var reset = Advance(InternalPlaybackState.Error, PlaybackTrigger.Reset);
+        var resetThenLoad = Advance(reset.NextState, PlaybackTrigger.Load);
+
+        var d = Advance(InternalPlaybackState.Error, PlaybackTrigger.Load);
+
+        Assert.Equal(InternalPlaybackState.Initializing, d.NextState);
+        Assert.Equal(resetThenLoad.NextState, d.NextState);
+        Assert.Equal([.. reset.Actions, .. resetThenLoad.Actions], d.Actions);
+        AssertActions(
+            d,
+            PlaybackActionKind.CreateSession,
+            PlaybackActionKind.InitializeSession,
+            PlaybackActionKind.FireTrigger
+        );
+        Assert.Equal(PlaybackTrigger.HeadersReceived, d.Actions[^1].FollowUp);
+    }
+
+    [Fact]
+    public void Error_RejectsEverythingButResetAndLoad()
     {
         PlaybackTrigger[] rejected =
         [
-            PlaybackTrigger.Load,
             PlaybackTrigger.Play,
             PlaybackTrigger.Unload,
             PlaybackTrigger.FatalError, // already in Error — a second fault is dropped
@@ -623,6 +643,7 @@ public class PlaybackProtocolTests
         [(InternalPlaybackState.Unloaded, PlaybackTrigger.Reset)] = Always,
 
         [(InternalPlaybackState.Error, PlaybackTrigger.Reset)] = Always,
+        [(InternalPlaybackState.Error, PlaybackTrigger.Load)] = Always,
     };
 
     [Fact]

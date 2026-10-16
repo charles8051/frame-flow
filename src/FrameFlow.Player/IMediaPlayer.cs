@@ -70,11 +70,14 @@ namespace FrameFlow.Player;
 /// <see cref="RepeatMode.Off"/> a last item that faults while playing ends the
 /// playlist in <see cref="PlaybackState.Ended"/>, and under
 /// <see cref="RepeatMode.All"/> or <see cref="RepeatMode.One"/> the rotation
-/// continues. An item that cannot be started is passed over under every repeat mode. The
+/// continues. An item that cannot be started is passed over under every repeat mode, until
+/// every playlist item has failed to start since an item last started; the player then ends in
+/// <see cref="PlaybackState.Ended"/> once no next or queued item is left. The
 /// player's very first item is treated as a single source's: if it cannot be opened the load
 /// fails, and if it faults before the first <see cref="IMediaTransport.PlayAsync"/> the player
 /// enters <see cref="PlaybackState.Error"/>. The player gives up and enters <see cref="PlaybackState.Error"/>
-/// when more than eight items fail in a row. An item that ends or is skipped without
+/// when more than eight items fail in a row, and <see cref="ReplaceAsync(IEnumerable{IMediaSource}, CancellationToken)"/>
+/// recovers it from there. An item that ends or is skipped without
 /// failing breaks the run, and so does a fault after an item has played for five
 /// seconds, or for half its length if that is shorter.
 /// </para>
@@ -202,8 +205,9 @@ public interface IMediaPlayer : IMediaTransport
     /// </summary>
     /// <returns>
     /// The new playlist items, or a failed <see cref="Result{T}"/> with
-    /// <see cref="ErrorCategory.InvalidOperation"/> while the player is in
-    /// <see cref="PlaybackState.Error"/> or disposed.
+    /// <see cref="ErrorCategory.InvalidOperation"/> once the player is disposed. From
+    /// <see cref="PlaybackState.Error"/> the replace also loads the first new item, leaving the
+    /// player <see cref="PlaybackState.Paused"/>, and a load that fails returns its failure.
     /// </returns>
     /// <exception cref="ArgumentException"><paramref name="sources"/> is empty.</exception>
     Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
@@ -218,8 +222,9 @@ public interface IMediaPlayer : IMediaTransport
     /// </summary>
     /// <returns>
     /// The new playlist items, or a failed <see cref="Result{T}"/> with
-    /// <see cref="ErrorCategory.InvalidOperation"/> while the player is in
-    /// <see cref="PlaybackState.Error"/> or disposed.
+    /// <see cref="ErrorCategory.InvalidOperation"/> once the player is disposed. From
+    /// <see cref="PlaybackState.Error"/> the replace also loads the first new item, leaving the
+    /// player <see cref="PlaybackState.Paused"/>, and a load that fails returns its failure.
     /// </returns>
     /// <exception cref="ArgumentException">
     /// <paramref name="clips"/> is empty, or a clip has no source.
@@ -312,7 +317,8 @@ public interface IMediaPlayer : IMediaTransport
     /// the load or enters <see cref="PlaybackState.Error"/> instead, raising nothing here. Nothing
     /// fires while the player is disposing. And the failure that exhausts the consecutive-failure
     /// guard is raised here and then followed by <see cref="PlaybackState.Error"/>, so a consumer
-    /// that retries or re-queues on this event should watch the state too.
+    /// that retries or re-queues on this event should watch the state too. A replace recovers the
+    /// player from <see cref="PlaybackState.Error"/>.
     /// </para>
     /// </remarks>
     IObservable<PlaylistItemFailed> ItemFailed { get; }

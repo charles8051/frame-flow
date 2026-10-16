@@ -188,6 +188,7 @@ internal readonly record struct PlaybackInputs(bool HasSession = true);
 /// <item><description>
 /// <b>error routing:</b> <c>FatalError</c> from any non-terminal state routes to
 /// <c>Error</c> with <see cref="PlaybackActionKind.DisposeSession"/> + <see cref="PlaybackActionKind.RaiseError"/>.
+/// <c>Error</c> accepts <c>Reset</c>, and <c>Load</c>, which resets and then loads.
 /// </description></item>
 /// <item><description>
 /// <b>replay-from-Ended:</b> handled by the shell's higher-level <c>Play</c>-from-<c>Ended</c>
@@ -387,6 +388,13 @@ internal static class PlaybackProtocol
             InternalPlaybackState.Error => trigger switch
             {
                 PlaybackTrigger.Reset => PlaybackDecision.To(InternalPlaybackState.Idle),
+                // A load recovers from Error: it resets and then loads, in one step (#758).
+                // The session was disposed on the way in, so the reset has no work of its own.
+                PlaybackTrigger.Load => Advance(
+                    Advance(state, PlaybackTrigger.Reset, inputs).NextState,
+                    trigger,
+                    inputs
+                ),
                 _ => PlaybackDecision.NotHandled(state),
             },
 

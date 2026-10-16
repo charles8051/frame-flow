@@ -24,7 +24,8 @@ namespace FrameFlow.Playback;
 /// <b>The order.</b> An advance takes the pending jump's target, then the first next item, then the
 /// playlist item after the cursor, then the first queued item. At the end of a pass it goes back to
 /// the first playlist item under <see cref="RepeatMode.All"/>, or on a skip or failed start under
-/// <see cref="RepeatMode.One"/>, and otherwise ends. Under <see cref="RepeatMode.One"/> a natural
+/// <see cref="RepeatMode.One"/>, and otherwise ends. A failed start ends the queue instead once
+/// every playlist item has failed to start since the last item that started (#758). Under <see cref="RepeatMode.One"/> a natural
 /// end or a fault replays the current item. The repeat mode is not stored in the collections, so a
 /// switch applies to the whole playlist.
 /// </para>
@@ -89,6 +90,13 @@ internal sealed record PlaylistQueue
 
     /// <summary>Items that failed in a row without making progress. See <see cref="ItemFailed"/>.</summary>
     public int ConsecutiveFailures { get; private init; }
+
+    /// <summary>
+    /// The items that have failed to start since an item last started. A full set ends a pass of
+    /// failed starts. See <see cref="DecideNext"/>.
+    /// </summary>
+    public ImmutableHashSet<PlaylistItem> FailedSinceStart { get; private init; } =
+        ImmutableHashSet.Create<PlaylistItem>(ReferenceEqualityComparer.Instance);
 
     /// <summary>A skip or end-of-stream latched before a session could act on it.</summary>
     public PlaylistAdvance? LatchedAdvance { get; private init; }
@@ -317,6 +325,8 @@ internal sealed record PlaylistQueue
             // the new playlist instead. A clear keeps the reservation, because without one the
             // replay would have nothing to open; a replace gives it the jump target.
             ReservedStart = null,
+            // A new playlist is a new pass: its items get a fresh attempt.
+            FailedSinceStart = FailedSinceStart.Clear(),
             Playlist = [.. items],
             PendingJump = items[0],
             Revision = cleared.Revision + 1,
@@ -359,6 +369,12 @@ internal sealed record PlaylistQueue
     /// the current item, and a skip or failed start moves on.
     /// </param>
     /// <remarks>
+    /// A failed start records the current item as failed. When every playlist item has failed to
+    /// start since an item last started, the advance takes only next and queued items and then
+    /// ends, under every repeat mode, rather than reopening an item that has already failed (#758).
+    /// A pending jump is still taken.
+    /// </remarks>
+    /// <remarks>
     /// The decision is <see cref="NextKind.Replay"/> whenever the item taken plays the <i>same
     /// source object</i> as the current one: under <see cref="RepeatMode.One"/>, when a
     /// <see cref="RepeatMode.All"/> playlist of one source wraps, or at a back-to-back duplicate.
@@ -383,6 +399,29 @@ internal sealed record PlaylistQueue
         if (Repeat == RepeatMode.One && !movesOn && Current is { } current)
             return (this, new NextDecision(NextKind.Replay, current, Wrapped: false));
 
+        if (reason == PlaylistAdvance.FailedStart && Current is { } failed)
+            return (this with { FailedSinceStart = FailedSinceStart.Add(failed) }).DecideAfterFailedStart();
+
+        return DecideOnward(movesOn);
+    }
+
+    // A failed start moves on as a skip does, unless the playlist has nothing left that has not
+    // failed since an item last started. Next and queued items are one-shot, so taking them cannot
+    // loop.
+    private (PlaylistQueue Queue, NextDecision Decision) DecideAfterFailedStart()
+    {
+        if (!Playlist.All(FailedSinceStart.Contains))
+            return DecideOnward(movesOn: true);
+
+        if (!Next.IsEmpty)
+            return (this with { Next = Next.RemoveAt(0) }).Take(Next[0], wrapped: false, byAdvance: true);
+        if (!Queued.IsEmpty)
+            return (this with { Queued = Queued.RemoveAt(0) }).Take(Queued[0], wrapped: false, byAdvance: true);
+        return (this, new NextDecision(NextKind.End, null, Wrapped: false));
+    }
+
+    private (PlaylistQueue Queue, NextDecision Decision) DecideOnward(bool movesOn)
+    {
         if (!Next.IsEmpty)
             return (this with { Next = Next.RemoveAt(0) }).Take(Next[0], wrapped: false, byAdvance: true);
 
@@ -424,6 +463,7 @@ internal sealed record PlaylistQueue
             this with
             {
                 CurrentStarted = CurrentStarted || ReferenceEquals(item, Current),
+                FailedSinceStart = FailedSinceStart.Clear(),
                 Reported = item,
                 ReportedInfo = info,
                 TransitionCount = index,
@@ -496,6 +536,7 @@ internal sealed record PlaylistQueue
         && Equals(ReportedInfo, other.ReportedInfo)
         && Repeat == other.Repeat
         && ConsecutiveFailures == other.ConsecutiveFailures
+        && FailedSinceStart.SetEquals(other.FailedSinceStart)
         && LatchedAdvance == other.LatchedAdvance
         && Revision == other.Revision
         && TransitionCount == other.TransitionCount;

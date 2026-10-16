@@ -701,6 +701,41 @@ public sealed class PlaylistSessionTranscriptTests
     }
 
     /// <summary>
+    /// #758: an item that has played and then cannot be reopened, such as a file removed while it
+    /// looped, used to be reopened until the consecutive-failure guard gave up and left the
+    /// controller in Error. It fails once, and the queue ends.
+    /// </summary>
+    [Theory]
+    [InlineData(RepeatMode.One)]
+    [InlineData(RepeatMode.All)]
+    public async Task AnItemThatPlayed_AndCannotBeReopened_EndsTheQueueAfterOneFailure(RepeatMode repeat)
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(repeat, "a");
+
+        // The in-place rewind fails, so the loop falls back to reopening the item, and every reopen
+        // fails.
+        rig.Fail("a", ItemOp.Rewind, Boom);
+        for (var i = 0; i < PlaylistFailureGuard.MaxConsecutiveFailures + 2; i++)
+            rig.Fail("a", ItemOp.Open, Boom);
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+
+        Assert.Equal(
+            [
+                "a#1.Rewind",
+                "a#1.Dispose",
+                "clock.Stop",
+                "a#2.Open",
+                "a#2.Dispose",
+                "ctl.ItemFailed(a,CouldNotStart,Playlist item 'a' could not be started: boom)",
+                "ctl.EndOfStream",
+            ],
+            rig.TakeLog()
+        );
+    }
+
+    /// <summary>
     /// A rig paused on <c>b</c> of <c>a, b, c</c>: <c>a</c> played, was paused and was skipped,
     /// so <c>b</c> is opened and warmed and waits for a Play to start it.
     /// </summary>

@@ -43,20 +43,66 @@ public sealed class PlaylistPlayerQueueTests
     }
 
     [Fact]
-    public async Task JumpAndReplace_AreRefused_WhileThePlayerIsInError()
+    public async Task Jump_IsRefused_WhileThePlayerIsInError()
     {
         // Row 25.
         await using var player = NewPlayer(PlaybackState.Error, out var coordinator);
         var target = await player.AddAsync(Source("b"));
 
         var jump = await player.JumpToAsync(target);
-        var replace = await player.ReplaceAsync([Source("d")]);
 
         Assert.False(jump.IsSuccess);
         Assert.Equal(ErrorCategory.InvalidOperation, jump.Error.Category);
-        Assert.False(replace.IsSuccess);
-        Assert.Equal(ErrorCategory.InvalidOperation, replace.Error.Category);
         Assert.False(coordinator.HasPendingJump);
+    }
+
+    [Fact]
+    public async Task Replace_InError_LoadsTheFirstNewItem()
+    {
+        // #758: Error accepted no command that could leave it, so a player there had to be rebuilt.
+        var controller = new StubController { State = PlaybackState.Error };
+        await using var player = new PlaylistMediaPlayerCore(
+            controller,
+            new PlaylistCoordinator([Source("a")], RepeatMode.Off),
+            audioSink: null
+        );
+
+        var replace = await player.ReplaceAsync([Source("d"), Source("e")]);
+
+        Assert.True(replace.IsSuccess);
+        Assert.Equal(["d", "e"], replace.Value.Select(i => i.Source.DisplayName));
+        Assert.Equal(["d"], controller.Loaded.Select(s => s.DisplayName));
+    }
+
+    [Fact]
+    public async Task Replace_InError_ReturnsTheLoadsFailure()
+    {
+        var failure = new PlaybackError(ErrorCategory.System, "cannot open");
+        var controller = new StubController { State = PlaybackState.Error, LoadResult = Result.Fail(failure) };
+        await using var player = new PlaylistMediaPlayerCore(
+            controller,
+            new PlaylistCoordinator([Source("a")], RepeatMode.Off),
+            audioSink: null
+        );
+
+        var replace = await player.ReplaceAsync([Source("d")]);
+
+        Assert.False(replace.IsSuccess);
+        Assert.Same(failure, replace.Error);
+    }
+
+    [Fact]
+    public async Task Replace_OutsideError_DoesNotLoad()
+    {
+        var controller = new StubController { State = PlaybackState.Ended };
+        await using var player = new PlaylistMediaPlayerCore(
+            controller,
+            new PlaylistCoordinator([Source("a")], RepeatMode.Off),
+            audioSink: null
+        );
+
+        Assert.True((await player.ReplaceAsync([Source("d")])).IsSuccess);
+        Assert.Empty(controller.Loaded);
     }
 
     [Fact]
@@ -333,8 +379,17 @@ public sealed class PlaylistPlayerQueueTests
     {
         public PlaybackState State { get; init; } = PlaybackState.Idle;
 
-        public Task<Result> LoadAsync(IMediaSource source, CancellationToken ct = default) =>
-            Task.FromResult(Result.Ok());
+        /// <summary>What <see cref="LoadAsync"/> returns.</summary>
+        public Result LoadResult { get; init; } = Result.Ok();
+
+        /// <summary>The sources <see cref="LoadAsync"/> was called with, in order.</summary>
+        public List<IMediaSource> Loaded { get; } = [];
+
+        public Task<Result> LoadAsync(IMediaSource source, CancellationToken ct = default)
+        {
+            Loaded.Add(source);
+            return Task.FromResult(LoadResult);
+        }
 
         public Task<Result> UnloadAsync(CancellationToken ct = default) =>
             Task.FromResult(Result.Ok());
