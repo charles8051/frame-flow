@@ -71,7 +71,8 @@ namespace FrameFlow.Player;
 /// playlist in <see cref="PlaybackState.Ended"/>, and under
 /// <see cref="RepeatMode.All"/> or <see cref="RepeatMode.One"/> the rotation
 /// continues. An item that cannot be started is passed over under every repeat mode, until
-/// every playlist item has failed to start since an item last started; the player then ends in
+/// every playlist item has failed to start since an item last ended, was skipped, or played long
+/// enough to break a run of failures; the player then ends in
 /// <see cref="PlaybackState.Ended"/> once no next or queued item is left. The
 /// player's very first item is treated as a single source's: if it cannot be opened the load
 /// fails, and if it faults before the first <see cref="IMediaTransport.PlayAsync"/> the player

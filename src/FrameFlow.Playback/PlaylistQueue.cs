@@ -25,7 +25,7 @@ namespace FrameFlow.Playback;
 /// playlist item after the cursor, then the first queued item. At the end of a pass it goes back to
 /// the first playlist item under <see cref="RepeatMode.All"/>, or on a skip or failed start under
 /// <see cref="RepeatMode.One"/>, and otherwise ends. A failed start ends the queue instead once
-/// every playlist item has failed to start since the last item that started (#758). Under <see cref="RepeatMode.One"/> a natural
+/// every playlist item has failed to start since an item last made progress (#758). Under <see cref="RepeatMode.One"/> a natural
 /// end or a fault replays the current item. The repeat mode is not stored in the collections, so a
 /// switch applies to the whole playlist.
 /// </para>
@@ -92,9 +92,14 @@ internal sealed record PlaylistQueue
     public int ConsecutiveFailures { get; private init; }
 
     /// <summary>
-    /// The items that have failed to start since an item last started. A full set ends a pass of
+    /// The items that have failed to start since an item last made progress, as
+    /// <see cref="ItemEnded"/> and <see cref="ItemFailed"/> define it. A full set ends a pass of
     /// failed starts. See <see cref="DecideNext"/>.
     /// </summary>
+    /// <remarks>
+    /// Reporting an item does not clear it. An item an advance opens while paused is reported
+    /// before the Play that starts it, and that Play can still fail.
+    /// </remarks>
     public ImmutableHashSet<PlaylistItem> FailedSinceStart { get; private init; } =
         ImmutableHashSet.Create<PlaylistItem>(ReferenceEqualityComparer.Instance);
 
@@ -370,7 +375,7 @@ internal sealed record PlaylistQueue
     /// </param>
     /// <remarks>
     /// A failed start records the current item as failed. When every playlist item has failed to
-    /// start since an item last started, the advance takes only next and queued items and then
+    /// start since an item last made progress, the advance takes only next and queued items and then
     /// ends, under every repeat mode, rather than reopening an item that has already failed (#758).
     /// A pending jump is still taken.
     /// </remarks>
@@ -406,7 +411,7 @@ internal sealed record PlaylistQueue
     }
 
     // A failed start moves on as a skip does, unless the playlist has nothing left that has not
-    // failed since an item last started. Next and queued items are one-shot, so taking them cannot
+    // failed since an item last made progress. Next and queued items are one-shot, so taking them cannot
     // loop.
     private (PlaylistQueue Queue, NextDecision Decision) DecideAfterFailedStart()
     {
@@ -463,7 +468,6 @@ internal sealed record PlaylistQueue
             this with
             {
                 CurrentStarted = CurrentStarted || ReferenceEquals(item, Current),
-                FailedSinceStart = FailedSinceStart.Clear(),
                 Reported = item,
                 ReportedInfo = info,
                 TransitionCount = index,
@@ -482,8 +486,16 @@ internal sealed record PlaylistQueue
     public (PlaylistQueue Queue, PlaylistAdvance? Latched) ConsumeLatchedAdvance() =>
         (this with { LatchedAdvance = null }, LatchedAdvance);
 
-    /// <summary>Records an item that ended without failing, which resets the failure count.</summary>
-    public PlaylistQueue ItemEnded() => this with { ConsecutiveFailures = 0 };
+    /// <summary>
+    /// Records an item that ended without failing, which resets the failure count and begins a new
+    /// pass of failed starts.
+    /// </summary>
+    public PlaylistQueue ItemEnded() =>
+        this with
+        {
+            ConsecutiveFailures = 0,
+            FailedSinceStart = FailedSinceStart.Clear(),
+        };
 
     /// <summary>
     /// Records a failed item. The result is <see langword="true"/> when the playlist should give up.
@@ -498,8 +510,9 @@ internal sealed record PlaylistQueue
     /// </param>
     public (PlaylistQueue Queue, bool GiveUp) ItemFailed(TimeSpan playedFor, TimeSpan itemLength)
     {
+        // An item that played far enough made progress, as one that ended does.
         if (playedFor >= PlaylistFailureGuard.ProgressNeeded(itemLength))
-            return (this with { ConsecutiveFailures = 0 }, false);
+            return (ItemEnded(), false);
 
         var count = ConsecutiveFailures + 1;
         return (

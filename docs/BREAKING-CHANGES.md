@@ -24,9 +24,10 @@ until the guard gave up. `Error` accepted no command that could leave it, so the
 the player.
 
 Now a failed start ends the queue once every playlist item has failed to start since an item last
-started. Next and queued items are still taken first. The player raises `ItemFailed` for each
-failure and ends in `Ended`, under every repeat mode. The guard still enters `Error` for a long
-playlist that fails more than eight items in a row.
+ended, was skipped, or played long enough to break a run of failures. Next and queued items are
+still taken first. The player raises `ItemFailed` for each failure and ends in `Ended`, under every
+repeat mode. The guard still enters `Error` for a long playlist that fails more than eight items in
+a row.
 
 `Error` can now be left. `IMediaPlayer.ReplaceAsync` from `Error` replaces the queue and loads its
 first item, leaving the player `Paused`. `IPlaybackController.LoadAsync` from `Error` resets the

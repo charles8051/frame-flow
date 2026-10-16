@@ -466,16 +466,24 @@ public sealed class PlaylistQueueTests
 
     // ── Failed passes (#758) ────────────────────────────────────────────────
 
-    /// <summary>Reports the current item as started, as the session does when it opens.</summary>
-    private static void Started(ref PlaylistQueue queue) =>
+    /// <summary>Reports the current item, as the session does once it has opened it.</summary>
+    private static void Reported(ref PlaylistQueue queue) =>
         (queue, _) = queue.ReportCurrent(queue.Current!, Info());
+
+    /// <summary>The current item starts and plays to its end, as the session records it.</summary>
+    private static void PlayedToItsEnd(ref PlaylistQueue queue)
+    {
+        Reported(ref queue);
+        queue = queue.ItemEnded();
+    }
 
     [Fact]
     public void FailedPass_OneItemUnderOne_EndsWhenItsReopenFails()
     {
         var queue = Queue(RepeatMode.One, "a");
-        Assert.Equal("a a", Walk(ref queue, 1));
-        Started(ref queue);
+        _ = Take(ref queue);
+        PlayedToItsEnd(ref queue);
+        Assert.Equal("a", Next(ref queue));
 
         Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
     }
@@ -485,7 +493,7 @@ public sealed class PlaylistQueueTests
     {
         var queue = Queue(RepeatMode.All, "a");
         _ = Take(ref queue);
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("^a", Next(ref queue));
 
         Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
@@ -496,27 +504,60 @@ public sealed class PlaylistQueueTests
     {
         var queue = Queue(RepeatMode.All, "a", "b", "c");
         _ = Take(ref queue);
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("b", Next(ref queue));
 
         Assert.Equal("c ^a |", Advance(ref queue, 4, PlaylistAdvance.FailedStart));
     }
 
     [Fact]
-    public void FailedPass_AnItemThatStarts_BeginsANewPass()
+    public void FailedPass_AnItemThatPlaysToItsEnd_BeginsANewPass()
     {
         var queue = Queue(RepeatMode.All, "a", "b");
         _ = Take(ref queue);
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("b", Next(ref queue));
         Assert.Equal("^a", Next(ref queue, PlaylistAdvance.FailedStart));
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("b", Next(ref queue));
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("^a", Next(ref queue));
 
-        // b failed once, but it has started since. Only a has failed in this pass.
+        // b failed once, but an item has played since. Only a has failed in this pass.
         Assert.Equal("b", Next(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_AnItemReportedAndThenFailingToPlay_DoesNotBeginANewPass()
+    {
+        // An advance that opens an item while paused reports it before the Play that starts it.
+        // When each Play fails, every item has still failed to start.
+        var queue = Queue(RepeatMode.All, "a", "b");
+        _ = Take(ref queue);
+        PlayedToItsEnd(ref queue);
+        Assert.Equal("b", Next(ref queue));
+        Reported(ref queue);
+        Assert.Equal("^a", Next(ref queue, PlaylistAdvance.FailedStart));
+        Reported(ref queue);
+
+        Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void FailedPass_IsClearedByProgress_AndNotByAFailureWithout()
+    {
+        var queue = Queue(RepeatMode.All, "a", "b");
+        _ = Take(ref queue);
+        Assert.Equal("b", Next(ref queue, PlaylistAdvance.FailedStart));
+        Assert.Equal([queue.Playlist[0]], queue.FailedSinceStart);
+
+        var length = TimeSpan.FromSeconds(20);
+        var (early, _) = queue.ItemFailed(TimeSpan.Zero, length);
+        var (late, _) = queue.ItemFailed(PlaylistFailureGuard.ProgressNeeded(length), length);
+
+        Assert.Equal(queue.FailedSinceStart, early.FailedSinceStart);
+        Assert.Empty(late.FailedSinceStart);
+        Assert.Empty(queue.ItemEnded().FailedSinceStart);
     }
 
     [Fact]
@@ -524,7 +565,7 @@ public sealed class PlaylistQueueTests
     {
         var queue = Queue(RepeatMode.All, "a");
         _ = Take(ref queue);
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("^a", Next(ref queue));
         queue = queue.Enqueue(Item("x"));
 
@@ -536,7 +577,7 @@ public sealed class PlaylistQueueTests
     {
         var queue = Queue(RepeatMode.All, "a");
         var a = Take(ref queue)!;
-        Started(ref queue);
+        PlayedToItsEnd(ref queue);
         Assert.Equal("^a", Next(ref queue));
         Assert.Equal("|", Next(ref queue, PlaylistAdvance.FailedStart));
 

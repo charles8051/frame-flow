@@ -31,9 +31,10 @@ namespace FrameFlow.Playback;
 /// <c>PlaybackState.Error</c> and opens the new playlist.
 /// </para>
 /// <para>
-/// An item that fails to start is passed over until every playlist item has failed to start
-/// since an item last started. The player then takes any next or queued items, and otherwise ends
-/// in <c>PlaybackState.Ended</c>, under every repeat mode.
+/// An item that fails to start is passed over until every playlist item has failed to start since
+/// an item last ended, was skipped, or played long enough to break a run of failures. The player
+/// then takes any next or queued items, and otherwise ends in <c>PlaybackState.Ended</c>, under
+/// every repeat mode.
 /// </para>
 /// <para>
 /// It does not fire for every failure. The first item of a player is treated as a single source's,
