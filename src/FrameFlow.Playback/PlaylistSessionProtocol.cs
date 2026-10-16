@@ -645,7 +645,8 @@ internal static class PlaylistSessionProtocol
                     Played: false,
                     AwaitsPlay: false,
                     outcome.Run,
-                    outcome.Info
+                    outcome.Info,
+                    outcome.Timeline
                 ),
             };
 
@@ -661,7 +662,8 @@ internal static class PlaylistSessionProtocol
                         index,
                         Wrapped: false,
                         Previous: null,
-                        Reason: PlaylistTransitionReason.FirstItem
+                        Reason: PlaylistTransitionReason.FirstItem,
+                        outcome.Timeline
                     )
                 );
                 PrepareAhead();
@@ -1024,7 +1026,8 @@ internal static class PlaylistSessionProtocol
                     Played: false,
                     AwaitsPlay: !work.Advance.Playing,
                     outcome.Run,
-                    outcome.Info
+                    outcome.Info,
+                    outcome.Timeline
                 ),
             };
 
@@ -1063,7 +1066,8 @@ internal static class PlaylistSessionProtocol
                     Played: false,
                     AwaitsPlay: !work.Advance.Playing,
                     outcome.Run,
-                    outcome.Info
+                    outcome.Info,
+                    outcome.Timeline
                 ),
             };
 
@@ -1206,6 +1210,11 @@ internal static class PlaylistSessionProtocol
             // Read before ReportCurrent moves it: the reason describes how THIS item ended, and
             // every other field of the transition describes the item that started.
             var previous = advance.Previous ?? Queue.Reported;
+
+            // The timeline the started item's next frame carries: that of the run the item's last
+            // operation left current, whether that run has started or waits for a Play. A loop
+            // names its own, which no earlier frame carried (ADR-0084, decision 7).
+            var timeline = State.Item!.KnownTimeline;
             var (queue, index) = Queue.ReportCurrent(item, info);
             Queue = queue;
             Emit(
@@ -1215,7 +1224,8 @@ internal static class PlaylistSessionProtocol
                     index,
                     wrapped,
                     previous,
-                    advance.Loop ? PlaylistTransitionReason.Loop : advance.Reason
+                    advance.Loop ? PlaylistTransitionReason.Loop : advance.Reason,
+                    timeline
                 )
             );
 
@@ -1225,7 +1235,7 @@ internal static class PlaylistSessionProtocol
             if (advance.Loop)
             {
                 State = State with { LoopCount = State.LoopCount + 1 };
-                Emit(new PlaylistSessionAction.ReportLoopRestarted(State.LoopCount, item));
+                Emit(new PlaylistSessionAction.ReportLoopRestarted(State.LoopCount, item, timeline));
             }
             else
             {
@@ -1376,7 +1386,7 @@ internal static class PlaylistSessionProtocol
         private void KeepRun(PlaylistSessionInput.Outcome outcome)
         {
             if (State.Item is { } item)
-                State = State with { Item = item with { KnownRun = outcome.Run } };
+                State = State with { Item = item with { KnownRun = outcome.Run, KnownTimeline = outcome.Timeline } };
         }
 
         private void GiveUp(Exception? last)

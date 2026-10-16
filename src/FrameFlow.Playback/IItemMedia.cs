@@ -68,16 +68,16 @@ internal interface IItemMedia
 
     /// <summary>
     /// Readies the next run: builds a fresh graph, or keeps the last one, sets where the run starts
-    /// and stops, arms the pacer for it, and has the decoders stamp a new timeline on what they
-    /// decode from here (ADR-0084). Throws, readying nothing it can be blamed for, when the graph
-    /// cannot be built.
+    /// and stops, arms the pacer for it, and has the decoders stamp <paramref name="timeline"/> on
+    /// what they decode from here (ADR-0084). Throws, readying nothing it can be blamed for, when
+    /// the graph cannot be built.
     /// </summary>
+    /// <param name="timeline">The run's timeline, which its frames and buffers carry.</param>
     /// <param name="graph">Whether to build a fresh graph or run the last one again.</param>
     /// <param name="floor">Where the run starts: nothing presented before it is delivered.</param>
     /// <param name="end">Where the run stops, or null when it plays to the end of the source.</param>
     /// <param name="holdForSettle">Whether the pacer holds the destination frame for a settle.</param>
-    /// <returns>The timeline the run's frames and buffers carry.</returns>
-    TimelineId BeginRun(ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle);
+    void BeginRun(TimelineId timeline, ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle);
 
     /// <summary>
     /// The demux pump: reads the source into the decoders' queues, and at the end of the source

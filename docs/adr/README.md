@@ -500,6 +500,8 @@ ADR-0084 was numbered and accepted on 2026-10-13, and implemented under #677.
   only: an item prepared ahead (#674) mints its id before the playing item's later loops, so order
   comes from presentation, through one follower for in-order streams and one for derived items
   matched against what is shown. Keeps `ISeekResettable` for the session's own components.
+  Amended 2026-10-16 (decision 7, #756): the playlist transition and the loop event name the
+  timeline their item presents under, and a run's id is given when the run takes its number.
   Addresses #621, #624 and #641, and replaces the rules #619 and #620 added; not #669 or #671.
 
 ADR-0085 was numbered and accepted on 2026-10-13, and implemented under #691.

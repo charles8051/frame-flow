@@ -477,7 +477,7 @@ public sealed class PlaybackDispatchProtocolTests
         var loops = new ConcurrentQueue<LoopRestarted>();
         using var sub = controller.LoopRestarted.Subscribe(new Relay<LoopRestarted>(loops.Enqueue));
 
-        unloaded.OnLoopRestarted(7, new PlaylistItem(new FakeSource()));
+        unloaded.OnLoopRestarted(7, new PlaylistItem(new FakeSource()), TimelineId.None);
         Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
         Assert.Empty(loops);
 
@@ -569,6 +569,23 @@ public sealed class PlaybackDispatchProtocolTests
         var restarted = Assert.IsType<LoopRestarted>(observed[1]);
         Assert.Same(restarted, looped.Loop);
         Assert.Equal(4, restarted.LoopCount);
+    }
+
+    [Fact]
+    public async Task ALoop_CarriesTheTimelineTheSessionNamed()
+    {
+        // ADR-0084, decision 7: a loop starts a timeline, and its event names it.
+        var (controller, session) = NewController(RepeatMode.All);
+        await using var _ = controller;
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var loops = new ConcurrentQueue<LoopRestarted>();
+        using var sub = controller.LoopRestarted.Subscribe(new Relay<LoopRestarted>(loops.Enqueue));
+
+        var timeline = TimelineId.Next();
+        session.RaiseLoopRestarted(1, timeline);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+
+        Assert.Equal(timeline, Assert.Single(loops).Timeline);
     }
 
     [Fact]
@@ -1233,8 +1250,8 @@ public sealed class PlaybackDispatchProtocolTests
         public void RaiseCurrentItemChanged(MediaInfo info) =>
             _callbacks.OnCurrentItemChanged(info);
 
-        public void RaiseLoopRestarted(int loopCount) =>
-            _callbacks.OnLoopRestarted(loopCount, TestItem);
+        public void RaiseLoopRestarted(int loopCount, TimelineId timeline = default) =>
+            _callbacks.OnLoopRestarted(loopCount, TestItem, timeline);
 
         public void RaiseItemFailed(PlaybackError error) =>
             _callbacks.OnItemFailed(TestItem, PlaylistItemFailure.CouldNotStart, error);
