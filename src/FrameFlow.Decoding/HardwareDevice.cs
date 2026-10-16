@@ -6,6 +6,8 @@ using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Media;
 using FrameFlow.Media.Core;
 using FrameFlow.Native.Interop;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Decoding;
 
@@ -31,14 +33,16 @@ namespace FrameFlow.Decoding;
 /// <see cref="ErrorCategory.DeviceLost"/>, and the way back is a new device.
 /// </para>
 /// </remarks>
-public sealed class HardwareDevice : IDisposable
+public sealed partial class HardwareDevice : IDisposable
 {
     private readonly Lock _lossGate = new();
+    private readonly ILogger _logger;
     private nint _deviceCtxRef;
     private DeviceLossLatch _loss = DeviceLossLatch.Live;
 
-    private HardwareDevice(nint deviceCtxRef, HardwareDecodeBackendKind backend, int avHwDeviceType)
+    private HardwareDevice(nint deviceCtxRef, HardwareDecodeBackendKind backend, int avHwDeviceType, ILogger? logger)
     {
+        _logger = logger ?? NullLogger.Instance;
         _deviceCtxRef = deviceCtxRef;
         Backend = backend;
         AvHwDeviceType = avHwDeviceType;
@@ -61,6 +65,11 @@ public sealed class HardwareDevice : IDisposable
     /// It is raised on the thread pool, not on the decoder's thread, so a handler may dispose the
     /// players on the device. A handler that subscribes after the loss is not called: read
     /// <see cref="IsLost"/>.
+    /// </para>
+    /// <para>
+    /// Each handler runs on its own. One that throws is logged to the logger the device was
+    /// created with, and the handlers after it still run. Nothing is rethrown: there is no caller
+    /// on the thread pool to receive it.
     /// </para>
     /// <para>
     /// Only D3D11VA and D3D12VA devices report removal. The event is never raised for another
@@ -94,13 +103,36 @@ public sealed class HardwareDevice : IDisposable
         {
             var args = new HardwareDeviceLostEventArgs(removedReason);
             ThreadPool.UnsafeQueueUserWorkItem(
-                static state => state.Device.DeviceLost?.Invoke(state.Device, state.Args),
+                static state => state.Device.RaiseDeviceLost(state.Args),
                 (Device: this, Args: args),
                 preferLocal: false
             );
         }
         return raise;
     }
+
+    // One subscriber at a time: a chain invocation abandons every handler after the one that
+    // threw, and an exception escaping a thread-pool callback ends the process.
+    private void RaiseDeviceLost(HardwareDeviceLostEventArgs args)
+    {
+        if (DeviceLost is not { } handler)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<HardwareDeviceLostEventArgs>)subscriber)(this, args);
+            }
+            catch (Exception ex)
+            {
+                LogDeviceLostHandlerFailed(_logger, ex, Backend.ToString());
+            }
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "A DeviceLost handler for the {Backend} device threw; the handlers after it still run.")]
+    private static partial void LogDeviceLostHandlerFailed(ILogger logger, Exception exception, string backend);
 
     internal int AvHwDeviceType { get; }
 
@@ -123,9 +155,13 @@ public sealed class HardwareDevice : IDisposable
     /// it: an adapter index for D3D11VA and D3D12VA, a DRM node such as
     /// <c>/dev/dri/renderD128</c> for VAAPI, a device index for CUDA. Null for the default.
     /// </param>
+    /// <param name="logger">
+    /// Where a <see cref="DeviceLost"/> handler that throws is reported. Null for none; the
+    /// failure is still contained.
+    /// </param>
     /// <exception cref="NotSupportedException"><paramref name="backend"/> is not an FFmpeg device type.</exception>
     /// <exception cref="InvalidOperationException">FFmpeg could not create the device.</exception>
-    public static HardwareDevice Create(HardwareDecodeBackendKind backend, string? device = null)
+    public static HardwareDevice Create(HardwareDecodeBackendKind backend, string? device = null, ILogger? logger = null)
     {
         int type = HardwareDecodeProbeBridge.AvDeviceTypeOf(backend)
             ?? throw new NotSupportedException($"{backend} is not a hardware device FFmpeg can create.");
@@ -138,7 +174,7 @@ public sealed class HardwareDevice : IDisposable
                     + $"av_hwdevice_ctx_create returned {rc}.");
         }
 
-        return new HardwareDevice(deviceCtxRef, backend, type);
+        return new HardwareDevice(deviceCtxRef, backend, type, logger);
     }
 
     /// <summary>
@@ -146,8 +182,12 @@ public sealed class HardwareDevice : IDisposable
     /// its own reference and releases it when the last decoder and this object are done.
     /// </summary>
     /// <param name="d3d12Device">An <c>ID3D12Device*</c>.</param>
+    /// <param name="logger">
+    /// Where a <see cref="DeviceLost"/> handler that throws is reported. Null for none; the
+    /// failure is still contained.
+    /// </param>
     /// <exception cref="InvalidOperationException">FFmpeg could not set up D3D12VA on the device.</exception>
-    public static unsafe HardwareDevice FromD3D12Device(nint d3d12Device)
+    public static unsafe HardwareDevice FromD3D12Device(nint d3d12Device, ILogger? logger = null)
     {
         if (d3d12Device == 0)
             throw new ArgumentNullException(nameof(d3d12Device));
@@ -169,7 +209,7 @@ public sealed class HardwareDevice : IDisposable
                 $"FFmpeg could not set up D3D12VA on the device: av_hwdevice_ctx_init returned {rc}.");
         }
 
-        return new HardwareDevice(deviceCtxRef, HardwareDecodeBackendKind.D3D12Va, type);
+        return new HardwareDevice(deviceCtxRef, HardwareDecodeBackendKind.D3D12Va, type, logger);
     }
 
     /// <summary>

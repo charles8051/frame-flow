@@ -247,8 +247,8 @@ FrameFlow.Decoding.HardwareDevice.Dispose() -> void
 FrameFlow.Decoding.HardwareDevice.TryGetD3D12Device(out nint device) -> bool
 FrameFlow.Decoding.VideoDecoderOptions.Device.get -> FrameFlow.Decoding.HardwareDevice?
 FrameFlow.Decoding.VideoDecoderOptions.Device.init -> void
-static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null) -> FrameFlow.Decoding.HardwareDevice!
-static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device) -> FrameFlow.Decoding.HardwareDevice!
+static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> FrameFlow.Decoding.HardwareDevice!
+static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device, Microsoft.Extensions.Logging.ILogger? logger = null) -> FrameFlow.Decoding.HardwareDevice!
 FrameFlow.Decoding.CudaFramePlanes
 FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes() -> void
 FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes(nint Luma, int LumaPitch, nint Chroma, int ChromaPitch, nint Context, nint Stream) -> void

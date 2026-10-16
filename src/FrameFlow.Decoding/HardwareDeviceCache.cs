@@ -62,7 +62,7 @@ internal sealed partial class HardwareDeviceCache : IDisposable
             {
                 try
                 {
-                    device = HardwareDevice.Create(backend);
+                    device = HardwareDevice.Create(backend, logger: _logger);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {

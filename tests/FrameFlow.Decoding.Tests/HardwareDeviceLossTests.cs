@@ -1,6 +1,7 @@
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
+using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Decoding.Tests;
 
@@ -68,6 +69,26 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
         Assert.NotEqual(Environment.CurrentManagedThreadId, await handlerThread.Task.WaitAsync(FailureBound));
     }
 
+    /// <summary>
+    /// A handler that throws is logged, and the handlers after it still run. Unhandled on the
+    /// thread pool it would end the test host.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D11Va, H264)]
+    public async Task AThrowingHandler_IsContained_AndTheNextStillRuns()
+    {
+        var logger = new RecordingLogger();
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D11Va, logger: logger);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        device.DeviceLost += (_, _) => throw new InvalidOperationException("handler failed");
+        device.DeviceLost += (_, _) => second.TrySetResult();
+
+        Assert.True(device.ReportRemovedReason(DeviceReset));
+
+        await second.Task.WaitAsync(FailureBound);
+        var logged = Assert.Single(logger.Errors);
+        Assert.Equal("handler failed", logged.Message);
+    }
+
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D11Va, H264)]
     public void ALiveD3D11Device_ReportsNoRemovedReason() =>
         AssertLive(HardwareDecodeBackendKind.D3D11Va);
@@ -98,6 +119,41 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
 
         Assert.Equal(0, ((IDecodeCodec<IVideoFrame>)decoder).ProbeDeviceRemoved());
         Assert.False(device.IsLost);
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        private readonly List<Exception> _errors = [];
+
+        // Written by the handler's thread before the next handler runs, which the test awaits.
+        public IReadOnlyList<Exception> Errors
+        {
+            get
+            {
+                lock (_errors)
+                    return [.. _errors];
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel == LogLevel.Error && exception is not null)
+            {
+                lock (_errors)
+                    _errors.Add(exception);
+            }
+        }
     }
 
     private static void AssertLive(HardwareDecodeBackendKind backend)

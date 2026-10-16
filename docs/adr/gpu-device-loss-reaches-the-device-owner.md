@@ -83,7 +83,10 @@ report of a loss raises, and every later report, of any reason, raises nothing.
 
 The event is raised on the thread pool, not on the decoder's thread. Its handler may dispose the
 players on the device, which wait for their decoders, and a handler raised on the decoder's thread
-would wait for itself.
+would wait for itself. Each handler runs on its own: one that throws is logged to the logger the
+device was created with (`HardwareDevice.Create` and `FromD3D12Device` take an optional `ILogger`),
+and the handlers after it still run. Nothing escapes the thread-pool callback, which would end the
+process.
 
 `HardwareDevice` is the owner because it is the one public object that outlives the players sharing
 a device. No new type was needed.
