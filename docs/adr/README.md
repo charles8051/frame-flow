@@ -297,6 +297,19 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
+- [The video pacer as a pure core: time is an input, and every wait is a deadline](video-pacer-as-a-pure-core.md)
+  — `ClockSelectVideoSink` is the one part of playback whose decisions are not a pure core: its
+  delivery loop decides the frame to present, the late drop, the seek floor, the settle hold, the
+  end-of-content hold, the pace cap and the liveness probe across five awaits, 42 fields and 34
+  `lock` statements, and two wall-clock backstops decide rather than guard (#746). Proposes a
+  `PacerProtocol` in the `ItemRuntimeProtocol` style that sees frames as descriptors and takes the
+  master and wall readings as inputs, a shell with one reader that arms one deadline at a time, and
+  a bounded walk that checks each frame leaves the pacer once, the bound ADR-0081 budgets, that no
+  hold outlives its run and that the newest frame of a run is never dropped late. Admission refuses
+  a frame of another timeline (#528's pacer half), and the timeline is the pacer's run identity
+  (ADR-0084's optional slice 4). The settle loses its backstop and its cap (#746). #671 is left
+  open, with the record leaning to a master clock that keeps advancing after the audio's end. No
+  public type changes.
 
 ## Recently numbered
 
