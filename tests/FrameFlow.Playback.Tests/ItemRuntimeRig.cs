@@ -66,7 +66,7 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
                     _recoverableError.TrySetResult(error);
                 },
                 OnCurrentItemChanged: static _ => { },
-                OnLoopRestarted: static (_, _) => { },
+                OnLoopRestarted: static (_, _, _) => { },
                 OnItemFailed: static (_, _, _) => { }
             ),
             HardwareDecodeMode.Disabled,
@@ -507,6 +507,7 @@ internal sealed class FakeItemMedia : IItemMedia
     private readonly Dictionary<ItemWork, int> _inFlight = [];
     private readonly Dictionary<ItemWork, int> _mostAtOnce = [];
     private readonly List<FakeWork> _works = [];
+    private readonly List<TimelineId> _timelines = [];
     private readonly List<(ItemWork Kind, int Index, TaskCompletionSource<FakeWork> Started)> _awaited = [];
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private ItemResources _resources;
@@ -745,7 +746,7 @@ internal sealed class FakeItemMedia : IItemMedia
 
     public void FlushPacer() => Native("FlushPacer");
 
-    public TimelineId BeginRun(ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle)
+    public void BeginRun(TimelineId timeline, ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle)
     {
         Native($"BeginRun({graph}, floor {floor.TotalSeconds:0.###}, end {end?.TotalSeconds.ToString("0.###") ?? "none"}, hold {holdForSettle})");
         if (FailBeginRun is { } failure)
@@ -757,8 +758,18 @@ internal sealed class FakeItemMedia : IItemMedia
         {
             _runs++;
             _floor = floor;
+            _timelines.Add(timeline);
         }
-        return TimelineId.Next();
+    }
+
+    /// <summary>The timeline each run started on, in the order the runs started.</summary>
+    public IReadOnlyList<TimelineId> RunTimelines
+    {
+        get
+        {
+            lock (_gate)
+                return [.. _timelines];
+        }
     }
 
     public Task RunPumpAsync(CancellationToken cancellationToken) => Run(ItemWork.Pump, cancellationToken);

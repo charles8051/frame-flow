@@ -88,11 +88,16 @@ internal abstract record PlaylistSessionInput
     /// <param name="Run">The runtime's run number, read when the action finished.</param>
     /// <param name="Info">The runtime's metadata, after an open.</param>
     /// <param name="Error">The failure or cancellation.</param>
+    /// <param name="Timeline">
+    /// The timeline of the runtime's current run, read with <paramref name="Run"/>. The run may not
+    /// have started yet; its frames carry this timeline once it does.
+    /// </param>
     public sealed record Outcome(
         PlaylistOutcome Kind,
         int Run = 0,
         MediaInfo? Info = null,
-        Exception? Error = null
+        Exception? Error = null,
+        TimelineId Timeline = default
     ) : PlaylistSessionInput;
 
     /// <summary>The step's immediate actions have run, and the step was not the last.</summary>
@@ -226,22 +231,27 @@ internal abstract record PlaylistSessionAction
 
     /// <summary>
     /// Tell the controller the current item repeated after it played to its end, with the count of
-    /// consecutive loops. Decision 5 of <c>docs/adr/ADR-0075-looping-on-both-players.md</c>.
+    /// consecutive loops and the timeline the loop presents under. Decision 5 of
+    /// <c>docs/adr/ADR-0075-looping-on-both-players.md</c>, and decision 7 of ADR-0084.
     /// </summary>
-    public sealed record ReportLoopRestarted(int LoopCount, PlaylistItem Item)
+    public sealed record ReportLoopRestarted(int LoopCount, PlaylistItem Item, TimelineId Timeline)
         : PlaylistSessionAction;
 
     /// <summary>Hand the controller a fatal error.</summary>
     public sealed record ReportFatal(Exception Error) : PlaylistSessionAction;
 
-    /// <summary>Raise the coordinator's <c>SourceTransitioned</c> for an item that started.</summary>
+    /// <summary>
+    /// Raise the coordinator's <c>SourceTransitioned</c> for an item that started, naming the
+    /// timeline it presents under (ADR-0084, decision 7).
+    /// </summary>
     public sealed record RaiseTransition(
         PlaylistItem Item,
         MediaInfo? Info,
         int Index,
         bool Wrapped,
         PlaylistItem? Previous,
-        PlaylistTransitionReason Reason
+        PlaylistTransitionReason Reason,
+        TimelineId Timeline
     ) : PlaylistSessionAction;
 
     /// <summary>Complete a command.</summary>

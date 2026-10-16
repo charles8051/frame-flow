@@ -463,7 +463,7 @@ internal sealed class PlaylistCoordinator
     /// <see cref="SourceTransitioned"/>. The notification is raised outside the lock so a
     /// subscriber can call back into the coordinator.
     /// </summary>
-    internal void ReportCurrent(PlaylistItem item, MediaInfo? info, bool wrapped)
+    internal void ReportCurrent(PlaylistItem item, MediaInfo? info, bool wrapped, TimelineId timeline = default)
     {
         ArgumentNullException.ThrowIfNull(item);
         // Read before the queue moves it: the reason describes the item that ended, while the rest
@@ -476,7 +476,8 @@ internal sealed class PlaylistCoordinator
             index,
             wrapped,
             previous,
-            previous is null ? PlaylistTransitionReason.FirstItem : PlaylistTransitionReason.EndOfItem
+            previous is null ? PlaylistTransitionReason.FirstItem : PlaylistTransitionReason.EndOfItem,
+            timeline
         );
     }
 
@@ -491,12 +492,13 @@ internal sealed class PlaylistCoordinator
         int index,
         bool wrapped,
         PlaylistItem? previous,
-        PlaylistTransitionReason reason
+        PlaylistTransitionReason reason,
+        TimelineId timeline
     )
     {
         if (info is not null)
             _transitioned.OnNext(
-                new PlaylistTransition(item, info, index, wrapped, previous, reason)
+                new PlaylistTransition(item, info, index, wrapped, previous, reason) { Timeline = timeline }
             );
     }
 

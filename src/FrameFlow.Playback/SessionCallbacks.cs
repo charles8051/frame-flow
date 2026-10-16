@@ -43,8 +43,9 @@ namespace FrameFlow.Playback;
 /// </param>
 /// <param name="OnLoopRestarted">
 /// Invoked when a session that loops internally, a playlist, has put its current item back at its
-/// start after it played to its end. Carries the count of consecutive loops and the item that
-/// looped, which the controller publishes on <c>LoopRestarted</c> and <c>ItemLooped</c>. A session
+/// start after it played to its end. Carries the count of consecutive loops, the item that
+/// looped and the timeline the loop presents under, which the controller publishes on
+/// <c>LoopRestarted</c> and <c>ItemLooped</c>. A session
 /// that does not loop internally never invokes it: the controller runs that session's loop.
 /// </param>
 /// <param name="OnItemFailed">
@@ -64,6 +65,6 @@ internal readonly record struct SessionCallbacks(
     Action OnBufferUnderrun,
     Action<PlaybackError> OnRecoverableError,
     Action<MediaInfo?> OnCurrentItemChanged,
-    Action<int, PlaylistItem> OnLoopRestarted,
+    Action<int, PlaylistItem, TimelineId> OnLoopRestarted,
     Action<PlaylistItem, PlaylistItemFailure, PlaybackError> OnItemFailed
 );

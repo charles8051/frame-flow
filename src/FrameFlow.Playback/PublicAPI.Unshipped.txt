@@ -188,6 +188,8 @@ FrameFlow.Playback.PlaylistTransition.Previous.get -> FrameFlow.Playback.Playlis
 FrameFlow.Playback.PlaylistTransition.Previous.init -> void
 FrameFlow.Playback.PlaylistTransition.Reason.get -> FrameFlow.Playback.PlaylistTransitionReason
 FrameFlow.Playback.PlaylistTransition.Reason.init -> void
+FrameFlow.Playback.PlaylistTransition.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Playback.PlaylistTransition.Timeline.init -> void
 FrameFlow.Playback.PlaylistTransition.Wrapped.get -> bool
 FrameFlow.Playback.PlaylistTransition.Wrapped.init -> void
 FrameFlow.Playback.PlaylistTransitionReason

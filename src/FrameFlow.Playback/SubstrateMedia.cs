@@ -502,16 +502,16 @@ internal sealed class SubstrateMedia : IItemMedia
     public void FlushPacer() => _pacer?.Flush();
 
     /// <inheritdoc/>
-    public TimelineId BeginRun(ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle)
+    public void BeginRun(TimelineId timeline, ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle)
     {
         // A seek builds a fresh graph topology; the loop's rewind runs the one it has again,
         // which skips the per-loop teardown and rebuild on a looping item.
         if (graph == ItemGraphPolicy.Rebuild || _graph is null)
             _graph = BuildGraph();
 
-        var timeline = InstallNewTimeline();
+        InstallTimeline(timeline);
         if (_graph is null)
-            return timeline;
+            return;
 
         // A run that starts before the item's end stops there: the pump reads no further, and
         // the end filter drops what was decoded at or past it. A run that starts at or past the
@@ -530,12 +530,12 @@ internal sealed class SubstrateMedia : IItemMedia
         // run's "drained" signal can't satisfy this run's end of stream. Done for every run, so
         // a rewind over the retained graph re-arms it too.
         _pacer?.BeginRun(floor, holdForSettle);
-        return timeline;
     }
 
     /// <summary>
-    /// Gives the run about to start a timeline of its own, and has the decoders stamp it on
-    /// everything they decode from now on (ADR-0084, decision 2).
+    /// Has the decoders stamp the timeline of the run about to start on everything they decode from
+    /// now on (ADR-0084, decision 2). The session gave the run its timeline when it took the run's
+    /// number.
     /// </summary>
     /// <remarks>
     /// The place is the guarantee. A run starts once the previous run's work has ended and, after
@@ -544,14 +544,12 @@ internal sealed class SubstrateMedia : IItemMedia
     /// come out under the new id, and nothing from the new run under the old one. Starting the
     /// work publishes the id to the decode threads.
     /// </remarks>
-    private TimelineId InstallNewTimeline()
+    private void InstallTimeline(TimelineId timeline)
     {
-        var timeline = TimelineId.Next();
         if (_videoDecoder is { } video)
             video.Timeline = timeline;
         if (_audioDecoder is { } audio)
             audio.Timeline = timeline;
-        return timeline;
     }
 
     /// <inheritdoc/>

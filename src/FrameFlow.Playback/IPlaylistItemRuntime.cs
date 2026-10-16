@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback;
@@ -18,6 +19,12 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// <see cref="SubstrateSession.RunNumber"/>.
     /// </summary>
     int RunNumber { get; }
+
+    /// <summary>
+    /// The timeline the current run presents under, named before the run starts. A new run number
+    /// has a new timeline. See <see cref="SubstrateSession.Timeline"/>.
+    /// </summary>
+    TimelineId Timeline { get; }
 
     /// <summary>
     /// Opens <paramref name="source"/> positioned at <paramref name="start"/>, in the source's

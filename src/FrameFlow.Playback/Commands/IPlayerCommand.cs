@@ -124,10 +124,13 @@ internal sealed record RecoverableErrorCommand(
 /// The generation of the session that reported it. A loop from a session the controller has since
 /// disposed is dropped.
 /// </param>
+/// <param name="Item">The item that looped.</param>
+/// <param name="Timeline">The timeline the loop presents under.</param>
 internal sealed record LoopRestartedCommand(
     int LoopCount,
     int SessionGeneration,
-    PlaylistItem? Item = null
+    PlaylistItem? Item = null,
+    TimelineId Timeline = default
 ) : IPlayerCommand
 {
     public TaskCompletionSource<Result> Completion { get; } =
