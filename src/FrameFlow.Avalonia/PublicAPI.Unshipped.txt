@@ -105,3 +105,6 @@ static readonly FrameFlow.Avalonia.FrameFlowTransportBar.LoopByDefaultProperty -
 static readonly FrameFlow.Avalonia.FrameFlowTransportBar.TransportProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaTransport?>!
 static readonly FrameFlow.Avalonia.FrameFlowVolumeControl.TransportProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaTransport?>!
 FrameFlow.Avalonia.AvaloniaVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Avalonia.FrameFlowVideoView.Placement.get -> FrameFlow.Media.VideoPlacementMode
+FrameFlow.Avalonia.FrameFlowVideoView.Placement.set -> void
+static readonly FrameFlow.Avalonia.FrameFlowVideoView.PlacementProperty -> Avalonia.StyledProperty<FrameFlow.Media.VideoPlacementMode>!

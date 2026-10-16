@@ -468,6 +468,32 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     public SuperResolutionStatus DriverSuperResolutionStatus =>
         (SuperResolutionStatus)Volatile.Read(ref _superResolutionStatus);
 
+    /// <summary>Defines the <see cref="Placement"/> property.</summary>
+    public static readonly StyledProperty<VideoPlacementMode> PlacementProperty =
+        AvaloniaProperty.Register<CompositionInteropVideoView, VideoPlacementMode>(nameof(Placement));
+
+    /// <summary>
+    /// How the picture is placed when its shape differs from the view's (#766):
+    /// <see cref="VideoPlacementMode.Fit"/>, the default, or <see cref="VideoPlacementMode.Fill"/>.
+    /// </summary>
+    /// <remarks>
+    /// While <see cref="DriverSuperResolution"/> engages, the driver upscales the whole frame to the
+    /// size it is drawn at, including the part a fill cuts off.
+    /// </remarks>
+    public VideoPlacementMode Placement
+    {
+        get => GetValue(PlacementProperty);
+        set => SetValue(PlacementProperty, value);
+    }
+
+    /// <inheritdoc />
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == PlacementProperty)
+            UpdateSurfaceLayout();
+    }
+
     /// <summary>
     /// Raised on the rising edge of a detected present stall (the UI-thread <c>VideoProcessorBlt</c>
     /// wedged in the GPU driver — investigation 2026-06-12 §9). The presenter cannot self-recover from
@@ -1315,10 +1341,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     /// <summary>
-    /// Sizes + centers the surface visual to a letterboxed rect at the video's display shape
-    /// within the control bounds (the black window background shows in the bars), turned
-    /// upright about its centre (#542). Called on attach, on resize, and when the video size,
-    /// pixel shape or rotation changes.
+    /// Sizes + centers the surface visual to the video's display shape within the control bounds,
+    /// letterboxed (the black window background shows in the bars) or filling them (#766), turned
+    /// upright about its centre (#542). A fill overflows the bounds, and the control's
+    /// <see cref="Visual.ClipToBounds"/> cuts the surface visual, its child. Called on attach, on
+    /// resize, when <see cref="Placement"/> changes, and when the video size, pixel shape or
+    /// rotation changes.
     /// </summary>
     private void UpdateSurfaceLayout()
     {
@@ -1326,7 +1354,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
             return;
 
         var b = Bounds;
-        var placement = VideoPlacement.Fit(b.Width, b.Height, _videoWidth, _videoHeight, _videoShape, _videoRotation);
+        var placement = VideoPlacement.Of(Placement, b.Width, b.Height, _videoWidth, _videoHeight, _videoShape, _videoRotation);
         if (placement.IsEmpty)
         {
             _surfaceVisual.Size = new Vector(b.Width, b.Height);
@@ -1587,9 +1615,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
             }
         }
 
-        // The frame's rectangle as drawn, before rotation (#542): the ring holds the frame as coded.
-        var placement = VideoPlacement.Fit(
-            Bounds.Width, Bounds.Height, frame.Width, frame.Height, frame.SampleAspectRatio, frame.Rotation);
+        // The frame's rectangle as drawn, before rotation (#542): the ring holds the frame as coded,
+        // so a fill upscales the part the bounds cut off too (#766).
+        var placement = VideoPlacement.Of(
+            Placement, Bounds.Width, Bounds.Height, frame.Width, frame.Height, frame.SampleAspectRatio, frame.Rotation);
         var (targetWidth, targetHeight) = SuperResolutionPolicy.TargetSize(
             placement.DrawWidth, placement.DrawHeight, RenderScaling);
 

@@ -359,3 +359,24 @@ AMD's AMF, and sets no limit on how many videos use it.
   not confirm the upscale, and this is one more case it cannot see.
 - `WaitForSubmittedBlits` has no caller outside tests. It stays for them: the soak uses it to bound
   the blits in flight and to catch one that never completes.
+
+## Amendment (2026-10-16): a filled view upscales the whole drawn frame
+
+#766 adds `VideoPlacementMode.Fill`. A filled picture is drawn larger than the view, and the view's
+clip cuts the overflow. §7's target is the drawn rectangle, so it now comes from
+`VideoPlacement.Of` with the view's `Placement`, and the driver upscales the part the clip cuts off
+too.
+
+### Decision
+
+The target should be the visible part only: `VisibleVideo.PhysicalSize`, with the video processor
+reading the matching source rectangle (`VisibleVideo.Source*`) instead of the whole frame. That
+change lives in the D3D11 converter, which samples the same crop for the shader path under #767. It
+follows #767 rather than landing with #766 (#772). Until then the ring and the layout still come from one
+rectangle, the whole drawn frame, so §7's 1:1 snap holds.
+
+### Consequences
+
+- A filled view on the driver's path pays for a ring larger than it shows. A 9:16 picture filling a
+  16:9 view draws about 3.2 times the pixels the view shows.
+- A fitted view is unchanged: its visible part is the whole drawn frame.
