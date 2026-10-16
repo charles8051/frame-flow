@@ -10,6 +10,11 @@ ids identify a timeline but carry no order, and order comes from presentation. A
 implementation: decision 5's table names the join's action on a secondary's new timeline.
 [Revision history](#revision-history) lists what changed.
 
+> **Amended 2026-10-16.** [Decision 7](#7-every-event-that-starts-a-timeline-names-it) answers open
+> question 5 (#756): the playlist transition and the loop event name the timeline their item presents
+> under, and a run's id is now given when the run takes its number rather than when it starts.
+> Decisions 1 to 6 are unchanged.
+
 > **Amended 2026-10-14.** `SubstrateSession.RepositionAsync` and `LaunchSessionTasks`, which this
 > record names, are gone: [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) put the item
 > runtime on a pure core (#740). A run's id is now minted in `SubstrateMedia.BeginRun`, which the
@@ -246,6 +251,52 @@ timeline id serves everything else. This declines ADR-0073's open question about
 `docs/DEFERRED_WORK.md`. A reset callback cannot reach a consumer past an asynchronous boundary, and
 it cannot tell an item already in flight from one produced after it. An id on the item can.
 
+### 7. Every event that starts a timeline names it
+
+*Added 2026-10-16, answering open question 5 (#756).*
+
+A timeline starts at a load, at every item change, at a loop and at a seek. A caller that waits for
+an item's first frame, to hide a placeholder say, cannot use "the first frame of a new timeline":
+under `RepeatMode.One` the item that is ending can loop just before a `ReplaceAsync`, and the loop's
+first frame is on a new timeline too. So the event that starts the timeline names it, and the caller
+waits for a presented frame that carries that one.
+
+- **The transition names it.** `PlaylistTransition` gains `Timeline`, the timeline its `Item`
+  presents under from the hand-off. That covers the first item of a load and every item change.
+- **The loop names it.** `LoopRestarted` gains `Timeline`, the timeline the loop presents under.
+  `PlaylistItemLooped.Loop` is the same instance, so both loop events carry it. Every loop either
+  player raises comes from the playlist session, so this is one source.
+- **Both are init-only properties**, as `FramePresentedInfo.Timeline` is (slice 1). Construction and
+  deconstruction stay source and binary compatible, and equality now includes the timeline.
+  `FramePresentedInfo` is unchanged: it is on the hot path and arrives off the UI thread, and the
+  value id it already carries is cheaper than an item reference.
+- **A run's id is given when the run takes its number, not when it starts.** A transition or a loop
+  is often raised before its run starts: the first item is reported after its open, a paused advance
+  after its warm-up or none, and a paused loop after a rewind that holds the item until Play. So
+  `SubstrateSession` gives each run number its id when the number is first taken, at the open or
+  once a seek or rewind has stopped the run it interrupts, and the run's start installs that id on
+  the decoders. The install point, and so decision 2's guarantee, is unchanged. Ids are identity
+  only (decision 1), so giving one early, or giving one to a run that never starts, costs nothing.
+- **The id travels through the protocol, not the shell.** Each command outcome the playlist session
+  feeds its protocol reports the runtime's timeline with its run number. The protocol keeps it on
+  the item slot, and the transition and the loop report name the slot's timeline. The shell never
+  reads the runtime's timeline when it raises an event, so no run that starts in between can be
+  named by mistake.
+
+A caller matches `FramePresentedInfo.Timeline` against the timeline the latest event for its item
+named. Events are not ordered against presented frames (see Context), so the frame can present
+before the event arrives. A caller that must not miss it keeps the timelines recently presented, as
+`PresentedTimeline` does, and checks them when the event arrives.
+
+A seek also starts a timeline, and no event names it yet. The protocol already receives the seek's
+timeline on its outcome; #761 tracks reporting it.
+
+This answers open question 5 as asked: the transport exposes the timeline on the transition. It
+does not add a property for the current timeline. A property read races with the run in flight, and
+the events give the value at the point the item changes. A consumer with no presented frames, such
+as an audio-only caption display (#669), can follow the transitions and loops. Adopting that in
+`CaptionTimeline` is not part of this decision.
+
 ### Staging
 
 1. **Carry it.** `TimelineId`, the interface members, storage, minting, stamping, copying, and
@@ -279,6 +330,7 @@ it cannot tell an item already in flight from one produced after it. An id on th
 | 2 | The PRESENT GAP tracker starts over on a new timeline (#624) | #681 |
 | 3 | LiveCaptioning drops its graph counter and presented-time checks (#641); `CaptionTimeline` judges a caption that names a timeline at the first frame (#687) | #688 |
 | 4 | Not done; optional | |
+| Decision 7 | `PlaylistTransition.Timeline` and `LoopRestarted.Timeline`; a run's id given when it takes its number | #756 |
 
 What differs from the decisions, slice by slice. None reverses one; the last item under results
 and join amends decision 5's table.
@@ -354,7 +406,7 @@ What is left:
 
 - Slice 4, deriving the session's run number and the pacer's run id from the id, is optional and
   not done.
-- The open questions below are all still open. #684, a camera switch that shows the old camera's
+- Open questions 1 to 4 below are still open. Decision 7 answered question 5. #684, a camera switch that shows the old camera's
   result, waits on question 1.
 - #679: a resampler held across a timeline change, such as the one in LiveCaptioning's caption
   graph, puts its filter tail from before the break under the new id.
@@ -471,6 +523,8 @@ are decoded, and stamped, before promotion, and a frame is immutable once publis
    path.
 5. **Audio-only display.** Should the transport also expose the current timeline id, for example
    on `PlaylistTransition`, so a consumer with no presented frames (#669) can follow it?
+   **Answered 2026-10-16 by [decision 7](#7-every-event-that-starts-a-timeline-names-it):** the
+   transition and the loop event name it; no current-timeline property.
 
 ## Revision history
 
@@ -491,3 +545,8 @@ are decoded, and stamped, before promotion, and a frame is immutable once publis
   from the secondary's previous timeline. The table had named an action only for the primary,
   although each input has its own follower. Slice 2 implemented the secondary's action (#686), and
   #677 asked for the table to say so.
+- **2026-10-16, decision 7.** Open question 5 is answered by a new decision: the playlist transition
+  and the loop event name the timeline their item presents under (#756). To make that possible
+  before a run starts, a run's id is now given when the run takes its number, and installed when it
+  starts as before. Status, Implementation and the open question point at it. A seek's timeline is
+  not yet reported (#761).

@@ -54,6 +54,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     private readonly Dictionary<string, FakeItem> _runtimes = [];
     private readonly List<Hold> _holds = [];
     private readonly List<Action<PlaylistTransition>> _transitionHandlers = [];
+    private readonly List<TimelineId> _loopTimelines = [];
     private readonly InlineScheduler _scheduler = new();
     private readonly IDisposable _transitions;
 
@@ -71,7 +72,12 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                 OnBufferUnderrun: () => Record("ctl.BufferUnderrun"),
                 OnRecoverableError: error => Record($"ctl.RecoverableError({error.Message})"),
                 OnCurrentItemChanged: info => Record($"ctl.ItemChanged({info?.ContainerName})"),
-                OnLoopRestarted: (count, item) => Record($"ctl.LoopRestarted({count},{item})"),
+                OnLoopRestarted: (count, item, timeline) =>
+                {
+                    Record($"ctl.LoopRestarted({count},{item})");
+                    lock (_gate)
+                        _loopTimelines.Add(timeline);
+                },
                 OnItemFailed: (item, failure, error) =>
                     Record($"ctl.ItemFailed({item},{failure},{error.Message})")
             ),
@@ -164,6 +170,16 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     /// <summary>Posts the held deliveries in order, and posts later ones at once again.</summary>
     public void StartDeferredHops() => _scheduler.StartDeferred();
 
+    /// <summary>The timeline each <c>ctl.LoopRestarted</c> named, in order.</summary>
+    public IReadOnlyList<TimelineId> LoopTimelines
+    {
+        get
+        {
+            lock (_gate)
+                return [.. _loopTimelines];
+        }
+    }
+
     /// <summary>The runtime named in the transcript, such as <c>a#1</c>.</summary>
     public FakeItem Runtime(string name)
     {
@@ -177,6 +193,10 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
 
     /// <summary>Enqueues a one-shot item for <paramref name="source"/>.</summary>
     public PlaylistItem Enqueue(string source) => Coordinator.Enqueue(new FakeSource(source));
+
+    /// <summary>Replaces the playlist with items for <paramref name="sources"/>, jumping to the first.</summary>
+    public IReadOnlyList<PlaylistItem> Replace(params string[] sources) =>
+        Coordinator.Replace(sources.Select(s => (IMediaSource)new FakeSource(s)));
 
     /// <summary>
     /// Holds the next <paramref name="op"/> on a runtime of <paramref name="source"/> until
@@ -375,6 +395,23 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         public TimeSpan Duration => MediaInfo?.Duration ?? TimeSpan.Zero;
 
         public int RunNumber => Volatile.Read(ref _model).Run;
+
+        // Each run number has its own timeline from the first time it is read, as
+        // SubstrateSession gives one when it takes the number.
+        private readonly Dictionary<int, TimelineId> _timelines = [];
+
+        public TimelineId Timeline => TimelineOf(RunNumber);
+
+        /// <summary>The timeline run <paramref name="run"/> presents under.</summary>
+        public TimelineId TimelineOf(int run)
+        {
+            lock (_timelines)
+            {
+                if (!_timelines.TryGetValue(run, out var timeline))
+                    _timelines[run] = timeline = TimelineId.Next();
+                return timeline;
+            }
+        }
 
         /// <summary>
         /// Raises end-of-stream, as the item's last worker does when the run drains.

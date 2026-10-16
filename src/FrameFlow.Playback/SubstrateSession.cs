@@ -131,6 +131,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private int _runNumber;
     private int _nextCommand;
 
+    // The current run's number and the timeline it presents under (ADR-0084, decision 7).
+    private readonly Lock _timelineGate = new();
+    private (int Run, TimelineId Timeline) _runTimeline = (-1, TimelineId.None);
+
     // The commands whose callers are waiting, by number. The reader's only.
     private readonly Dictionary<int, Call> _calls = [];
 
@@ -271,6 +275,38 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// or rewind has replaced the run in between.
     /// </remarks>
     public int RunNumber => Volatile.Read(ref _runNumber);
+
+    /// <summary>
+    /// The timeline the current run presents under: every frame and buffer it decodes carries it.
+    /// <see cref="TimelineId.None"/> before the runtime has taken its first command.
+    /// </summary>
+    /// <remarks>
+    /// Each run number gets its own timeline when the number is first taken, at the open or once a
+    /// seek or rewind has stopped the run it interrupts, and before that run starts. So a run held
+    /// until Play, after a paused seek or before the first play, names its timeline here before
+    /// anything carries it. The run's start installs that timeline on the decoders, on the place
+    /// decision 2 of ADR-0084 fixes. Read it where <see cref="RunNumber"/> is read: after a command
+    /// completes, the two describe the same run.
+    /// </remarks>
+    public TimelineId Timeline
+    {
+        get
+        {
+            lock (_timelineGate)
+                return _runTimeline.Timeline;
+        }
+    }
+
+    // A run number takes a timeline the first time it is seen, and keeps it. Run numbers only grow.
+    private TimelineId TimelineOf(int run)
+    {
+        lock (_timelineGate)
+        {
+            if (_runTimeline.Run != run)
+                _runTimeline = (run, TimelineId.Next());
+            return _runTimeline.Timeline;
+        }
+    }
 
     /// <summary>
     /// What a session does around its run's work: its start and end, a stop's wait for it, and
@@ -548,6 +584,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         var (next, step) = ItemRuntimeProtocol.Step(state, input);
         _state = next;
+        TimelineOf(next.Run);
         Volatile.Write(ref _runNumber, next.Run);
         if (arrival is Called { Call: var stepped })
             stepped.Stepped = true;
@@ -1079,7 +1116,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         foreach (var run in older)
             await ForgetAsync(run).ConfigureAwait(false);
 
-        var timeline = _media!.BeginRun(start.Graph, start.Floor, start.End, start.HoldForSettle);
+        var timeline = TimelineOf(start.Run);
+        _media!.BeginRun(timeline, start.Graph, start.Floor, start.End, start.HoldForSettle);
         _logger.LogDebug(RunLaunchedMessage, start.Run, timeline);
 
         var scope = new RunScope(start.Run, new WorkScope { WorkEnded = name => OnWorkLetGo?.Invoke(name) });

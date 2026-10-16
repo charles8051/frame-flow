@@ -402,6 +402,8 @@ FrameFlow.Media.LoopRestarted.ItemDuration.init -> void
 FrameFlow.Media.LoopRestarted.LoopCount.get -> int
 FrameFlow.Media.LoopRestarted.LoopCount.init -> void
 FrameFlow.Media.LoopRestarted.LoopRestarted(int LoopCount, System.TimeSpan ItemDuration) -> void
+FrameFlow.Media.LoopRestarted.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Media.LoopRestarted.Timeline.init -> void
 FrameFlow.Media.LoopStalled
 FrameFlow.Media.LoopStalled.Duration.get -> System.TimeSpan
 FrameFlow.Media.LoopStalled.Duration.init -> void

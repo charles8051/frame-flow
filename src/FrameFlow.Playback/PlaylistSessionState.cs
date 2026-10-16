@@ -43,13 +43,18 @@ internal enum PlaylistRunState
 /// </param>
 /// <param name="KnownRun">The run number the runtime reported when its last operation finished.</param>
 /// <param name="Info">The runtime's metadata, from its open.</param>
+/// <param name="KnownTimeline">
+/// The timeline of the run <paramref name="KnownRun"/> names, read with it. The item's next
+/// presented frame carries it unless a later operation starts another run.
+/// </param>
 internal sealed record PlaylistItemSlot(
     int Generation,
     PlaylistItem Item,
     bool Played,
     bool AwaitsPlay,
     int KnownRun,
-    MediaInfo? Info
+    MediaInfo? Info,
+    TimelineId KnownTimeline = default
 )
 {
     /// <summary>The item's duration, or <see cref="TimeSpan.Zero"/> when it is not known.</summary>

@@ -674,6 +674,50 @@ public sealed class PlaylistSessionTranscriptTests
     }
 
     /// <summary>
+    /// The race in #756: a replace asked for while the item's loop is rewinding. The loop is
+    /// reported first, then the replacement starts. Each names the timeline of the run its item
+    /// presents next, so a caller waiting for the replacement's first frame does not take the
+    /// loop's for it (ADR-0084, decision 7).
+    /// </summary>
+    [Fact]
+    public async Task AReplaceDuringALoop_TheLoopAndTheReplacementNameTheirOwnTimelines()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.One, "a");
+        var transitions = new List<PlaylistTransition>();
+        rig.OnSourceTransitioned(transitions.Add);
+        var a = rig.Runtime("a#1");
+        var beforeTheLoop = a.Timeline;
+
+        var hold = rig.Hold("a", ItemOp.Rewind);
+        a.RaiseEndOfStream();
+        await hold.EnteredAsync();
+        rig.Replace("b");
+        hold.Release();
+        await rig.SettleAsync();
+
+        Assert.Equal(
+            [
+                "a#1.Rewind",
+                "transition(a)",
+                "ctl.LoopRestarted(1,a)",
+                "a#1.Dispose",
+                "clock.Stop",
+                "b#1.Open",
+                "b#1.WarmUp",
+                "b#1.Play",
+                "ctl.ItemChanged(b)",
+                "transition(b)",
+            ],
+            rig.TakeLog()
+        );
+        var loop = Assert.Single(rig.LoopTimelines);
+        Assert.Equal(a.TimelineOf(a.RunNumber), loop);
+        Assert.NotEqual(beforeTheLoop, loop);
+        Assert.Equal([loop, rig.Runtime("b#1").Timeline], transitions.Select(t => t.Timeline));
+        Assert.NotEqual(loop, transitions[1].Timeline);
+    }
+
+    /// <summary>
     /// The looping record's decision 6: removing the current item while its rewind is under way does
     /// not undo the repeat, so the session keeps expecting it until the rewind completes, and a
     /// rewind that hangs there is still watched. Once the input is handled the queue answers alone.

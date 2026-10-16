@@ -314,7 +314,7 @@ public sealed class SubstrateSessionSeekWaitTests
                     OnBufferUnderrun: static () => { },
                     OnRecoverableError: error => _faults.Enqueue(error.Inner ?? new InvalidOperationException(error.Message)),
                     OnCurrentItemChanged: static _ => { },
-                    OnLoopRestarted: static (_, _) => { },
+                    OnLoopRestarted: static (_, _, _) => { },
                     OnItemFailed: static (_, _, _) => { }
                 ),
                 HardwareDecodeMode.Disabled

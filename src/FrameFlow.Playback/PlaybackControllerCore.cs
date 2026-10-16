@@ -596,14 +596,19 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// blocking, so it reaches <see cref="LoopRestarted"/> in order with the session's other
     /// notifications. Failures are swallowed and logged, as for <see cref="PostInternalAsync"/>.
     /// </summary>
-    private void PostLoopRestarted(int loopCount, int sessionGeneration, PlaylistItem? item = null)
+    private void PostLoopRestarted(
+        int loopCount,
+        int sessionGeneration,
+        PlaylistItem? item,
+        TimelineId timeline
+    )
     {
         if (_dispose.HasBegun)
             return;
 
         if (
             !_commandChannel.Writer.TryWrite(
-                new LoopRestartedCommand(loopCount, sessionGeneration, item)
+                new LoopRestartedCommand(loopCount, sessionGeneration, item, timeline)
             )
         )
             LogLoopRestartedDropped(loopCount);
@@ -852,8 +857,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
             OnRecoverableError: error => PostRecoverableError(error, sessionGeneration),
             OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration),
-            OnLoopRestarted: (loopCount, item) =>
-                PostLoopRestarted(loopCount, sessionGeneration, item),
+            OnLoopRestarted: (loopCount, item, timeline) =>
+                PostLoopRestarted(loopCount, sessionGeneration, item, timeline),
             OnItemFailed: (item, failure, error) =>
                 PostRecoverableError(error, sessionGeneration, item, failure)
         );
@@ -1642,7 +1647,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                             Interlocked.Increment(ref _loopCount);
                             LogLoopRestarted(loop.LoopCount, "session");
                             // Constructed once and fanned out, the same way a failure is.
-                            var restarted = new LoopRestarted(loop.LoopCount, Duration);
+                            var restarted = new LoopRestarted(loop.LoopCount, Duration)
+                            {
+                                Timeline = loop.Timeline,
+                            };
                             if (loop.Item is { } loopedItem)
                                 _itemLoopedSubject.OnNext(
                                     new PlaylistItemLooped(loopedItem, restarted)

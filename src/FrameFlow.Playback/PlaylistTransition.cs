@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback;
@@ -68,4 +69,28 @@ public sealed record PlaylistTransition(
 
     /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
     public MediaInfo MediaInfo => _mediaInfo;
+
+    /// <summary>
+    /// The timeline <see cref="Item"/> presents under from this hand-off: its first presented frame
+    /// carries this one in <see cref="FramePresentedInfo.Timeline"/> (ADR-0084, decision 7).
+    /// <see cref="TimelineId.None"/> when the player does not say.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A caller that waits for the item's first frame, to hide a placeholder say, waits for a
+    /// presented frame that carries this timeline. A new timeline alone does not mean a new item:
+    /// a loop, a seek and a load also start one, and under <see cref="RepeatMode.One"/> the item
+    /// that is ending can loop just before this hand-off.
+    /// </para>
+    /// <para>
+    /// Events are not ordered against presented frames, so the frame can present before this
+    /// transition is raised. Keep the timelines recently presented, as
+    /// <see cref="FrameFlow.Graph.Core.PresentedTimeline"/> does, and match against them too.
+    /// </para>
+    /// <para>
+    /// The timeline names the run the item's next frame comes from. A seek or a loop of the item
+    /// after this hand-off starts another, and its frames carry that one.
+    /// </para>
+    /// </remarks>
+    public TimelineId Timeline { get; init; }
 }

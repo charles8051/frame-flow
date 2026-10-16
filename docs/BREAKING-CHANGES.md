@@ -86,7 +86,27 @@ packet, sending a packet and receiving a frame. It carries `ErrorCode`, the FFmp
   is not specific enough.
 - Use `Assert.Throws<MediaException>`, or `Assert.ThrowsAny<InvalidOperationException>`.
 
-### 3. `ErrorCategory` gains `DeviceLost`, and a decode failure on a lost GPU device throws `DeviceLostException`
+### 3. Playlist transitions and loop events name their timeline
+
+**Source and binary compatible. Equality changes.**
+
+`PlaylistTransition` and `LoopRestarted` each gained `Timeline`, an init-only property: the timeline
+the item presents under from the transition, and the timeline the loop presents under (ADR-0084,
+decision 7, #756). A presented frame on that timeline carries the same value in
+`FramePresentedInfo.Timeline`. `PlaylistItemLooped.Loop` is the `LoopRestarted` instance, so it
+carries it too. The positional constructors and deconstruction are unchanged.
+
+**Who hits this.**
+- Code that compares two `PlaylistTransition` or `LoopRestarted` values. They now compare equal only
+  when their timelines do as well. A value a test builds by hand is on `TimelineId.None`, and the
+  player's are not.
+
+**What to write instead.**
+- To wait for an item's first frame, wait for a presented frame whose `Timeline` equals the
+  transition's, rather than for the first frame of any new timeline. A loop of the item that is
+  ending also starts one.
+
+### 4. `ErrorCategory` gains `DeviceLost`, and a decode failure on a lost GPU device throws `DeviceLostException`
 
 **A new enum member, and a change in behaviour.**
 

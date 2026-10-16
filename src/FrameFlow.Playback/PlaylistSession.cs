@@ -383,7 +383,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged,
             // An item runtime does not loop, and does not know the queue it sits in: this session
             // decides and reports every repeat and every item failure.
-            OnLoopRestarted: static (_, _) => { },
+            OnLoopRestarted: static (_, _, _) => { },
             OnItemFailed: static (_, _, _) => { }
         );
 
@@ -595,7 +595,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 break;
 
             case PlaylistSessionAction.ReportLoopRestarted loop:
-                _controllerCallbacks.OnLoopRestarted(loop.LoopCount, loop.Item);
+                _controllerCallbacks.OnLoopRestarted(loop.LoopCount, loop.Item, loop.Timeline);
                 break;
 
             case PlaylistSessionAction.ReportFatal fatal:
@@ -609,7 +609,8 @@ internal sealed class PlaylistSession : IPlaybackSession
                     transition.Index,
                     transition.Wrapped,
                     transition.Previous,
-                    transition.Reason
+                    transition.Reason,
+                    transition.Timeline
                 );
                 break;
 
@@ -718,7 +719,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             return new PlaylistSessionInput.Outcome(
                 PlaylistOutcome.Ok,
                 runtime.RunNumber,
-                runtime.MediaInfo
+                runtime.MediaInfo,
+                Timeline: runtime.Timeline
             );
         }
         catch (OperationCanceledException ex) when (token.IsCancellationRequested)
@@ -726,7 +728,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             return new PlaylistSessionInput.Outcome(
                 PlaylistOutcome.Cancelled,
                 runtime.RunNumber,
-                Error: ex
+                Error: ex,
+                Timeline: runtime.Timeline
             );
         }
         catch (Exception ex)
@@ -734,7 +737,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             return new PlaylistSessionInput.Outcome(
                 PlaylistOutcome.Failed,
                 runtime.RunNumber,
-                Error: ex
+                Error: ex,
+                Timeline: runtime.Timeline
             );
         }
     }
@@ -883,7 +887,12 @@ internal sealed class PlaylistSession : IPlaybackSession
             var item = prepared.Item;
             await prepared.Runtime.InitializeAsync(item.Source, item.Start, item.End, token).ConfigureAwait(false);
             await prepared.Runtime.WarmUpAsync(token).ConfigureAwait(false);
-            outcome = new(PlaylistOutcome.Ok, prepared.Runtime.RunNumber, prepared.Runtime.MediaInfo);
+            outcome = new(
+                PlaylistOutcome.Ok,
+                prepared.Runtime.RunNumber,
+                prepared.Runtime.MediaInfo,
+                Timeline: prepared.Runtime.Timeline
+            );
         }
         catch (OperationCanceledException ex) when (token.IsCancellationRequested)
         {
@@ -965,7 +974,12 @@ internal sealed class PlaylistSession : IPlaybackSession
         _runtime = prepared.Runtime;
         prepared.Cancellation.Dispose();
         LogPromoted(_logger, prepared.Item.ToString());
-        return new(PlaylistOutcome.Ok, prepared.Runtime.RunNumber, prepared.Runtime.MediaInfo);
+        return new(
+            PlaylistOutcome.Ok,
+            prepared.Runtime.RunNumber,
+            prepared.Runtime.MediaInfo,
+            Timeline: prepared.Runtime.Timeline
+        );
     }
 
     private void DiscardPrepared()
@@ -1064,7 +1078,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 if (Volatile.Read(ref prepared.Generation) >= 0)
                     _controllerCallbacks.OnCurrentItemChanged(info);
             },
-            OnLoopRestarted: static (_, _) => { },
+            OnLoopRestarted: static (_, _, _) => { },
             OnItemFailed: static (_, _, _) => { }
         );
 
