@@ -17,7 +17,7 @@ namespace FrameFlow.Media.Core;
 ///   <item><term><c>ENOMEM</c>, <c>AVERROR_BUG</c>, <c>AVERROR_BUG2</c>, a non-negative code</term><description><see cref="ErrorCategory.System"/></description></item>
 ///   <item><term><c>AVERROR_INVALIDDATA</c> before the first packet</term><description><see cref="ErrorCategory.Source"/></description></item>
 ///   <item><term><c>AVERROR_INVALIDDATA</c> mid-stream</term><description><see cref="ErrorCategory.Decode"/></description></item>
-///   <item><term>no decodable stream</term><description><see cref="ErrorCategory.Source"/></description></item>
+///   <item><term>no decodable stream, <c>AVERROR_STREAM_NOT_FOUND</c></term><description><see cref="ErrorCategory.Source"/></description></item>
 ///   <item><term>any other code</term><description><see cref="ErrorCategory.Source"/> while opening or seeking, <see cref="ErrorCategory.Decode"/> while reading or decoding</description></item>
 /// </list>
 /// <para>
@@ -79,6 +79,7 @@ internal static class MediaErrorClassification
             NoSuchFile or AccessDenied or IoError => ErrorCategory.Io,
             OutOfMemory or Bug or Bug2 => ErrorCategory.System,
             InvalidData => beforeFirstPacket ? ErrorCategory.Source : ErrorCategory.Decode,
+            StreamNotFound => ErrorCategory.Source,
             _ when beforeFirstPacket || stage == MediaFailureStage.Seek => ErrorCategory.Source,
             _ => ErrorCategory.Decode,
         };

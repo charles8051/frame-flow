@@ -53,7 +53,7 @@ public sealed class MediaErrorClassificationTests
         Row(rows, Bug,             [System, System, System, System, System, System, System]);
         Row(rows, Bug2,            [System, System, System, System, System, System, System]);
         Row(rows, InvalidData,     [Source, Source, Source, Decode, Decode, Decode, Decode]);
-        Row(rows, StreamNotFound,  [Source, Source, Source, Source, Decode, Decode, Decode]);
+        Row(rows, StreamNotFound,  [Source, Source, Source, Source, Source, Source, Source]);
         Row(rows, DemuxerNotFound, [Source, Source, Source, Source, Decode, Decode, Decode]);
         Row(rows, EndOfFile,       [Source, Source, Source, Source, Decode, Decode, Decode]);
         Row(rows, Eperm,           [Source, Source, Source, Source, Decode, Decode, Decode]);
