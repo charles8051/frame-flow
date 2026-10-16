@@ -81,3 +81,6 @@ FrameFlow.Avalonia.Windows.SuperResolutionStatus.Requested = 1 -> FrameFlow.Aval
 FrameFlow.Avalonia.Windows.SuperResolutionStatus.Unavailable = 7 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
 FrameFlow.Avalonia.Windows.SuperResolutionStatus.UnsupportedAdapter = 3 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
 FrameFlow.Avalonia.Windows.SuperResolutionStatus.UnsupportedFrames = 4 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.Placement.get -> FrameFlow.Media.VideoPlacementMode
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.Placement.set -> void
+static readonly FrameFlow.Avalonia.Windows.CompositionInteropVideoView.PlacementProperty -> Avalonia.StyledProperty<FrameFlow.Media.VideoPlacementMode>!

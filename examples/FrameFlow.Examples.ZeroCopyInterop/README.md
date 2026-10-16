@@ -51,4 +51,7 @@ Super Resolution on in the NVIDIA App (System, Video, RTX Video Enhancements), a
 only while the video is smaller than the window. A failure during playback replaces
 the status line.
 
+Press `F` to switch between fitting the picture in the window, with bars, and
+filling the window, cropping the overflow about the centre.
+
 The log is written to `logs/zero-copy-interop.log` at the repository root.

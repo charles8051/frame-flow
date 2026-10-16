@@ -177,6 +177,22 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxV
     /// <summary>Gets the total number of frames swapped to the front buffer and drawn.</summary>
     public int RenderedFrameCount => Volatile.Read(ref _renderedFrameCount);
 
+    /// <summary>Defines the <see cref="Placement"/> property.</summary>
+    public static readonly StyledProperty<VideoPlacementMode> PlacementProperty =
+        AvaloniaProperty.Register<FrameFlowVideoView, VideoPlacementMode>(nameof(Placement));
+
+    static FrameFlowVideoView() => AffectsRender<FrameFlowVideoView>(PlacementProperty);
+
+    /// <summary>
+    /// How the picture is placed when its shape differs from the view's (#766):
+    /// <see cref="VideoPlacementMode.Fit"/>, the default, or <see cref="VideoPlacementMode.Fill"/>.
+    /// </summary>
+    public VideoPlacementMode Placement
+    {
+        get => GetValue(PlacementProperty);
+        set => SetValue(PlacementProperty, value);
+    }
+
     /// <summary>
     /// Runs on the UI thread as soon as a transition has moved the binding number, before the rest
     /// of its work. For tests: it stands in for a producer thread that delivers a frame at that
@@ -1030,16 +1046,19 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxV
             return;
         }
 
-        // Letterboxed at the frame's display shape, and turned upright (#542).
+        // Fitted or filling at the frame's display shape (#766), and turned upright (#542). Only the
+        // part inside the bounds is drawn: a fill crops through the source rectangle.
         var srcW = bitmapToRender.PixelSize.Width;
         var srcH = bitmapToRender.PixelSize.Height;
-        var placement = VideoPlacement.Fit(Bounds.Width, Bounds.Height, srcW, srcH, geometry.Shape, geometry.Rotation);
-        if (placement.IsEmpty)
+        var visible = VideoPlacement
+            .Of(Placement, Bounds.Width, Bounds.Height, srcW, srcH, geometry.Shape, geometry.Rotation)
+            .Visible(Bounds.Width, Bounds.Height, srcW, srcH);
+        if (visible.IsEmpty)
             return;
 
-        var srcRect = new Rect(0, 0, srcW, srcH);
-        var drawRect = new Rect(placement.DrawX, placement.DrawY, placement.DrawWidth, placement.DrawHeight);
-        if (placement.RotationRadians == 0)
+        var srcRect = new Rect(visible.SourceX, visible.SourceY, visible.SourceWidth, visible.SourceHeight);
+        var drawRect = new Rect(visible.DrawX, visible.DrawY, visible.DrawWidth, visible.DrawHeight);
+        if (visible.RotationRadians == 0)
         {
             context.DrawImage(bitmapToRender, srcRect, drawRect);
             return;
@@ -1047,7 +1066,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxV
 
         var centre = drawRect.Center;
         var turn = Matrix.CreateTranslation(-centre.X, -centre.Y)
-            * Matrix.CreateRotation(placement.RotationRadians)
+            * Matrix.CreateRotation(visible.RotationRadians)
             * Matrix.CreateTranslation(centre.X, centre.Y);
         using (context.PushTransform(turn))
             context.DrawImage(bitmapToRender, srcRect, drawRect);

@@ -14,7 +14,7 @@ namespace FrameFlow.Examples.ZeroCopyInterop;
 /// <summary>
 /// Plays one file, looping, on a <see cref="FrameFlow.Avalonia.Windows.CompositionInteropVideoView"/>:
 /// hardware-decoded frames go from the decoder to Avalonia's compositor without leaving the GPU.
-/// <c>S</c> toggles the driver's video super resolution.
+/// <c>S</c> toggles the driver's video super resolution, and <c>F</c> toggles fit and fill.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -114,6 +114,10 @@ public partial class MainWindow : Window
         base.OnKeyDown(e);
         if (e.Key == Key.S)
             VideoView.DriverSuperResolution = !VideoView.DriverSuperResolution;
+        else if (e.Key == Key.F)
+            VideoView.Placement = VideoView.Placement == VideoPlacementMode.Fit
+                ? VideoPlacementMode.Fill
+                : VideoPlacementMode.Fit;
     }
 
     protected override void OnClosing(WindowClosingEventArgs e)

@@ -704,3 +704,6 @@ FrameFlow.Media.DeviceLostException.DeviceLostException(string! message, int rem
 FrameFlow.Media.DeviceLostException.RemovedReason.get -> int
 static FrameFlow.Media.DeviceLostException.IsDeviceLostCode(int hresult) -> bool
 FrameFlow.Media.PlaybackError.DeviceLoss.get -> FrameFlow.Media.DeviceLostException?
+FrameFlow.Media.VideoPlacementMode
+FrameFlow.Media.VideoPlacementMode.Fill = 1 -> FrameFlow.Media.VideoPlacementMode
+FrameFlow.Media.VideoPlacementMode.Fit = 0 -> FrameFlow.Media.VideoPlacementMode
