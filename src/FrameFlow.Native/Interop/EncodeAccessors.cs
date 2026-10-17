@@ -75,6 +75,24 @@ internal readonly unsafe ref struct AvCodecContextWriter
         set => Ctx.color_range = (AVColorRange)value;
     }
 
+    /// <summary>Sets the YUV matrix the stream signals as an FFmpeg <c>AVColorSpace</c> integer.</summary>
+    internal int ColorSpace
+    {
+        set => Ctx.colorspace = (AVColorSpace)value;
+    }
+
+    /// <summary>Sets the colour primaries as an FFmpeg <c>AVColorPrimaries</c> integer.</summary>
+    internal int ColorPrimaries
+    {
+        set => Ctx.color_primaries = (AVColorPrimaries)value;
+    }
+
+    /// <summary>Sets the transfer characteristic as an FFmpeg <c>AVColorTransferCharacteristic</c> integer.</summary>
+    internal int ColorTransfer
+    {
+        set => Ctx.color_trc = (AVColorTransferCharacteristic)value;
+    }
+
     /// <summary>Sets the encoder time base (the unit of packet PTS/DTS).</summary>
     internal void SetTimeBase(int num, int den)
     {

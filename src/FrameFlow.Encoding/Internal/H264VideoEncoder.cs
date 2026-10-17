@@ -13,9 +13,9 @@ namespace FrameFlow.Encoding.Internal;
 
 /// <summary>
 /// libavcodec-backed H.264 video encoder (ADR-0040). Accepts decoded BGRA32
-/// <see cref="IVideoFrame"/>s, converts them to YUV420P via <c>sws_scale</c>,
-/// and produces <see cref="EncodedPacket"/>s via the
-/// <c>avcodec_send_frame</c> / <c>avcodec_receive_packet</c> loop — the encode
+/// <see cref="IVideoFrame"/>s, converts them to limited-range BT.709 YUV420P via
+/// <c>sws_scale</c>, tags the stream as such, and produces <see cref="EncodedPacket"/>s
+/// via the <c>avcodec_send_frame</c> / <c>avcodec_receive_packet</c> loop — the encode
 /// mirror of <c>FrameFlow.Decoding.VideoDecoder</c>.
 /// </summary>
 /// <remarks>
@@ -204,6 +204,11 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
         writer.GopSize = _options.GopSize;
         writer.MaxBFrames = 0; // libopenh264 has no B-frame support.
         writer.ColorRange = 1; // AVCOL_RANGE_MPEG — matches swscale's limited-range YUV default.
+        // BT.709, as the conversion below writes it. A stream that signals nothing decodes as
+        // BT.709 too (#796), but a tag reaches players that guess otherwise.
+        writer.ColorSpace = 1; // AVCOL_SPC_BT709
+        writer.ColorPrimaries = 1; // AVCOL_PRI_BT709
+        writer.ColorTransfer = 1; // AVCOL_TRC_BT709
         writer.SetTimeBase(_options.FrameRateDenominator, _options.FrameRateNumerator);
         writer.SetFrameRate(_options.FrameRateNumerator, _options.FrameRateDenominator);
         // MP4 requires global headers (SPS/PPS in extradata, not in-band).
@@ -254,6 +259,25 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
         if (swsPtr == nint.Zero)
             throw new InvalidOperationException("sws_getContext (BGRA→YUV420P) failed.");
         _sws = new SwsContextHandle(swsPtr);
+
+        // BT.709 into limited range, in place of the BT.601 sws_getContext starts with. The
+        // stream is tagged BT.709 below, and the decoder and the GPU presenters convert a tagged
+        // frame with its tag, so a recording decodes as written at any size. The source table is
+        // unused: the input is RGB.
+        int csRc = FFSwScale.sws_setColorspaceDetails(
+            swsPtr,
+            FFSwScale.sws_getCoefficients(FFSwScale.SwsCsDefault),
+            0,
+            FFSwScale.sws_getCoefficients(FFSwScale.SwsCsItu709),
+            0,
+            0,
+            1 << 16,
+            1 << 16
+        );
+        if (csRc < 0)
+            throw new InvalidOperationException(
+                $"sws_setColorspaceDetails (BGRA→YUV420P, BT.709) failed: {DescribeError(csRc)}"
+            );
 
         _opened = true;
         LogOpened(

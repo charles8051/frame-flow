@@ -163,4 +163,7 @@ internal static partial class FFSwScale
 
     /// <summary>SWS_CS_DEFAULT — the matrix <see cref="sws_getContext"/> starts with (ITU-R BT.601).</summary>
     internal const int SwsCsDefault = 5;
+
+    /// <summary>SWS_CS_ITU709 — the ITU-R BT.709 matrix, for <see cref="sws_getCoefficients"/>.</summary>
+    internal const int SwsCsItu709 = 1;
 }

@@ -11,6 +11,46 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.18.0`
+
+### 1. The H.264 encoder converts with BT.709 and tags the stream, and older recordings stay untagged
+
+**No compile error. New recordings hold different samples, and older ones need retagging.**
+
+`Encoder.H264`, `Mp4VideoWriter` and `ClipEncoderSink` all encode through one H.264 encoder. It
+converted `Bgra32` to YUV with swscale's default, BT.601, and wrote no matrix, primaries or transfer
+into the stream. Since `v0.17.0` the decoder converts a stream that signals a matrix with that matrix, and one that
+signals none by its height (BT.709 from 720 rows, BT.601 below, as of `v0.18.0`), so a 1080p
+recording decoded through the wrong matrix. On 75% colour bars, green came back as 159 where 191
+went in, and red, blue and magenta gained 11 to 29 levels of green.
+
+The encoder now converts with BT.709 into limited range, and the stream says so: matrix, primaries
+and transfer BT.709, limited range, in the H.264 sequence header, so a remux keeps them. A recording
+decodes to within 3 levels of what was written, on the CPU path and in the D3D11 and D3D12
+presenters, which convert with the frame's matrix as of `v0.18.0`.
+
+**A recording made before this release has no tag, so it decodes by its height.** Its samples are
+BT.601. One below 720 rows decodes correctly. One of 720 rows or more decodes with BT.709, and
+needs retagging, which fixes it without a re-encode:
+
+```sh
+ffmpeg -i old.mp4 -c copy -bsf:v h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=6 fixed.mp4
+```
+
+Matrix 6 is BT.601 (SMPTE 170M). Primaries and transfer 1 are BT.709, which is what the `Bgra32`
+input had; only the matrix was BT.601. On the bars above, the retagged file decodes as a new
+recording does. Recordings below 720 rows need no change.
+
+**Who hits this.**
+- Recordings of 720 rows or more from `Mp4VideoWriter`, `Encoder.H264` or `ClipEncoderSink` made
+  before this release.
+- Golden files or hashes of encoded output, or of the YUV it decodes to. New recordings hold
+  different samples for the same input.
+- Code that reads the encoder's YUV and converts it to RGB with BT.601 itself.
+
+**What to write instead.** Nothing to change in code. Retag older recordings as above, and recapture
+references taken from encoded output.
+
 ## `v0.18.0` — since `v0.17.0`
 
 ### 1. An untagged SD frame converts with BT.601, and the presenters convert with the frame's matrix
