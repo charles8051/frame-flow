@@ -52,10 +52,14 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
             var decoded = await DecodeBarCentresAsync(path);
 
             Assert.Equal(FrameCount, decoded.Count);
+            Assert.All(
+                decoded,
+                frame => Assert.Equal((PixelFormat.Bgra32, Width, Height), (frame.Format, frame.Width, frame.Height))
+            );
             var off = new List<string>();
             for (int frame = 0; frame < decoded.Count; frame++)
             {
-                foreach (var (row, bars) in decoded[frame])
+                foreach (var (row, bars) in decoded[frame].Rows)
                 {
                     for (int bar = 0; bar < Bars.Length; bar++)
                     {
@@ -153,7 +157,7 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
     /// decoder and a <see cref="DecodingPipeline"/>, and takes the BGR at the centre of every bar
     /// on the first, middle and last rows of each frame.
     /// </summary>
-    private static async Task<List<List<(int Row, byte[][] Bars)>>> DecodeBarCentresAsync(string path)
+    private static async Task<List<DecodedFrame>> DecodeBarCentresAsync(string path)
     {
         await using var demux = await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(path));
         await using var decoder =
@@ -165,17 +169,25 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
         );
 
         // Sampled and released as they come, so the decoder never waits on a frame the test holds,
-        // and asserted afterwards, so a failed assertion cannot leave the pump blocked.
+        // and asserted afterwards, so a failed assertion cannot leave the pump blocked. A frame the
+        // bars cannot be read from is recorded with no rows rather than thrown on here.
         var collect = Task.Run(async () =>
         {
-            var frames = new List<List<(int Row, byte[][] Bars)>>();
+            var frames = new List<DecodedFrame>();
             await foreach (var frame in decoder.DecodeAsync())
             {
                 using (frame)
                 {
-                    Assert.Equal(PixelFormat.Bgra32, frame.Format);
-                    var cpu = frame.AsCpu()!.Value;
                     var rows = new List<(int Row, byte[][] Bars)>();
+                    frames.Add(new DecodedFrame(frame.Format, frame.Width, frame.Height, rows));
+                    if (
+                        frame.Format != PixelFormat.Bgra32
+                        || frame.Width != Width
+                        || frame.Height != Height
+                        || frame.AsCpu() is not { } cpu
+                    )
+                        continue;
+
                     foreach (int row in new[] { 0, Height / 2, Height - 1 })
                     {
                         var bars = new byte[Bars.Length][];
@@ -187,8 +199,6 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
 
                         rows.Add((row, bars));
                     }
-
-                    frames.Add(rows);
                 }
             }
 
@@ -199,6 +209,9 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
         await pipeline.FinalizeDecodersAsync();
         return await collect;
     }
+
+    /// <summary>A decoded frame's format and size, and the bars read from it if it is the expected <c>Bgra32</c>.</summary>
+    private sealed record DecodedFrame(PixelFormat Format, int Width, int Height, List<(int Row, byte[][] Bars)> Rows);
 
     private static unsafe (
         AVColorSpace Matrix,
