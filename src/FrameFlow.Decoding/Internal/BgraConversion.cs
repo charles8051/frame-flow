@@ -41,14 +41,14 @@ internal static unsafe class BgraConversion
         if (ctx == nint.Zero)
             return nint.Zero;
 
-        // The default matrix, as sws_getContext starts with, and the frame's range in place of the
-        // one sws_getContext infers from the format.
-        nint coefficients = FFSwScale.sws_getCoefficients(FFSwScale.SwsCsDefault);
+        // The frame's matrix and range in place of the BT.601 and the range sws_getContext infers
+        // from the format (#792, #796). The destination table is unused: the output is RGB.
+        nint coefficients = FFSwScale.sws_getCoefficients(input.Matrix);
         int rc = FFSwScale.sws_setColorspaceDetails(
             ctx,
             coefficients,
             input.FullRange ? 1 : 0,
-            coefficients,
+            FFSwScale.sws_getCoefficients(FFSwScale.SwsCsDefault),
             0,
             0,
             1 << 16,

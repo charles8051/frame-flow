@@ -250,6 +250,48 @@ Gen(
     new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
 );
 
+// Tagged BT.601, which is not the matrix an untagged frame converts with. The transfer off the GPU
+// does not carry the tag, so a readback that lost it would convert this clip differently from the
+// software decoder (#796). setparams tags the frames, so FFmpeg does not convert them on the way in.
+Gen(
+    "test-video-vp9-yuv420p-bt601.webm",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3,format=yuv420p,setparams=range=tv:colorspace=bt470bg:color_primaries=bt470bg:color_trc=smpte170m",
+    "-c:v libvpx-vp9 -b:v 200k -pix_fmt yuv420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
+// Tagged BT.709, at 1280x720: eight flat bars whose limited-range samples are the 75% bars in
+// BT.709 (white, yellow, cyan, green, magenta, red, blue, black). setparams tags the frames
+// themselves: tagged only at the encoder, FFmpeg converts the bars to BT.709 first (#796).
+var bt709Bars = "-f lavfi -i nullsrc=size=1280x720:rate=24:duration=0.25,format=yuv420p,geq=lum='if(lt(X*8,W*1),180,if(lt(X*8,W*2),168,if(lt(X*8,W*3),145,if(lt(X*8,W*4),133,if(lt(X*8,W*5),63,if(lt(X*8,W*6),51,if(lt(X*8,W*7),28,16)))))))':cb='if(lt(X*8,W*1),128,if(lt(X*8,W*2),44,if(lt(X*8,W*3),147,if(lt(X*8,W*4),63,if(lt(X*8,W*5),193,if(lt(X*8,W*6),109,if(lt(X*8,W*7),212,128)))))))':cr='if(lt(X*8,W*1),128,if(lt(X*8,W*2),136,if(lt(X*8,W*3),44,if(lt(X*8,W*4),52,if(lt(X*8,W*5),204,if(lt(X*8,W*6),212,if(lt(X*8,W*7),120,128)))))))',setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709";
+
+// FFV1 is lossless, so the decoder returns exactly these samples, and a test can compute what
+// each bar converts to.
+Gen(
+    "test-video-ffv1-bt709-bars.mkv",
+    bt709Bars,
+    "-c:v ffv1 -an",
+    new(Width: 1280, Height: 720, Fps: 24, DurationSec: 0.25)
+);
+
+// The same samples tagged BT.601, so a decoder that ignored the tag, and converted as for an
+// untagged frame, would fail on one of the two.
+Gen(
+    "test-video-ffv1-bt601-bars.mkv",
+    bt709Bars.Replace("colorspace=bt709:color_primaries=bt709:color_trc=bt709", "colorspace=bt470bg:color_primaries=bt470bg:color_trc=smpte170m"),
+    "-c:v ffv1 -an",
+    new(Width: 1280, Height: 720, Fps: 24, DurationSec: 0.25)
+);
+
+// The same bars in a codec GPUs decode, for the test that the CPU conversion and the presenter's
+// shader agree on a BT.709 frame.
+Gen(
+    "test-video-vp9-bt709-bars.webm",
+    bt709Bars,
+    "-c:v libvpx-vp9 -b:v 1M -pix_fmt yuv420p -an",
+    new(Width: 1280, Height: 720, Fps: 24, DurationSec: 0.25)
+);
+
 // Four planes, which is one more than the rest of this category has. Every
 // other fixture here is one, two or three, and a call site that passed only
 // three source plane pointers to sws_scale therefore converted all of them and

@@ -73,11 +73,13 @@ internal static unsafe class GpuFrameReadback
         FrameCopyMetrics.Record(FrameCopySite.ReadbackDownload);
 
         // Convert as the software decoder converts the same stream (#792): NV12 chroma is split
-        // into the planes it would have produced, and the range comes from the
-        // hardware frame, since the transfer does not copy it.
+        // into the planes it would have produced, and the range and the matrix (#796) come from
+        // the hardware frame, since the transfer copies neither.
+        var hardware = new AvFrameAccessor(sourceAvFrame);
         var input = BgraConversionInput.For(
             new AvFrameAccessor(cpuPtr).Format,
-            new AvFrameAccessor(sourceAvFrame).ColorRange
+            hardware.ColorRange,
+            hardware.ColorSpace
         );
 
         nint swsCtx = BgraConversion.CreateContext(width, height, input);

@@ -108,6 +108,16 @@ internal readonly unsafe ref struct AvFrameAccessor
         }
     }
 
+    /// <summary>The frame's <c>AVColorSpace</c> as an integer: the YUV matrix it signals, 2 unspecified.</summary>
+    internal int ColorSpace
+    {
+        get
+        {
+            ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+            return (int)f.colorspace;
+        }
+    }
+
     /// <summary>
     /// Presentation timestamp in the stream's time base.
     /// Returns <see cref="FFAvUtil.AvNoPtsValue"/> if no PTS is available.

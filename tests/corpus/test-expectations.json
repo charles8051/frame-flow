@@ -170,6 +170,50 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-vp9-yuv420p-bt601.webm",
+    "durationSeconds": 3,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 72,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-ffv1-bt709-bars.mkv",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-ffv1-bt601-bars.mkv",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-vp9-bt709-bars.webm",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-video-ffv1-yuva420p.mkv",
     "durationSeconds": 3,
     "durationToleranceMs": 350,

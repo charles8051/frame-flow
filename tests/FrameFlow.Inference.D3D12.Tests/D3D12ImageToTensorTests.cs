@@ -90,7 +90,8 @@ public sealed class D3D12ImageToTensorTests
         var cpuFrames = await Decode.FramesAsync(Clip, HardwareDecodeBackendKind.D3D12Va, yieldHardware: false, count: 5);
         try
         {
-            var options = new ImageToTensorOptions(64, 48) { Sampling = ImageSampling.Nearest };
+            // The clip is untagged, which the CPU path converts with BT.709 (#796).
+            var options = new ImageToTensorOptions(64, 48) { Sampling = ImageSampling.Nearest, YuvMatrix = YuvMatrix.Bt709 };
             var crop = RotatedRect.FromBounds(0, 0, 320, 240);
             using var gpu = new DeviceAndQueue((GpuVideoFrame)gpuFrames[0]);
             using var stage = gpu.Stage(options);
@@ -109,8 +110,8 @@ public sealed class D3D12ImageToTensorTests
 
             // The CPU stage reads swscale's BGRA, quantised to 8 bits, and its chroma upsampling
             // differs from the shader's nearest block on colour edges: about 2% of values here,
-            // which is why the tail is not checked. Measured on this clip: mean 1.7/255 and p95
-            // 2.0/255; with the wrong matrix (BT.709) they are 9.4/255 and 38.6/255.
+            // which is why the tail is not checked. Measured on this clip: mean 0.55/255 and p95
+            // 2.2/255; with the wrong matrix (BT.601) they are 8.6/255 and 37.8/255.
             differences.Sort();
             float mean = differences.Average();
             float p95 = differences[(int)(0.95 * (differences.Count - 1))];
