@@ -75,7 +75,7 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
 
     private readonly Func<PresenterSample> _sample;
     private readonly ILogger _logger;
-    private readonly Timer _timer;
+    private readonly ITimer _timer;
     private readonly int _recoverySamples;
     private PresenterStallEvaluator _evaluator;
     private bool _wasStalled;
@@ -83,6 +83,12 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
     // Stops the timer once, and has every DisposeAsync wait for a check in flight (ADR-0086,
     // decision 3). A check that starts after the stop has begun returns without sampling.
     private readonly DisposeOnce _dispose = new();
+
+    // How many timer callbacks are running, and completed once none is after the stop has begun.
+    // The stop waits for this rather than for the timer, so it waits the same on any clock's timer:
+    // a fake clock's timer does not wait for its callback when disposed.
+    private int _inFlight;
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // What each check in flight is doing, by the check's number: in the sampler, or in a handler it
     // raised. The timer may start a check while another still runs. Read by the warning a stop that
@@ -120,6 +126,19 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
         TimeSpan? timeout = null,
         TimeSpan? interval = null,
         int recoverySamples = PresenterStallEvaluator.DefaultRecoverySamples)
+        : this(sample, logger, TimeProvider.System, timeout, interval, recoverySamples) { }
+
+    /// <summary>
+    /// Samples on a timer of <paramref name="sampleTime"/>. For tests: each advance of a fake clock
+    /// past an interval runs a check.
+    /// </summary>
+    internal PresenterStallWatchdog(
+        Func<PresenterSample> sample,
+        ILogger logger,
+        TimeProvider sampleTime,
+        TimeSpan? timeout = null,
+        TimeSpan? interval = null,
+        int recoverySamples = PresenterStallEvaluator.DefaultRecoverySamples)
     {
         _sample = sample;
         _samplerName = Describe("its sampler", sample);
@@ -127,22 +146,34 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
         _recoverySamples = recoverySamples;
         _evaluator = PresenterStallEvaluator.Create(timeout ?? DefaultTimeout, recoverySamples);
         var period = interval ?? DefaultInterval;
-        _timer = new Timer(Tick, null, period, period);
+        _timer = sampleTime.CreateTimer(Tick, null, period, period);
     }
 
     private void Tick(object? _)
     {
-        if (_dispose.HasBegun)
-            return;
-
-        var check = Interlocked.Increment(ref _checks);
+        // Counted in before reading the stop, as the stop sets its flag before reading the count:
+        // either this check sees the stop and does not sample, or the stop sees this check and
+        // waits for it.
+        Interlocked.Increment(ref _inFlight);
         try
         {
-            Check(check);
+            if (_dispose.HasBegun)
+                return;
+
+            var check = Interlocked.Increment(ref _checks);
+            try
+            {
+                Check(check);
+            }
+            finally
+            {
+                _running.TryRemove(check, out string? _);
+            }
         }
         finally
         {
-            _running.TryRemove(check, out string? _);
+            if (Interlocked.Decrement(ref _inFlight) == 0 && _dispose.HasBegun)
+                _drained.TrySetResult();
         }
     }
 
@@ -218,17 +249,22 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
     /// </summary>
     public ValueTask DisposeAsync() => _dispose.RunAsync(StopAsync);
 
-    // The timer's own asynchronous dispose waits for a callback in flight. A check that does not
-    // return is named once (ADR-0086, decision 3.3).
-    private ValueTask StopAsync() =>
-        new(
+    // Waits for the timer callbacks in flight to return. A check that does not return is named
+    // once (ADR-0086, decision 3.3).
+    private ValueTask StopAsync()
+    {
+        _timer.Dispose();
+        if (Volatile.Read(ref _inFlight) == 0)
+            _drained.TrySetResult();
+        return new(
             SlowWorkWarning.AwaitAsync(
-                _timer.DisposeAsync().AsTask(),
+                _drained.Task,
                 SlowWorkWarning.DefaultInterval,
                 WarningTime,
                 WarnStillRunning
             )
         );
+    }
 
     private void WarnStillRunning() =>
         _logger.LogWarning(

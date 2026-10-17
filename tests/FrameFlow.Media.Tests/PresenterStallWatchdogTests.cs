@@ -15,23 +15,24 @@ namespace FrameFlow.Media.Tests;
 /// waits for the first; and a stop held past the warning interval names, once, what holds it.
 /// </summary>
 /// <remarks>
-/// The watchdog's timer is the machine's, because what is under test is that the dispose waits for
-/// that timer's callback, which a fake clock's timer does not model. No test waits for a duration.
-/// The sampler the watchdog calls is the seam: it raises a signal as the first check enters it, and
+/// No test waits for a duration. The watchdog samples on a <see cref="FakeTimeProvider"/>'s timer,
+/// so a check runs only inside <see cref="FakeTimeProvider.Advance"/>, on the thread that advances
+/// it (#765). The sampler, or a handler, is the seam: it raises a signal as the check enters it and
 /// holds that check until the test releases it, so the check is in flight, for certain, while the
-/// dispose runs. The short interval only makes the first check come soon. The warning's interval
-/// runs on a <see cref="FakeTimeProvider"/>, whose timer fires inside
-/// <see cref="FakeTimeProvider.Advance"/>.
+/// dispose runs. A held check holds the advance too, so the test advances on a thread of its own.
+/// The warning's interval runs on a second fake clock, so advancing one never runs the other's timer.
 /// </remarks>
 public sealed class PresenterStallWatchdogTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(500);
 
     [Fact]
     public async Task DisposeAsync_WaitsForACheckInFlight()
     {
         using var sampler = new HeldSampler();
         var watchdog = sampler.Watch();
+        var ticking = OnItsOwnThread(() => sampler.Clock.Advance(Interval));
         await sampler.Entered.WaitAsync(Bound);
 
         var disposing = watchdog.DisposeAsync().AsTask();
@@ -41,7 +42,12 @@ public sealed class PresenterStallWatchdogTests
 
         sampler.Release();
         await disposing.WaitAsync(Bound);
+        await ticking.WaitAsync(Bound);
         Assert.Equal(0, sampler.InFlight);
+
+        // Stopped, the watchdog samples no more.
+        sampler.Clock.Advance(Interval);
+        Assert.Equal(1, sampler.Calls);
     }
 
     [Fact]
@@ -49,6 +55,7 @@ public sealed class PresenterStallWatchdogTests
     {
         using var sampler = new HeldSampler();
         var watchdog = sampler.Watch();
+        var ticking = OnItsOwnThread(() => sampler.Clock.Advance(Interval));
         await sampler.Entered.WaitAsync(Bound);
 
         var first = watchdog.DisposeAsync().AsTask();
@@ -59,6 +66,7 @@ public sealed class PresenterStallWatchdogTests
         sampler.Release();
         await first.WaitAsync(Bound);
         await second.WaitAsync(Bound);
+        await ticking.WaitAsync(Bound);
         Assert.Equal(0, sampler.InFlight);
     }
 
@@ -67,6 +75,7 @@ public sealed class PresenterStallWatchdogTests
     {
         using var sampler = new HeldSampler();
         var watchdog = sampler.Watch();
+        var ticking = OnItsOwnThread(() => sampler.Clock.Advance(Interval));
         await sampler.Entered.WaitAsync(Bound);
 
         watchdog.Dispose(); // returns with the check still held
@@ -76,13 +85,15 @@ public sealed class PresenterStallWatchdogTests
 
         sampler.Release();
         await disposing.WaitAsync(Bound);
+        await ticking.WaitAsync(Bound);
         Assert.Equal(0, sampler.InFlight);
     }
 
     [Fact]
     public async Task AStopHeldByAStalledHandler_NamesTheHandlerOnce()
     {
-        var time = new FakeTimeProvider();
+        var ticks = new FakeTimeProvider();
+        var warnings = new FakeTimeProvider();
         var log = new WarningLog();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -97,10 +108,11 @@ public sealed class PresenterStallWatchdogTests
                 return new PresenterSample(n * Stopwatch.Frequency * 10, 1, 1, n, 0);
             },
             log,
-            interval: TimeSpan.FromMilliseconds(1)
+            ticks,
+            interval: Interval
         )
         {
-            WarningTime = time,
+            WarningTime = warnings,
         };
         void HoldTheStall(PresenterStallInfo _)
         {
@@ -113,10 +125,12 @@ public sealed class PresenterStallWatchdogTests
 
         try
         {
+            // Three checks: the third raises the stall, and its handler holds the advance.
+            var ticking = OnItsOwnThread(() => ticks.Advance(Interval * 3));
             await entered.Task.WaitAsync(Bound);
 
             var disposing = watchdog.DisposeAsync().AsTask();
-            time.Advance(SlowWorkWarning.DefaultInterval);
+            warnings.Advance(SlowWorkWarning.DefaultInterval);
 
             Assert.Single(
                 log.Warnings,
@@ -126,8 +140,10 @@ public sealed class PresenterStallWatchdogTests
 
             released.TrySetResult();
             await disposing.WaitAsync(Bound);
-            time.Advance(SlowWorkWarning.DefaultInterval);
+            await ticking.WaitAsync(Bound);
+            warnings.Advance(SlowWorkWarning.DefaultInterval);
             Assert.Single(log.Warnings);
+            Assert.Equal(3, Interlocked.Read(ref samples));
         }
         finally
         {
@@ -135,6 +151,10 @@ public sealed class PresenterStallWatchdogTests
             watchdog.Dispose();
         }
     }
+
+    // Runs work on a thread of its own, not the pool's, so a check it holds holds no pool thread.
+    private static Task OnItsOwnThread(Action work) =>
+        Task.Factory.StartNew(work, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
     /// <summary>Keeps the messages logged at Warning.</summary>
     private sealed class WarningLog : ILogger
@@ -171,8 +191,8 @@ public sealed class PresenterStallWatchdogTests
     }
 
     /// <summary>
-    /// The watchdog's sampler. Holds the first check until <see cref="Release"/>; a later one, which
-    /// the timer may start beside it, returns at once.
+    /// The watchdog's sampler, on the fake clock <see cref="Clock"/>. Holds the first check until
+    /// <see cref="Release"/>; a later one returns at once.
     /// </summary>
     private sealed class HeldSampler : IDisposable
     {
@@ -182,14 +202,20 @@ public sealed class PresenterStallWatchdogTests
         private int _calls;
         private int _inFlight;
 
+        /// <summary>Runs a check each time it is advanced past an interval.</summary>
+        public FakeTimeProvider Clock { get; } = new();
+
         /// <summary>Completes once the first check is in the sampler.</summary>
         public Task Entered => _entered.Task;
 
         /// <summary>How many checks are in the sampler now.</summary>
         public int InFlight => Volatile.Read(ref _inFlight);
 
+        /// <summary>How many checks have entered the sampler.</summary>
+        public int Calls => Volatile.Read(ref _calls);
+
         public PresenterStallWatchdog Watch() =>
-            _watchdog = new PresenterStallWatchdog(Sample, NullLogger.Instance, interval: TimeSpan.FromMilliseconds(1));
+            _watchdog = new PresenterStallWatchdog(Sample, NullLogger.Instance, Clock, interval: Interval);
 
         public void Release() => _released.TrySetResult();
 
