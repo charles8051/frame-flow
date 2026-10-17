@@ -177,6 +177,14 @@ jobs:
         # only needs the host runner's RID.
         run: dotnet run scripts/fetch-ffmpeg.cs
 
+      # Every test that opens a media file skips without the corpus, so both legs
+      # generate it, as build.yml's legs do (#737). Without it, linux-arm64, which
+      # only this job tests, ran none of them. --allow-unavailable because the
+      # pinned FFmpeg is an LGPL build with no libx264, which two fixtures need;
+      # the tests that use them skip.
+      - name: Generate test corpus
+        run: dotnet run scripts/generate-test-corpus.cs -- --allow-unavailable
+
       - name: Build
         run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
 
@@ -189,6 +197,38 @@ jobs:
         # v0.1.0 first cut hung at 15+ min on the Test step with no
         # visibility into which test was stuck.
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      # The corpus tests skip without FFmpeg or the corpus, so a leg that lost
+      # either would stay green having run none of them, and the release would
+      # ship on it. This fails it unless a corpus test class passed in full in
+      # each project that holds most of them. The classes and counts are
+      # build.yml's; change them in both.
+      #
+      # PowerShell, because it reads the TRX on both hosts: the hosted Arm image
+      # ships it, and the self-hosted Windows box need not have bash.
+      - name: Check the corpus tests ran
+        shell: pwsh
+        run: |
+          $failed = $false
+          $checks = @(
+            @{ Project = 'Decoding'; Class = 'DemuxSessionIntegrationTests'; Count = 24 },
+            @{ Project = 'Player'; Class = 'MediaPassIntegrationTests'; Count = 14 },
+            @{ Project = 'Integration'; Class = 'VideoFormatAnnouncementTests'; Count = 3 }
+          )
+          foreach ($check in $checks) {
+            $trx = "tests/FrameFlow.$($check.Project).Tests/TestResults/test-${{ matrix.os }}.trx"
+            $prefix = "FrameFlow.$($check.Project).Tests.$($check.Class)."
+            $passed = 0
+            if (Test-Path $trx) {
+              $passed = @(([xml](Get-Content -Raw $trx)).TestRun.Results.UnitTestResult |
+                Where-Object { $_.testName.StartsWith($prefix) -and $_.outcome -eq 'Passed' }).Count
+            }
+            if ($passed -lt $check.Count) {
+              "::error::$($check.Class) passed $passed of its $($check.Count) tests: the corpus tests did not run."
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
       # The packages carry each platform's natives, so a consumer on linux-arm64 gets
       # files no other leg checks. See build.yml and scripts/package-smoke.cs.
