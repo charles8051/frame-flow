@@ -33,11 +33,12 @@ namespace FrameFlow.Avalonia.Windows;
 /// <remarks>
 /// <para>
 /// Pairs with <see cref="CompositionInteropVideoSink"/>: the sink holds the latest incoming
-/// frame and signals its arrival; this control then presents it on the UI thread. Use
+/// frame and signals its arrival; this control converts it on the thread pool and hands the result
+/// to the compositor on the UI thread (#781). Use
 /// <see cref="EnsureSink"/> to get the <see cref="IVideoSink"/> to hand to the player.
 /// </para>
 /// <para>
-/// Windows / D3D11 only. Latest-frame-wins, converted on the UI thread with a pixel shader
+/// Windows / D3D11 only. Latest-frame-wins, converted off the UI thread with a pixel shader
 /// (ADR-0063), or through the video processor while <see cref="DriverSuperResolution"/> engages
 /// (#560). NV12 and P010 frames are converted on either path (#559); HDR is not (#548).
 /// Device-lost handling and ordered imported-image teardown are implemented (investigation
@@ -238,6 +239,16 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     // reset on Initialize and when an attachment starts presenting, so a window cannot span a
     // detach.
     private readonly PresenterTickMeter _tickMeter = new(Stopwatch.Frequency);
+
+    // The present whose conversion runs on the thread pool, from the UI thread's decisions to its
+    // hand-off to the compositor (#781). At most one per view: a frame that arrives meanwhile waits
+    // in the sink, which keeps the newest, and nothing on the UI thread touches the producers until
+    // it has run. UI thread only.
+    private ConvertJob? _converting;
+    private bool _redrawAfterConvert;
+
+    // How long the last conversion took, in Stopwatch ticks; -1 before the first. Read from any thread.
+    private long _lastConvertTicks = -1;
 
     // Present-stall watchdog (investigation 2026-06-12 §9). _lastBltStartedTicks is stamped before
     // each VideoProcessorBlt, so a hung Blt leaves it stale; the watchdog samples it off the UI thread.
@@ -450,6 +461,14 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// <c>BuildSinkDiagnostics</c>.
     /// </remarks>
     public int FramesDropped => Volatile.Read(ref _framesDropped);
+
+    /// <summary>
+    /// How long the view's last frame took to convert into its ring, off the UI thread: the copy out
+    /// of the decoder's texture and the shader pass, or the upload of a CPU frame (#781). Null before
+    /// the first. The <c>frameflow.presenter.convert_duration_ms</c> histogram records every one.
+    /// </summary>
+    public TimeSpan? LastConvertDuration =>
+        Volatile.Read(ref _lastConvertTicks) is var ticks and >= 0 ? Stopwatch.GetElapsedTime(0, ticks) : null;
 
     /// <summary>
     /// Asks the GPU driver to upscale the video with its learned model, NVIDIA's RTX Video Super
@@ -1124,6 +1143,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         if (!_lifecycle.Presents || _interop is null || _surface is null)
             return;
 
+        // A conversion in flight presents first; its completion sweeps the sink again (#781).
+        if (_converting is not null)
+            return;
+
         var entered = Stopwatch.GetTimestamp();
         IVideoFrame? frame = null;
         try
@@ -1539,6 +1562,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     private void RedrawLastPresented()
     {
         _redrawPosted = false;
+        if (_converting is not null)
+        {
+            _redrawAfterConvert = true;
+            return;
+        }
         if (!_lifecycle.Presents || _interop is null || _surface is null || _sink is { HasPendingFrame: true })
             return;
         if (RingConverter is not { } converter || _lastPresented is not GpuVideoFrame frame)
@@ -1565,14 +1593,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     // ── Per-frame present (UI thread, from the render tick) ────────
-    // Takes ownership of the frame. One drawn into the ring is kept as the frame presented last, and
-    // releases the one kept before, even if its import or hand-off then fails: on D3D12VA the
-    // converter's draw holds it from there, so the frame kept stays one of the draws and the sink's
-    // MaxHeldFrames holds. One that was dropped before the draw, or could not be presented, is
-    // disposed, and the frame kept before stays.
+    // Takes ownership of the frame. The decisions run here, on the UI thread; the conversion into the
+    // ring runs on the thread pool, and its completion hands the slot to the compositor (#781). One
+    // drawn into the ring is kept as the frame presented last, and releases the one kept before, even
+    // if its import or hand-off then fails: on D3D12VA the converter's draw holds it from there, so
+    // the frame kept stays one of the draws and the sink's MaxHeldFrames holds. One that was dropped
+    // before the draw, or could not be presented, is disposed, and the frame kept before stays.
     private void Present(IVideoFrame frame)
     {
-        var filled = false;
+        ConvertJob? job = null;
         try
         {
             if (_interop is null || _surface is null)
@@ -1654,15 +1683,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                 }
                 EnsureConverterOutput(frame, texture, device);
                 FitRingToView(_gpuConverter!, frame);
+                var converter = _gpuConverter!;
                 PresentRing(
-                    ref filled,
+                    ref job,
+                    frame,
                     PresentSource.D3D11,
                     frame.Width,
                     frame.Height,
-                    _gpuConverter!.Output.Width,
-                    _gpuConverter.Output.Height,
-                    _gpuConverter.GetSharedHandle,
-                    i => _gpuConverter.ConvertInto(i, texture, slice),
+                    converter.Output.Width,
+                    converter.Output.Height,
+                    converter.GetSharedHandle,
+                    i => converter.ConvertInto(i, texture, slice),
                     frame.Pts,
                     frame.Timeline
                 );
@@ -1670,7 +1701,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
             else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
             {
                 ReportUnsupportedFrames();
-                PresentD3D12(d3d12, d3d12Texture, ref filled);
+                PresentD3D12(d3d12, d3d12Texture, ref job);
             }
             else if (frame.Format == FrameFlow.Media.PixelFormat.Bgra32 && frame.AsCpu() is { } cpu)
             {
@@ -1679,15 +1710,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                     DropCpuUploader();
                 ReportUnsupportedFrames();
                 _cpuUploader ??= new D3D11BgraUploader(frame.Width, frame.Height, _logger);
+                var uploader = _cpuUploader;
                 PresentRing(
-                    ref filled,
+                    ref job,
+                    frame,
                     PresentSource.Cpu,
                     frame.Width,
                     frame.Height,
                     frame.Width,
                     frame.Height,
-                    _cpuUploader.GetSharedHandle,
-                    i => _cpuUploader.UploadInto(i, cpu),
+                    uploader.GetSharedHandle,
+                    i => uploader.UploadInto(i, cpu),
                     frame.Pts,
                     frame.Timeline
                 );
@@ -1704,23 +1737,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         }
         catch (Exception ex)
         {
-            if (!_warnedPresentFailure)
-            {
-                _warnedPresentFailure = true;
-                _logger.LogWarning(
-                    ex,
-                    "Present failed after {Frames} frame(s); suppressing further per-frame errors.",
-                    Volatile.Read(ref _framesPresented)
-                );
-            }
+            WarnPresentFailure(ex);
+            job = null;
         }
         finally
         {
-            if (filled)
-                KeepPresented(frame);
-            else
+            if (job is null)
                 frame.Dispose();
         }
+
+        if (job is not null)
+            StartConvert(job);
+    }
+
+    private void WarnPresentFailure(Exception ex)
+    {
+        if (_warnedPresentFailure)
+            return;
+        _warnedPresentFailure = true;
+        _logger.LogWarning(
+            ex,
+            "Present failed after {Frames} frame(s); suppressing further per-frame errors.",
+            Volatile.Read(ref _framesPresented)
+        );
     }
 
     /// <summary>
@@ -1847,7 +1886,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// change is rare enough that an in-place rebind is not worth its code. A frame of another size
     /// rebuilds it too; the view's own size changes resize its ring in place (#774).
     /// </summary>
-    private void PresentD3D12(GpuVideoFrame frame, nint texture, ref bool filled)
+    private void PresentD3D12(GpuVideoFrame frame, nint texture, ref ConvertJob? job)
     {
         if (_gpuConverter is not null)
             DropGpuConverter(GpuConverterDropReason.BackendChange);
@@ -1884,7 +1923,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         var converter = _d3d12Converter;
         FitRingToView(converter, frame);
         PresentRing(
-            ref filled,
+            ref job,
+            frame,
             PresentSource.D3D12,
             frame.Width,
             frame.Height,
@@ -1938,26 +1978,23 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     /// <summary>
-    /// Shared compositor present: pick a ring buffer whose previous present has completed,
-    /// fill it (<paramref name="fill"/> does the GPU Blt or CPU upload, including the
-    /// keyed-mutex bracket), import it, and hand it to the surface.
-    /// <paramref name="getSharedHandle"/> + <paramref name="fill"/> abstract over the GPU
-    /// vs CPU source — both produce the same shared keyed-mutex BGRA textures, so the
-    /// present + sequencing logic is identical. <paramref name="fill"/> returns
-    /// <see langword="false"/> on GPU device-loss, in which case this present is skipped and
-    /// the source is rebuilt on the next frame (step 6). Sets <paramref name="filled"/> once the
-    /// frame has been drawn into the ring, before the import and the hand-off, which may still fail;
-    /// it stays <see langword="false"/> when the frame is dropped or the fill skipped.
+    /// Shared compositor present: pick a ring buffer whose previous present has completed and name
+    /// the conversion that fills it, which <see cref="StartConvert"/> runs off the UI thread
+    /// (#781). <paramref name="fill"/> does the GPU convert or the CPU upload, including the
+    /// keyed-mutex bracket. <paramref name="getSharedHandle"/> + <paramref name="fill"/> abstract over
+    /// the GPU vs CPU source — both produce the same shared keyed-mutex BGRA textures, so the present
+    /// + sequencing logic is identical. Sets <paramref name="job"/> to the conversion for
+    /// <paramref name="frame"/>; it stays <see langword="null"/> when the frame is dropped.
     /// </summary>
     /// <remarks>
     /// The per-frame DECISION — which free slot, source-flip re-import, size-change layout update,
     /// or drop — is the pure <see cref="PresentPlanner.Advance"/>. This method is the imperative
-    /// shell that performs the decision against the live D3D / compositor handles: it owns the
-    /// keyed-mutex hand-off, the <see cref="Stopwatch.GetTimestamp"/> Blt stamp, import, and the
-    /// present-task bookkeeping.
+    /// shell that performs the decision against the live D3D / compositor handles on the UI thread;
+    /// <see cref="HandOff"/> does the import and the present-task bookkeeping once the slot is filled.
     /// </remarks>
     private void PresentRing(
-        ref bool filled,
+        ref ConvertJob? job,
+        IVideoFrame frame,
         PresentSource source,
         int width,
         int height,
@@ -2008,29 +2045,178 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
             Interlocked.Increment(ref _framesDropped);
             return;
         }
-        var idx = plan.SlotIndex;
 
-        // Stamp "a Blt is about to start" for the stall watchdog: if fill() (the VideoProcessorBlt)
-        // hangs in the GPU driver, this timestamp goes stale while the sink keeps accepting frames —
-        // the watchdog's stall signature (investigation 2026-06-12 §9).
-        Volatile.Write(ref _lastBltStartedTicks, Stopwatch.GetTimestamp());
+        // The sink this frame belongs to, and the binding it is presented under, captured now
+        // rather than read when the hand-off completes: the Sink setter can swap in a
+        // replacement while a present is still in flight, and the successor must not be told it
+        // presented a frame it never saw. Same rule the diagnostics attachment follows, where a
+        // replaced sink keeps reporting its own window.
+        // A redraw of the frame presented last for a new layout (#767) is not that frame's present.
+        job = new ConvertJob(
+            frame,
+            plan.SlotIndex,
+            source,
+            ringWidth,
+            ringHeight,
+            getSharedHandle,
+            fill,
+            pts,
+            timeline,
+            _redrawing ? null : _sink,
+            _lifecycle.Binding
+        );
+    }
 
-        // Device-loss observed mid-fill: skip this present. The source has flagged itself
-        // IsDeviceLost; the next Present() drops + rebuilds it (and its imported ring).
-        if (!fill(idx))
+    /// <summary>
+    /// Runs <paramref name="job"/>'s conversion on the thread pool and has its completion hand the
+    /// slot to the compositor on the UI thread (#781). UI thread. Until the completion runs, the UI
+    /// thread starts no other present and no redraw, so nothing it does touches the producer the
+    /// conversion fills: the converters, their devices' immediate contexts and the ring are used by
+    /// one thread at a time.
+    /// </summary>
+    private void StartConvert(ConvertJob job)
+    {
+        _converting = job;
+        job.Run = Task.Run(() => job.Execute(this));
+        job.Run.ContinueWith(
+            static (_, state) =>
+            {
+                var (view, done) = ((CompositionInteropVideoView, ConvertJob))state!;
+                view.PostCompletion(done);
+            },
+            (this, job),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+    }
+
+    /// <summary>
+    /// Starts a conversion of <paramref name="frame"/> into ring slot 0 with <paramref name="fill"/>,
+    /// as a present does once it has decided. Returns a task that completes once the conversion's
+    /// completion has run on the UI thread. For tests: the headless backend has no GPU interop, so no
+    /// present gets this far, and the completion hands nothing off.
+    /// </summary>
+    internal Task ConvertForTest(IVideoFrame frame, Func<int, bool> fill)
+    {
+        var job = new ConvertJob(
+            frame, 0, PresentSource.Cpu, frame.Width, frame.Height, _ => nint.Zero, fill, frame.Pts, frame.Timeline, _sink, _lifecycle.Binding)
+        {
+            Completed = new(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        StartConvert(job);
+        return job.Completed.Task;
+    }
+
+    private void PostCompletion(ConvertJob job)
+    {
+        try
+        {
+            Dispatcher.UIThread.Post(() => CompleteConvert(job), DispatcherPriority.Render);
+        }
+        catch
+        {
+            // A dispatcher shutting down: nothing hands the slot off, and the view presents no more.
+            job.Frame.Dispose();
+            job.Completed?.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// A conversion has run. Hands its slot to the compositor when it filled it, keeps or disposes
+    /// its frame, and takes up what waited for it: a redraw, and a frame the sink holds. UI thread.
+    /// </summary>
+    private void CompleteConvert(ConvertJob job)
+    {
+        try
+        {
+            CompleteConvertCore(job);
+        }
+        finally
+        {
+            job.Completed?.TrySetResult();
+        }
+    }
+
+    private void CompleteConvertCore(ConvertJob job)
+    {
+        // Every conversion is timed, one a teardown took included.
+        Volatile.Write(ref _lastConvertTicks, job.ElapsedTicks);
+        PresenterTeardownMetrics.RecordConvert(job.ElapsedTicks, SourceTag(job.Source));
+
+        // A teardown took the conversion: the ring it filled is going, and its frame was kept as
+        // the one presented last before the sink took it back.
+        if (!ReferenceEquals(_converting, job))
+        {
+            job.Frame.Dispose();
             return;
-        filled = true;
+        }
+        _converting = null;
 
-        _imported[idx] ??= _interop!.ImportImage(
+        var kept = false;
+        try
+        {
+            if (job.Error is { } error)
+            {
+                WarnPresentFailure(error);
+            }
+            else if (job.Filled)
+            {
+                // Drawn into the ring: kept as the frame presented last even if the hand-off fails.
+                kept = true;
+                HandOff(job);
+            }
+            // Otherwise device loss was observed mid-fill: this present is skipped. The source has
+            // flagged itself IsDeviceLost; the next Present() drops + rebuilds it (and its ring).
+        }
+        catch (Exception ex)
+        {
+            WarnPresentFailure(ex);
+        }
+        finally
+        {
+            if (kept)
+                KeepPresented(job.Frame);
+            else
+                job.Frame.Dispose();
+
+            if (_redrawAfterConvert)
+            {
+                _redrawAfterConvert = false;
+                RedrawForLayout();
+            }
+            SchedulePresentIfPending();
+        }
+    }
+
+    private static string SourceTag(PresentSource source) =>
+        source switch
+        {
+            PresentSource.Cpu => "cpu",
+            PresentSource.D3D11 => "d3d11",
+            _ => "d3d12",
+        };
+
+    /// <summary>
+    /// Imports the slot <paramref name="job"/> filled, if it is not yet, and hands it to the surface.
+    /// UI thread: every compositor call here is thread-affine.
+    /// </summary>
+    private void HandOff(ConvertJob job)
+    {
+        if (_interop is null || _surface is null)
+            return;
+
+        var idx = job.Slot;
+        _imported[idx] ??= _interop.ImportImage(
             new PlatformHandle(
-                getSharedHandle(idx),
+                job.GetSharedHandle(idx),
                 KnownPlatformGraphicsExternalImageHandleTypes.D3D11TextureGlobalSharedHandle
             ),
             new PlatformGraphicsExternalImageProperties
             {
                 // The ring's size, which is the frame's except while the driver upscales (#560).
-                Width = ringWidth,
-                Height = ringHeight,
+                Width = job.RingWidth,
+                Height = job.RingHeight,
                 Format = PlatformGraphicsExternalImageFormat.B8G8R8A8UNorm,
                 // Our D3D11 textures are top-left origin (row 0 = top), like every D3D
                 // surface. Avalonia defaults this flag to false (bottom-left / GL
@@ -2043,22 +2229,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
             }
         );
 
-        var presentTask = _surface!.UpdateWithKeyedMutexAsync(_imported[idx]!, 1, 0);
+        var presentTask = _surface.UpdateWithKeyedMutexAsync(_imported[idx]!, 1, 0);
         TrackHandOff(idx, presentTask);
 
         // Count the COMMIT when the hand-off completes (ADR-0064 §Observability). Only RanToCompletion
         // bumps the committed counter — a faulted/cancelled present did not reach the screen.
         // Fire-and-forget off the UI thread; the drain/availability logic keys off the
         // original task (presentTask) so this continuation does not perturb sequencing.
-        // The sink this frame belongs to, and the binding it is presented under, captured now
-        // rather than read when the hand-off completes: the Sink setter can swap in a
-        // replacement while a present is still in flight, and the successor must not be told it
-        // presented a frame it never saw. Same rule the diagnostics attachment follows, where a
-        // replaced sink keeps reporting its own window.
-        // A redraw of the frame presented last for a new layout (#767) is not that frame's present.
-        var presentingSink = _redrawing ? null : _sink;
-        var binding = _lifecycle.Binding;
-
         presentTask.ContinueWith(
             static (_, state) =>
             {
@@ -2066,7 +2243,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                     ((CompositionInteropVideoView, CompositionInteropVideoSink?, long, TimeSpan, TimelineId))state!;
                 self.OnPresentCommitted(sink, binding, framePts, frameTimeline);
             },
-            (this, presentingSink, binding, pts, timeline),
+            (this, job.PresentingSink, job.Binding, job.Pts, job.Timeline),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default
@@ -2076,9 +2253,85 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         // Stamp the presented frame's PTS + wallclock for the sink's diagnostics
         // snapshot (A/V drift). Single writer (this UI-thread present loop);
         // GetDiagnostics reads via Volatile from any thread.
-        Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
+        Volatile.Write(ref _lastPresentedPtsTicks, job.Pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
-        LogProgress(source);
+        LogProgress(job.Source);
+    }
+
+    /// <summary>
+    /// One frame's conversion into ring slot <see cref="Slot"/>, run on the thread pool, and what the
+    /// UI thread needs to hand the slot to the compositor once it has run (#781). It holds its own
+    /// reference to the frame until the UI thread keeps or disposes it.
+    /// </summary>
+    private sealed class ConvertJob(
+        IVideoFrame frame,
+        int slot,
+        PresentSource source,
+        int ringWidth,
+        int ringHeight,
+        Func<int, nint> getSharedHandle,
+        Func<int, bool> fill,
+        TimeSpan pts,
+        TimelineId timeline,
+        CompositionInteropVideoSink? presentingSink,
+        long binding
+    )
+    {
+        public IVideoFrame Frame { get; } = frame;
+
+        public int Slot { get; } = slot;
+
+        public PresentSource Source { get; } = source;
+
+        public int RingWidth { get; } = ringWidth;
+
+        public int RingHeight { get; } = ringHeight;
+
+        public Func<int, nint> GetSharedHandle { get; } = getSharedHandle;
+
+        public TimeSpan Pts { get; } = pts;
+
+        public TimelineId Timeline { get; } = timeline;
+
+        /// <summary>The sink told the frame was presented, or null for a redraw (#767).</summary>
+        public CompositionInteropVideoSink? PresentingSink { get; } = presentingSink;
+
+        public long Binding { get; } = binding;
+
+        /// <summary>The conversion's run. Never faults: what the fill threw is <see cref="Error"/>.</summary>
+        public Task Run { get; set; } = Task.CompletedTask;
+
+        /// <summary>
+        /// Completes once the UI thread has run the conversion's completion, whichever way it ended.
+        /// Only a test's conversion has one.
+        /// </summary>
+        public TaskCompletionSource? Completed { get; init; }
+
+        /// <summary>Whether the frame was drawn into the slot; false when device loss was observed.</summary>
+        public bool Filled { get; private set; }
+
+        public Exception? Error { get; private set; }
+
+        public long ElapsedTicks { get; private set; }
+
+        /// <summary>Fills the slot. Read once <see cref="Run"/> has completed.</summary>
+        public void Execute(CompositionInteropVideoView view)
+        {
+            // Stamp "a Blt is about to start" for the stall watchdog: if fill() (the VideoProcessorBlt)
+            // hangs in the GPU driver, this timestamp goes stale while the sink keeps accepting frames —
+            // the watchdog's stall signature (investigation 2026-06-12 §9).
+            var started = Stopwatch.GetTimestamp();
+            Volatile.Write(ref view._lastBltStartedTicks, started);
+            try
+            {
+                Filled = fill(Slot);
+            }
+            catch (Exception ex)
+            {
+                Error = ex;
+            }
+            ElapsedTicks = Stopwatch.GetTimestamp() - started;
+        }
     }
 
     /// <summary>
@@ -2279,6 +2532,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         var presentSnapshot = (Task?[])_presentTasks.Clone();
         Array.Clear(_presentTasks);
 
+        // A conversion in flight writes into this attachment's ring: the producers wait for it as
+        // they wait for the presents (#781). Its frame is the newest the view took, so it is kept as
+        // the one presented last, which the sink takes back. Its completion presents nothing.
+        var converting = _converting;
+        _converting = null;
+        _redrawAfterConvert = false;
+        if (converting is not null)
+            KeepPresented(converting.Frame.AddRef());
+
         var importedDisposal = DisposeImportedAsync();
 
         try { _surface?.Dispose(); }
@@ -2325,7 +2587,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         // to make progress, so wait on them together under one bounded timeout, with the rings
         // this attachment detached earlier.
         var presentDrain = DrainPresentsAsync(presentSnapshot);
-        var gating = Task.WhenAll(importedDisposal, presentDrain, ringsReleased);
+        var gating = Task.WhenAll(importedDisposal, presentDrain, ringsReleased, converting?.Run ?? Task.CompletedTask);
         return FinishTeardownAsync(
             gating, retirements, watchdogStopped, teardownStart, _logger, producersDisposed, converter, d3d12Converter, uploader);
     }
