@@ -96,6 +96,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly HardwareDevice? _hardwareDevice;
     private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
     private readonly IReadOnlyList<string> _excludedCodecs;
+    private int _decoderThreads;
 
     // The master pacing clock (IClockSource consumed by the pacer). Selected per item at the open,
     // once the stream probe reveals whether THIS item actually has a decodable audio stream the
@@ -209,6 +210,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     internal bool Detached
     {
         init => _detached = value;
+    }
+
+    /// <summary>How many threads the item's video decoder uses in software (#788). 0 chooses.</summary>
+    internal int DecoderThreads
+    {
+        init => _decoderThreads = value;
     }
 
     public SubstrateSession(
@@ -1094,6 +1101,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             HardwareDevice = _hardwareDevice,
             PreferredBackends = _preferredBackends,
             ExcludedCodecs = _excludedCodecs,
+            DecoderThreads = _decoderThreads,
             DeviceCache = DeviceCache,
             VideoConfigurator = _videoConfigurator,
             AudioConfigurator = _audioConfigurator,

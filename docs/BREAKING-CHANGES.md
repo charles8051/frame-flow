@@ -188,6 +188,36 @@ so an uploaded frame reads back as it went in.
 video. A reference captured from a limited-range software decode of a BT.601-tagged stream, or of a
 JPEG, is unchanged.
 
+### 6. A software video decoder uses several threads
+
+**No compile error. CPU use and decode delay change.**
+
+A software video decoder used to open its codec context with FFmpeg's API default of one thread,
+so it decoded on one core (#788). It now uses frame and slice threading where the codec supports
+them, with one thread per logical processor up to 8. On a 1080p60 H.264 clip on a 24-thread
+desktop CPU, decoding to the end went from 3.59 ms to 0.81 ms a frame, on 5.25 cores instead of
+1.01. Hardware decoders are unchanged.
+
+Frame threading holds up to one frame per extra thread in flight. The first frame after an open or
+a seek waits for that many more packets, and each frame in flight holds its picture. The frames
+that come out, and their order, are the same.
+
+`VideoDecoderOptions.DecoderThreads`, `IPlayerBuilder.WithDecoderThreads`,
+`IPassBuilder.WithDecoderThreads` and the new `decoderThreads` parameter of
+`PlaybackController.Create` set the count: 0 chooses, 1 decodes on one thread.
+`VideoDecoderDiagnosticsSnapshot.DecodeThreads` reports the count a decoder runs on.
+
+**Who hits this.**
+- An application that runs several software decoders at once, such as a multi-view wall. Each
+  decoder now starts up to 8 threads.
+- Code that measures CPU use, first-frame time or memory of a software-decoded item.
+- A caller compiled against `PlaybackController.Create`. The parameter is optional, so source
+  compiles unchanged, but the signature changed.
+
+**What to write instead.** To share the cores between many decoders, give each a smaller count:
+`WithDecoderThreads(2)`. For the old behaviour, `WithDecoderThreads(1)` or
+`new VideoDecoderOptions { DecoderThreads = 1 }`.
+
 ## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out

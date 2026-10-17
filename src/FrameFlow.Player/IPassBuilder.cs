@@ -149,6 +149,18 @@ public interface IPassBuilder
     IPassBuilder WithExcludedCodecs(params string[] codecs);
 
     /// <summary>
+    /// How many threads the pass's video decoder uses when it decodes in software. 0, the default,
+    /// chooses from the processor count, up to 8. 1 decodes on one thread.
+    /// </summary>
+    /// <remarks>
+    /// Lower it when several passes or players decode at once and should share the cores. A
+    /// hardware decoder ignores it. More threads hold more frames in flight, so the first frame
+    /// after the start or a seek waits for that many more packets.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="threads"/> is negative.</exception>
+    IPassBuilder WithDecoderThreads(int threads);
+
+    /// <summary>
     /// How much of the video the decoder skips, for the whole pass. Defaults to
     /// <see cref="DecodeDiscardLevel.None"/>, which decodes every frame.
     /// </summary>

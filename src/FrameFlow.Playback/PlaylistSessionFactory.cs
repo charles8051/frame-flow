@@ -73,7 +73,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
-        bool prepareNextItem = false
+        bool prepareNextItem = false,
+        int decoderThreads = 0
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -94,7 +95,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             latenessRecovery,
             hardwareDevice,
             preferredBackends,
-            excludedCodecs
+            excludedCodecs,
+            decoderThreads
         );
     }
 
@@ -116,6 +118,9 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// <summary>The caller's codec exclusions the item factory carries, for the same tests.</summary>
     internal IReadOnlyList<string>? ExcludedCodecs =>
         (_itemFactory as SubstrateSessionFactory)?.ExcludedCodecs;
+
+    /// <summary>The software decoders' thread count the item factory carries, for the same tests (#788).</summary>
+    internal int? DecoderThreads => (_itemFactory as SubstrateSessionFactory)?.DecoderThreads;
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {

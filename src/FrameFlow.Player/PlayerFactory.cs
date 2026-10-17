@@ -39,6 +39,7 @@ internal static class PlayerFactory
         HardwareDevice? hardwareDevice,
         IReadOnlyList<HardwareDecodeBackendKind> preferredBackends,
         IReadOnlyList<string> excludedCodecs,
+        int decoderThreads,
         bool prepareNextItem,
         CancellationToken cancellationToken
     )
@@ -81,6 +82,7 @@ internal static class PlayerFactory
                 hardwareDevice: hardwareDevice,
                 preferredBackends: preferredBackends,
                 excludedCodecs: excludedCodecs,
+                decoderThreads: decoderThreads,
                 prepareNextItem: prepareNextItem,
                 claimant: initial.Count > 0
                     ? $"a player built for '{initial[0].Source.DisplayName}'"

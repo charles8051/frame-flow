@@ -1,3 +1,4 @@
+using FrameFlow.Integration.Tests.Harness.Capture;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Player;
@@ -133,6 +134,22 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
 
         Assert.Equal(RepeatMode.Off, one.GetDiagnostics().RepeatMode);
         Assert.Equal(RepeatMode.Off, many.GetDiagnostics().RepeatMode);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task TheDecoderThreads_ReachTheLoadedItemsDecoder()
+    {
+        // #602: options set on the decoding factories never reached a player. This one goes
+        // through the builder to the decoder the player opened for its first item (#788).
+        await using var player = await FrameFlowPlayer
+            .Create()
+            .WithMedia(SourceOf(Clip))
+            .WithVideoSink(new CapturingVideoSink())
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithDecoderThreads(3)
+            .BuildPlayerAsync();
+
+        Assert.Equal(3, player.GetDiagnostics().Pipeline.Stream.VideoDecoder.DecodeThreads);
     }
 
     private static IMediaSource SourceOf(string clip)

@@ -40,6 +40,7 @@ internal sealed class PassBuilder : IPassBuilder
     private HardwareDevice? _hardwareDevice;
     private HardwareDecodeBackendKind[] _preferredBackends = [];
     private string[] _excludedCodecs = [];
+    private int _decoderThreads;
     private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
     private PassRange _range = PassRange.Whole;
     private AudioDecoderOptions? _audioDecoderOptions;
@@ -112,6 +113,13 @@ internal sealed class PassBuilder : IPassBuilder
         return this;
     }
 
+    public IPassBuilder WithDecoderThreads(int threads)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(threads);
+        _decoderThreads = threads;
+        return this;
+    }
+
     public IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level)
     {
         if (!Enum.IsDefined(level))
@@ -136,24 +144,26 @@ internal sealed class PassBuilder : IPassBuilder
     }
 
     /// <summary>
-    /// The decoder's options: the caller's, the borrowed device, and a pool sized for
-    /// <paramref name="budget"/> unless the caller sized it (#292).
+    /// The decoder's options: the caller's, the borrowed device, a pool sized for
+    /// <paramref name="budget"/> unless the caller sized it (#292), and the software decoder's
+    /// thread count (#788).
     /// </summary>
-    private static VideoDecoderOptions? DecoderOptions(
+    internal static VideoDecoderOptions DecoderOptions(
         VideoDecoderOptions? options,
         HardwareDevice? device,
-        FrameBudget? budget
+        FrameBudget? budget,
+        int decoderThreads
     ) =>
-        device is null && budget is null
-            ? options
-            : new VideoDecoderOptions
-            {
-                PacketQueueCapacity = options?.PacketQueueCapacity,
-                HeldHardwareFrames = options is { HeldHardwareFrames: > 0 }
-                    ? options.HeldHardwareFrames
-                    : budget?.Frames ?? 0,
-                Device = device ?? options?.Device,
-            };
+        new()
+        {
+            PacketQueueCapacity = options?.PacketQueueCapacity,
+            HeldHardwareFrames = options is { HeldHardwareFrames: > 0 }
+                ? options.HeldHardwareFrames
+                : budget?.Frames ?? 0,
+            Device = device ?? options?.Device,
+            DeviceCache = options?.DeviceCache,
+            DecoderThreads = decoderThreads != 0 ? decoderThreads : options?.DecoderThreads ?? 0,
+        };
 
     /// <summary>
     /// Decoder options for <see cref="BuildAsync"/>. Internal: tests shrink the packet queues so a
@@ -368,7 +378,7 @@ internal sealed class PassBuilder : IPassBuilder
                         },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
-                        DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget)
+                        DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget, _decoderThreads)
                     )(demux) as VideoDecoder;
 
                 // Which domain the frames are in depends on the backend the decoder bound: they

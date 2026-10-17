@@ -172,6 +172,7 @@ public sealed partial class VideoDecoder
             );
 
         int heldHardwareFrames = videoOptions?.HeldHardwareFrames ?? 0;
+        int decoderThreads = videoOptions?.DecoderThreads ?? DecoderThreading.Automatic;
 
         int timeBaseNum = stream.TimeBaseNum;
         int timeBaseDen = stream.TimeBaseDen;
@@ -263,7 +264,7 @@ public sealed partial class VideoDecoder
                 LogHwBindFellBack(logger, codecName, attempts.Count);
             }
 
-            codecCtx = OpenSoftwareCodecContext(codec, codecParPtr);
+            codecCtx = OpenSoftwareCodecContext(codec, codecParPtr, decoderThreads);
         }
 
         // Allocate the reusable decode frame + packet.
@@ -314,7 +315,7 @@ public sealed partial class VideoDecoder
 #pragma warning disable CA2000 // Ownership transfers to the decoder via the field assignment below.
         CodecContextHandle? softwareFallback =
             hwBinding is not null && options.Mode == HardwareDecodeMode.Auto
-                ? TryPrepareSoftwareFallback(codec, codecParPtr, logger)
+                ? TryPrepareSoftwareFallback(codec, codecParPtr, decoderThreads, logger)
                 : null;
 #pragma warning restore CA2000
 
@@ -332,6 +333,7 @@ public sealed partial class VideoDecoder
         decoder._containerSampleAspectRatio = stream.SampleAspectRatio;
         decoder._codecSampleAspectRatio = codecPar.SampleAspectRatio;
         decoder._rotation = DisplayGeometry.RotationOf(codecPar.DisplayRotationDegrees);
+        decoder._decodeThreads = DecodeThreadsOf(codecCtx);
 
         if (hwBinding is not null)
         {
@@ -758,9 +760,13 @@ public sealed partial class VideoDecoder
     /// factored so both the software-only entry and the HW fallback can
     /// share it.
     /// </summary>
-    private static CodecContextHandle OpenSoftwareCodecContext(nint codec, nint codecParPtr)
+    private static CodecContextHandle OpenSoftwareCodecContext(
+        nint codec,
+        nint codecParPtr,
+        int decoderThreads
+    )
     {
-        var codecCtx = PrepareSoftwareCodecContext(codec, codecParPtr);
+        var codecCtx = PrepareSoftwareCodecContext(codec, codecParPtr, decoderThreads);
         int ret = FFAvCodec.avcodec_open2(codecCtx.DangerousGetHandle(), codec, nint.Zero);
         if (ret < 0)
         {
@@ -774,9 +780,14 @@ public sealed partial class VideoDecoder
     /// <summary>
     /// Allocates a software codec context and copies the stream's parameters into it, without
     /// opening it. The context holds the parameters (extradata included), so a later
-    /// <c>avcodec_open2</c> needs nothing from the demuxer.
+    /// <c>avcodec_open2</c> needs nothing from the demuxer. Its threading is set here too, as
+    /// <see cref="DecoderThreading"/> decides for a software context (#788).
     /// </summary>
-    private static CodecContextHandle PrepareSoftwareCodecContext(nint codec, nint codecParPtr)
+    private static CodecContextHandle PrepareSoftwareCodecContext(
+        nint codec,
+        nint codecParPtr,
+        int decoderThreads
+    )
     {
         nint ctxPtr = FFAvCodec.avcodec_alloc_context3(codec);
         if (ctxPtr == nint.Zero)
@@ -795,7 +806,38 @@ public sealed partial class VideoDecoder
             );
         }
 
+        if (
+            DecoderThreading.For(
+                hardware: false,
+                ThreadSupportOf(codec),
+                decoderThreads,
+                Environment.ProcessorCount
+            ) is { } threads
+        )
+        {
+            unsafe
+            {
+                ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)ctxPtr);
+                ctx.thread_count = threads.Count;
+                ctx.thread_type = (int)threads.Kinds;
+            }
+        }
+
         return codecCtx;
+    }
+
+    /// <summary>The threading a decoder implementation supports, from its capabilities.</summary>
+    private static unsafe CodecThreadSupport ThreadSupportOf(nint codec)
+    {
+        int caps = ((AVCodec*)codec)->capabilities;
+        var support = CodecThreadSupport.None;
+        if ((caps & ffmpeg.AV_CODEC_CAP_FRAME_THREADS) != 0)
+            support |= CodecThreadSupport.Frame;
+        if ((caps & ffmpeg.AV_CODEC_CAP_SLICE_THREADS) != 0)
+            support |= CodecThreadSupport.Slice;
+        if ((caps & ffmpeg.AV_CODEC_CAP_OTHER_THREADS) != 0)
+            support |= CodecThreadSupport.Other;
+        return support;
     }
 
     /// <summary>
@@ -807,12 +849,13 @@ public sealed partial class VideoDecoder
     private static CodecContextHandle? TryPrepareSoftwareFallback(
         nint codec,
         nint codecParPtr,
+        int decoderThreads,
         ILogger logger
     )
     {
         try
         {
-            return PrepareSoftwareCodecContext(codec, codecParPtr);
+            return PrepareSoftwareCodecContext(codec, codecParPtr, decoderThreads);
         }
         catch (InvalidOperationException ex)
         {
@@ -866,6 +909,7 @@ public sealed partial class VideoDecoder
 
         _codecCtx.Dispose();
         _codecCtx = fallback;
+        Volatile.Write(ref _decodeThreads, DecodeThreadsOf(fallback));
 
         _swFrame?.Dispose();
         _swFrame = null;

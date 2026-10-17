@@ -36,6 +36,22 @@ public sealed class PassBuilderTests
     }
 
     [Fact]
+    public void WithDecoderThreads_Negative_Throws()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() => builder.WithDecoderThreads(-1));
+    }
+
+    [Fact]
+    public void WithDecoderThreads_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+
+        Assert.Same(builder, builder.WithDecoderThreads(0));
+        Assert.Same(builder, builder.WithDecoderThreads(4));
+    }
+
+    [Fact]
     public void WithExcludedCodecs_ReturnsSameBuilderForChaining()
     {
         var builder = FrameFlowPass.Create("any.mp4");

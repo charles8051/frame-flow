@@ -39,6 +39,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private HardwareDevice? _hardwareDevice;
     private HardwareDecodeBackendKind[] _preferredBackends = [];
     private string[] _excludedCodecs = [];
+    private int _decoderThreads;
     private bool _activateAudioSink = true;
     private bool _prepareNextItem;
 
@@ -178,6 +179,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithDecoderThreads(int threads)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(threads);
+        _decoderThreads = threads;
+        return this;
+    }
+
     public IPlayerBuilder WithNextItemPrepared(bool prepare = true)
     {
         _prepareNextItem = prepare;
@@ -242,6 +250,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             hardwareDevice: _hardwareDevice,
             preferredBackends: _preferredBackends,
             excludedCodecs: _excludedCodecs,
+            decoderThreads: _decoderThreads,
             prepareNextItem: _prepareNextItem,
             cancellationToken: cancellationToken
         );
