@@ -11,7 +11,7 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased — since `v0.16.0`
+## `v0.17.0` — since `v0.16.0`
 
 ### 1. A playlist whose every item fails to start ends, and `Error` can be left
 
