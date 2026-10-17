@@ -284,6 +284,14 @@ internal abstract record ItemRuntimeAction
     /// <summary>Seat the shared clocks where the runtime was positioned while it was detached.</summary>
     public sealed record AttachClocks : ItemRuntimeAction;
 
+    /// <summary>
+    /// The dispose has let go of everything the runtime shares with the playlist: its pacer is
+    /// freed, so nothing more reaches the video sink, its audio is deactivated, and an attached
+    /// runtime's position clock is stopped. What the dispose frees after this is the runtime's own
+    /// (#780).
+    /// </summary>
+    public sealed record ReleaseShared : ItemRuntimeAction;
+
     /// <summary>Free <paramref name="Resource"/>: one flag.</summary>
     public sealed record Free(ItemResources Resource) : ItemRuntimeAction;
 

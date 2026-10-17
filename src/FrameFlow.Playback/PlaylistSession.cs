@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using FrameFlow.Media;
@@ -628,7 +629,35 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
     }
 
+    // Times each awaited step for the stage split of a switch (#780).
     private async ValueTask<PlaylistSessionInput.Outcome> PerformAsync(PlaylistSessionAction action)
+    {
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await PerformStepAsync(action).ConfigureAwait(false);
+        }
+        finally
+        {
+            PlaylistStageMetrics.Record(StepName(action), started);
+        }
+    }
+
+    internal static string StepName(PlaylistSessionAction action) =>
+        action switch
+        {
+            PlaylistSessionAction.OpenItem => "open",
+            PlaylistSessionAction.WarmUpItem => "warm_up",
+            PlaylistSessionAction.PlayItem => "play",
+            PlaylistSessionAction.PauseItem => "pause",
+            PlaylistSessionAction.SeekItem => "seek",
+            PlaylistSessionAction.RewindItem => "rewind",
+            PlaylistSessionAction.PromotePrepared => "promote",
+            PlaylistSessionAction.DisposeItem => "dispose",
+            _ => "other",
+        };
+
+    private async ValueTask<PlaylistSessionInput.Outcome> PerformStepAsync(PlaylistSessionAction action)
     {
         switch (action)
         {
@@ -678,13 +707,15 @@ internal sealed class PlaylistSession : IPlaybackSession
                 _runtime = null;
                 if (runtime is not null)
                 {
-                    try
+                    // The next item goes on once this one has let go of what they share. The rest
+                    // of its dispose, which frees its decoders and demuxer, runs on and is awaited
+                    // with the prepared runtimes' disposals at the session's own (#780).
+                    var disposing = DisposeQuietlyAsync(runtime);
+                    await Task.WhenAny(runtime.SharedReleased, disposing).ConfigureAwait(false);
+                    if (!disposing.IsCompleted)
                     {
-                        await runtime.DisposeAsync().ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        LogItemDisposeFailed(_logger, ex);
+                        _discarding.RemoveAll(t => t.IsCompleted);
+                        _discarding.Add(disposing);
                     }
                 }
                 return new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok);
@@ -1021,6 +1052,18 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         await prepared.Ready.ConfigureAwait(false);
         await DisposeQuietlyAsync(prepared).ConfigureAwait(false);
+    }
+
+    private async Task DisposeQuietlyAsync(IPlaylistItemRuntime runtime)
+    {
+        try
+        {
+            await runtime.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogItemDisposeFailed(_logger, ex);
+        }
     }
 
     private async Task DisposeQuietlyAsync(PreparedRuntime prepared)

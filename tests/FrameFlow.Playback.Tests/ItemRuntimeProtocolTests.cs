@@ -366,6 +366,7 @@ public sealed class ItemRuntimeProtocolTests
                 new Action.Free(ItemResources.Pacer),
                 new Action.DeactivateAudio(),
                 new Action.StopClock(),
+                new Action.ReleaseShared(),
                 new Action.Free(ItemResources.Pipeline),
                 new Action.Free(ItemResources.AudioDecoder),
                 new Action.Free(ItemResources.VideoDecoder),
@@ -924,7 +925,13 @@ public sealed class ItemRuntimeProtocolTests
 
         t.Dispose();
         Assert.Equal(
-            [new Action.OpenGates(), new Action.StopClock(), new Action.Free(ItemResources.Clock), new Action.CompleteDispose()],
+            [
+                new Action.OpenGates(),
+                new Action.StopClock(),
+                new Action.ReleaseShared(),
+                new Action.Free(ItemResources.Clock),
+                new Action.CompleteDispose(),
+            ],
             t.Actions
         );
     }

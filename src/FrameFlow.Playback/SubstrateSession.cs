@@ -153,6 +153,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly DisposeOnce _dispose = new();
     private readonly TaskCompletionSource _disposeBegun = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _tornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _sharedReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<Exception> _teardownFailures = [];
 
     // What the cancellation's callbacks of a run's stop threw, which the dispose throws.
@@ -275,6 +276,14 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// or rewind has replaced the run in between.
     /// </remarks>
     public int RunNumber => Volatile.Read(ref _runNumber);
+
+    /// <summary>
+    /// Completes once a dispose has let go of everything the runtime shares with the playlist: the
+    /// pacer is freed, the audio deactivated and an attached runtime's position clock stopped. The
+    /// dispose then frees the pipeline, the decoders and the demuxer, which are the runtime's own.
+    /// Completes when the dispose does, at the latest, and never faults (#780).
+    /// </summary>
+    public Task SharedReleased => _sharedReleased.Task;
 
     /// <summary>
     /// The timeline the current run presents under: every frame and buffer it decodes carries it.
@@ -821,6 +830,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 break;
             case RuntimeAction.CompleteCommand complete:
                 Complete(complete);
+                break;
+            case RuntimeAction.ReleaseShared:
+                _sharedReleased.TrySetResult();
                 break;
             case RuntimeAction.CompleteDispose:
                 _inputs.Writer.TryComplete();
@@ -1418,6 +1430,19 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
 
     private async ValueTask TearDownAsync()
+    {
+        try
+        {
+            await TearDownCoreAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // A dispose that ends without the core's word, a failed one included, still ends.
+            _sharedReleased.TrySetResult();
+        }
+    }
+
+    private async ValueTask TearDownCoreAsync()
     {
         Post(new Input.Dispose());
 
