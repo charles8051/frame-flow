@@ -7,8 +7,10 @@ namespace FrameFlow.Decoding.Tests;
 
 /// <summary>
 /// A shared <see cref="HardwareDevice"/> raises <see cref="HardwareDevice.DeviceLost"/> once when a
-/// decoder on it reports a loss (#759), and reads a live device as live. No test removes a real
-/// device: the reports are fed in, and the native read is checked against a device that is up.
+/// decoder on it reports a loss (#759), and reads a live device as live. Once lost, the player's
+/// cache lends it no more, and a decoder lent it fails rather than decoding in software. No test
+/// removes a real device: the reports are fed in, and the native read is checked against a device
+/// that is up.
 /// </summary>
 [Collection(DecodePoolCollection.Name)]
 public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
@@ -132,6 +134,67 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
 
         Assert.Equal(0, ((IDecodeCodec<IVideoFrame>)decoder).ProbeDeviceRemoved());
         Assert.False(device.IsLost);
+    }
+
+    /// <summary>
+    /// The cache replaces a lost device at the next borrow and releases it. Its devices are ones
+    /// FFmpeg allocated and nothing opened, so no GPU is needed.
+    /// </summary>
+    [RequiresFfmpegFact]
+    public void ALostCachedDevice_IsNotLentAgain()
+    {
+        using var cache = new HardwareDeviceCache(logger: null, HardwareDevice.Unopened);
+        var lost = Lend(cache);
+        Assert.True(lost.ReportRemovedReason(DeviceReset));
+
+        var next = Lend(cache);
+
+        Assert.NotSame(lost, next);
+        Assert.False(next.IsLost);
+        Assert.Same(next, Lend(cache));
+        Assert.Throws<ObjectDisposedException>(() => lost.Borrow());
+    }
+
+    /// <summary>
+    /// A lost device stays lost, and its owner recovers with a new one, so the open fails with the
+    /// loss under Auto too rather than decoding in software (#759). The device is one FFmpeg
+    /// allocated and nothing opened, for the platform's first backend, which H.264 has a hardware
+    /// configuration for.
+    /// </summary>
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(HardwareDecodeMode.Auto)]
+    [InlineData(HardwareDecodeMode.Required)]
+    public async Task ADecoderOpenedOnALostLentDevice_FailsWithTheLoss(HardwareDecodeMode mode)
+    {
+        using var device = HardwareDevice.Unopened(PlatformBackend);
+        Assert.True(device.ReportRemovedReason(DeviceReset));
+        await using var demux = (DemuxSession)await new DemuxSessionFactory().OpenAsync(
+            MediaSource.FromFile(TestEnvironment.GetCorpusFile(H264)!));
+
+        var error = Assert.Throws<DeviceLostException>(() => VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions { Mode = mode },
+            fixture.Capabilities,
+            loggerFactory: null,
+            new VideoDecoderOptions { Device = device }));
+
+        Assert.Equal(DeviceReset, error.RemovedReason);
+    }
+
+    private static HardwareDecodeBackendKind PlatformBackend =>
+        OperatingSystem.IsWindows() ? HardwareDecodeBackendKind.D3D11Va
+        : OperatingSystem.IsMacOS() ? HardwareDecodeBackendKind.VideoToolbox
+        : HardwareDecodeBackendKind.VaApi;
+
+    // The device the cache lends a decoder binding the platform's backend now. The reference the
+    // decoder would own is released at once.
+    private static HardwareDevice Lend(HardwareDeviceCache cache)
+    {
+        nint reference = cache.Borrow(PlatformBackend, out var owner);
+        Assert.NotEqual(nint.Zero, reference);
+        FFAvUtil.av_buffer_unref(ref reference);
+        return Assert.IsType<HardwareDevice>(owner);
     }
 
     private sealed class RecordingLogger(bool throws = false) : ILogger

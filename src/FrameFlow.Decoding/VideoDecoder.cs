@@ -75,7 +75,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
     // The shared device _hwDeviceCtxRef was borrowed from, lent or cached, which a device loss
     // is reported to (#759). Null for a device the decoder created, and once it is on software.
-    private HardwareDevice? _hwDeviceOwner;
+    // Read by the session through BoundDevice while the decode worker can clear it.
+    private volatile HardwareDevice? _hwDeviceOwner;
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
 
@@ -179,6 +180,13 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// <see cref="HardwareBackend"/>, it does not follow a renegotiation to software.
     /// </summary>
     internal HardwareDecodeBackendKind? BoundBackend => BackendOf(_boundBackend);
+
+    /// <summary>
+    /// The shared device the decoder decodes on, lent or cached, which a device loss is reported
+    /// to (#759). Null when it created its own device, opened for software decode, or fell back to
+    /// software.
+    /// </summary>
+    internal HardwareDevice? BoundDevice => _hwDeviceOwner;
 
     /// <summary>
     /// The open codec context's <c>thread_count</c>, <c>thread_type</c> and

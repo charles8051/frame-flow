@@ -30,7 +30,10 @@ namespace FrameFlow.Decoding;
 /// <para>
 /// When the GPU removes or resets the device, it raises <see cref="DeviceLost"/> once (#759). A
 /// lost device stays lost, so every player decoding on it fails with
-/// <see cref="ErrorCategory.DeviceLost"/>, and the way back is a new device.
+/// <see cref="ErrorCategory.DeviceLost"/>, and the way back is a new device. A decoder opened on
+/// it once it is lost fails with <see cref="DeviceLostException"/> before it binds, under
+/// <see cref="HardwareDecodeMode.Auto"/> as under <see cref="HardwareDecodeMode.Required"/>,
+/// rather than decoding in software on a player its owner is about to rebuild.
 /// </para>
 /// </remarks>
 public sealed partial class HardwareDevice : IDisposable
@@ -85,6 +88,19 @@ public sealed partial class HardwareDevice : IDisposable
         {
             lock (_lossGate)
                 return _loss.Lost;
+        }
+    }
+
+    /// <summary>
+    /// The reason the first loss report gave, which <see cref="DeviceLost"/> carried, or 0 while
+    /// the device is live. A lost device keeps it, so it can be read after <see cref="IsLost"/>.
+    /// </summary>
+    internal int LostReason
+    {
+        get
+        {
+            lock (_lossGate)
+                return _loss.Reason;
         }
     }
 
@@ -183,6 +199,23 @@ public sealed partial class HardwareDevice : IDisposable
         }
 
         return new HardwareDevice(deviceCtxRef, backend, type, logger);
+    }
+
+    /// <summary>
+    /// A device context for <paramref name="backend"/> that FFmpeg allocated and nothing opened.
+    /// It touches no hardware and cannot decode: it is for testing what holds and lends devices,
+    /// on a machine with no GPU.
+    /// </summary>
+    /// <exception cref="NotSupportedException">This FFmpeg build has no device type for <paramref name="backend"/>.</exception>
+    internal static HardwareDevice Unopened(HardwareDecodeBackendKind backend)
+    {
+        int type = HardwareDecodeProbeBridge.AvDeviceTypeOf(backend)
+            ?? throw new NotSupportedException($"{backend} is not a hardware device FFmpeg can create.");
+
+        nint deviceCtxRef = FFAvUtil.av_hwdevice_ctx_alloc(type);
+        return deviceCtxRef != nint.Zero
+            ? new HardwareDevice(deviceCtxRef, backend, type, logger: null)
+            : throw new NotSupportedException($"This FFmpeg build has no {backend} device type.");
     }
 
     /// <summary>

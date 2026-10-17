@@ -102,6 +102,11 @@ public sealed partial class VideoDecoder
     /// Thrown when <see cref="HardwareDecodeMode.Required"/> is configured and
     /// no candidate backend can be bound to the codec.
     /// </exception>
+    /// <exception cref="DeviceLostException">
+    /// The device lent through <see cref="VideoDecoderOptions.Device"/> is lost
+    /// (<see cref="HardwareDevice.IsLost"/>) and the codec would have decoded on it, under
+    /// <see cref="HardwareDecodeMode.Auto"/> as under <see cref="HardwareDecodeMode.Required"/>.
+    /// </exception>
     public static VideoDecoder Open(
         nint formatContextPtr,
         int streamIndex,
@@ -381,6 +386,20 @@ public sealed partial class VideoDecoder
                 );
             }
             return null;
+        }
+
+        // A lent device the GPU lost stays lost (#759), and the caller who lent it recovers with a
+        // new one. Binding it would fail and Auto would decode in software, hiding the loss from a
+        // caller who reads it from the player's failure. Checked here, where the device would be
+        // borrowed: TryBindSingle turns every exception into an attempt.
+        if (device is { IsLost: true })
+        {
+            int reason = device.LostReason;
+            throw new DeviceLostException(
+                $"The GPU device was lost (0x{reason:X8}). The {device.Backend} device lent to the "
+                    + "decoder stays lost; decode on a new device.",
+                reason
+            );
         }
 
         foreach (var candidate in candidates)

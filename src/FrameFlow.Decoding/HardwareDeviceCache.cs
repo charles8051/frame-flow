@@ -21,77 +21,123 @@ namespace FrameFlow.Decoding;
 /// for the backend it tries.
 /// </para>
 /// <para>
-/// A device is dropped when an item that decoded on it fails (<see cref="Drop"/>), so one left
-/// unusable, by a driver reset for instance, is replaced by the next item rather than failing
-/// every item after it. Decoders hold their own references, so dropping or disposing the cache
-/// never pulls a device from under a decoder that is using it.
+/// A device the GPU lost (<see cref="HardwareDevice.IsLost"/>) is never lent again: the next
+/// borrow for its backend creates a new one, and a fault on an item that decoded on it evicts it
+/// sooner (<see cref="EvictIfLost"/>). Any other fault, a corrupt packet or a sink's for instance,
+/// leaves the device cached, so the next item does not pay for a new one (#759). Decoders hold
+/// their own references, so evicting or disposing the cache never pulls a device from under a
+/// decoder that is using it.
 /// </para>
 /// </remarks>
 internal sealed partial class HardwareDeviceCache : IDisposable
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<HardwareDecodeBackendKind, HardwareDevice> _devices = [];
+    private readonly Func<HardwareDecodeBackendKind, HardwareDevice> _create;
     private readonly ILogger _logger;
     private bool _disposed;
 
-    public HardwareDeviceCache(ILogger? logger = null) => _logger = logger ?? NullLogger.Instance;
+    public HardwareDeviceCache(ILogger? logger = null)
+        : this(logger, create: null) { }
+
+    /// <param name="logger">Where the cache and the devices it creates log.</param>
+    /// <param name="create">
+    /// Creates the device for a backend. Null has FFmpeg create it. Internal: tests create devices
+    /// that need no GPU.
+    /// </param>
+    internal HardwareDeviceCache(ILogger? logger, Func<HardwareDecodeBackendKind, HardwareDevice>? create)
+    {
+        _logger = logger ?? NullLogger.Instance;
+        _create = create ?? (backend => HardwareDevice.Create(backend, logger: _logger));
+    }
 
     /// <summary>
-    /// A new reference to the device for <paramref name="backend"/>, creating it on first use, for
-    /// a decoder to own and release. Zero when the cache is disposed or the device cannot be
-    /// created, and the decoder then creates its own, as it would without a cache.
+    /// A new reference to the device for <paramref name="backend"/>, creating it on first use and
+    /// in place of one the GPU lost, for a decoder to own and release. Zero when the cache is
+    /// disposed or the device cannot be created, and the decoder then creates its own, as it would
+    /// without a cache.
     /// </summary>
-    /// <remarks>Taken under the cache's lock, so a concurrent drop or dispose cannot race it.</remarks>
+    /// <remarks>Taken under the cache's lock, so a concurrent eviction or dispose cannot race it.</remarks>
     internal nint Borrow(HardwareDecodeBackendKind backend) => Borrow(backend, out _);
 
     /// <inheritdoc cref="Borrow(HardwareDecodeBackendKind)"/>
     /// <param name="backend">The backend.</param>
     /// <param name="owner">
     /// The cached device the reference was taken from, for the decoder to report a device loss to
-    /// (#759). Null when the result is zero.
+    /// (#759) and for <see cref="EvictIfLost"/>. Null when the result is zero.
     /// </param>
     internal nint Borrow(HardwareDecodeBackendKind backend, out HardwareDevice? owner)
     {
-        owner = null;
-        lock (_gate)
+        HardwareDevice? lost = null;
+        try
         {
-            if (_disposed)
-                return nint.Zero;
-
-            if (!_devices.TryGetValue(backend, out var device))
+            lock (_gate)
             {
-                try
-                {
-                    device = HardwareDevice.Create(backend, logger: _logger);
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
-                {
-                    LogCreateFailed(_logger, backend.ToString(), ex.Message);
+                owner = null;
+                if (_disposed)
                     return nint.Zero;
-                }
-                _devices[backend] = device;
-                LogCreated(_logger, backend.ToString());
-            }
 
-            owner = device;
-            return device.Borrow();
+                // A lost device stays lost: a decoder lent it would only fail on it.
+                if (_devices.TryGetValue(backend, out var device) && device.IsLost)
+                {
+                    _devices.Remove(backend);
+                    lost = device;
+                    device = null;
+                }
+
+                if (device is null)
+                {
+                    try
+                    {
+                        device = _create(backend);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+                    {
+                        LogCreateFailed(_logger, backend.ToString(), ex.Message);
+                        return nint.Zero;
+                    }
+                    _devices[backend] = device;
+                    LogCreated(_logger, backend.ToString());
+                }
+
+                owner = device;
+                return device.Borrow();
+            }
+        }
+        finally
+        {
+            // Released outside the lock, as an eviction and the dispose release theirs.
+            if (lost is not null)
+                Release(lost);
         }
     }
 
     /// <summary>
-    /// Drops the device for <paramref name="backend"/>, so the next decoder to bind it gets a new
-    /// one. Decoders already using it keep their references.
+    /// Evicts <paramref name="device"/> if the GPU lost it and it is still the device the cache
+    /// lends for its backend, so the next decoder to bind that backend gets a new one. Decoders
+    /// already using it keep their references.
     /// </summary>
-    public void Drop(HardwareDecodeBackendKind backend)
+    /// <remarks>
+    /// By identity, not by backend: a fault reported late, by an item that decoded on a device the
+    /// cache has since replaced, leaves the replacement alone. A live device stays: a corrupt
+    /// packet or a sink's fault says nothing about the device, and a new one costs the next item
+    /// what the cache exists to save. A device the cache never lent, one lent to the player
+    /// instead, is not the cache's to evict.
+    /// </remarks>
+    public void EvictIfLost(HardwareDevice device)
     {
-        HardwareDevice? dropped;
+        ArgumentNullException.ThrowIfNull(device);
         lock (_gate)
         {
-            if (!_devices.Remove(backend, out dropped))
+            if (!device.IsLost
+                || !_devices.TryGetValue(device.Backend, out var cached)
+                || !ReferenceEquals(cached, device))
+            {
                 return;
+            }
+            _devices.Remove(device.Backend);
         }
-        dropped.Dispose();
-        LogDropped(_logger, backend.ToString());
+        Release(device);
     }
 
     public void Dispose()
@@ -109,12 +155,18 @@ internal sealed partial class HardwareDeviceCache : IDisposable
             device.Dispose();
     }
 
+    private void Release(HardwareDevice lost)
+    {
+        lost.Dispose();
+        LogDroppedLost(_logger, lost.Backend.ToString(), lost.LostReason);
+    }
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "Created a {Backend} device that later items will share.")]
     private static partial void LogCreated(ILogger logger, string backend);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Could not create a shared {Backend} device: {Reason}. The decoder creates its own.")]
     private static partial void LogCreateFailed(ILogger logger, string backend, string reason);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Dropped the shared {Backend} device after an item that used it failed. The next item creates a new one.")]
-    private static partial void LogDropped(ILogger logger, string backend);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Dropped the shared {Backend} device, which the GPU lost (0x{RemovedReason:X8}). A new device replaces it.")]
+    private static partial void LogDroppedLost(ILogger logger, string backend, int removedReason);
 }

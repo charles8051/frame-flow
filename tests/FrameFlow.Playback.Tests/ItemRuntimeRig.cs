@@ -37,7 +37,14 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     private readonly ConcurrentQueue<bool> _endsOfStreamInStep = new();
     private readonly bool _latenessRecovery;
 
-    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery, TimeProvider? time, TimeProvider? clockTime)
+    private ItemRuntimeRig(
+        MediaShape shape,
+        bool detached,
+        bool latenessRecovery,
+        TimeProvider? time,
+        TimeProvider? clockTime,
+        HardwareDeviceCache? deviceCache
+    )
     {
         _latenessRecovery = latenessRecovery;
         Log = new RigLog();
@@ -78,6 +85,7 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
             TimeProvider = time ?? TimeProvider.System,
             Detached = detached,
             LatenessRecovery = latenessRecovery ? new LatenessRecoveryOptions { Enabled = true } : null,
+            DeviceCache = deviceCache,
         };
         Session.OnStep = OnStep;
         Session.OnWorkLetGo = OnWorkLetGo;
@@ -131,13 +139,15 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     /// <param name="clockTime">
     /// Whose time the position clock and the session's own wallclock read. Null is the system's.
     /// </param>
+    /// <param name="deviceCache">The player's hardware devices, which the session evicts from. Null for none.</param>
     public static ItemRuntimeRig Create(
         MediaShape? shape = null,
         bool detached = false,
         bool latenessRecovery = false,
         TimeProvider? time = null,
-        TimeProvider? clockTime = null
-    ) => new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery, time, clockTime);
+        TimeProvider? clockTime = null,
+        HardwareDeviceCache? deviceCache = null
+    ) => new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery, time, clockTime, deviceCache);
 
     /// <summary>Opens the session, positioned at <paramref name="start"/>: no run starts.</summary>
     public async Task<ItemRuntimeRig> OpenAsync(TimeSpan start = default, TimeSpan? end = null)
@@ -659,7 +669,8 @@ internal sealed class FakeItemMedia : IItemMedia
 
     public Task? FirstFrameDecoded => _shape.Video ? _firstFrame.Task : null;
 
-    public HardwareDecodeBackendKind? BoundBackend => null;
+    /// <summary>The shared device the video decoder decodes on, as the test set it. Null by default.</summary>
+    public HardwareDevice? BoundDevice { get; set; }
 
     /// <summary>How many runs the session has started over this media.</summary>
     public int Runs

@@ -11,6 +11,47 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.18.0`
+
+### 1. A decoder opened on a lost lent device fails with `DeviceLostException`, under `Auto` too
+
+**A change in behaviour, not a compile error.**
+
+A player, pass or decoder lent a `HardwareDevice` that is lost (`HardwareDevice.IsLost`) now fails
+to open the item with `DeviceLostException`, and the player reports `ErrorCategory.DeviceLost` with
+the device's reason (#759). Under `HardwareDecodeMode.Auto` it used to try the device, fail to bind
+or bind and fail at the first packet, and decode the item in software, so only the item that met
+the loss failed with `DeviceLost`. Under `Required` it failed with
+`HardwareDecodeUnavailableException`, or bound and failed at the first packet.
+
+A codec with no hardware configuration for the device's backend still decodes in software under
+`Auto`, as it never touches the device, and `HardwareDecodeMode.Disabled` never asks the device.
+
+**Who hits this.**
+- Code that keeps loading items on a player whose lent device was lost and counts on them playing
+  in software. They now fail, each with `DeviceLost`.
+
+**What to write instead.**
+- Recover as #759 documents: on `HardwareDevice.DeviceLost`, or on a `DeviceLost` failure, dispose
+  the players and the device, create another device and build the players again on it.
+- To keep playing in software on a lost device instead, build the players again with hardware
+  decode disabled.
+
+**Why.** `DeviceLostException` and `HardwareDevice` both said a lost device fails every later item
+opened on it. Under `Auto` it did not, and a caller who read the loss from a player's failure
+never learned of it while the player went on decoding on the CPU.
+
+### Not breaking, but worth knowing
+
+- **A player keeps its hardware decode device through an item's fault.** A player that is not lent
+  a device dropped its cached device for a backend whenever an item that decoded on it faulted: a
+  corrupt packet, a sink that kept throwing, a fault in the pacer, or a fault in an item prepared
+  ahead. The next item then created a new device, about 220 ms on a discrete GPU. The device is now
+  dropped only once the GPU has lost it, and a lost device is never lent again. A fault reported
+  late, by an item whose device was already replaced, no longer drops the replacement. Only D3D11VA
+  and D3D12VA report a loss, so on CUDA, VAAPI or Vulkan a device a driver failure left unusable
+  stays cached until the player is disposed. #759.
+
 ## `v0.18.0` — since `v0.17.0`
 
 ### 1. An untagged SD frame converts with BT.601, and the presenters convert with the frame's matrix
