@@ -2100,7 +2100,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     internal Task ConvertForTest(IVideoFrame frame, Func<int, bool> fill)
     {
         var job = new ConvertJob(
-            frame, 0, PresentSource.Cpu, frame.Width, frame.Height, _ => nint.Zero, fill, frame.Pts, frame.Timeline, _sink, _lifecycle.Binding);
+            frame, 0, PresentSource.Cpu, frame.Width, frame.Height, _ => nint.Zero, fill, frame.Pts, frame.Timeline, _sink, _lifecycle.Binding)
+        {
+            Completed = new(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
         StartConvert(job);
         return job.Completed.Task;
     }
@@ -2115,7 +2118,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         {
             // A dispatcher shutting down: nothing hands the slot off, and the view presents no more.
             job.Frame.Dispose();
-            job.Completed.TrySetResult();
+            job.Completed?.TrySetResult();
         }
     }
 
@@ -2131,7 +2134,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         }
         finally
         {
-            job.Completed.TrySetResult();
+            job.Completed?.TrySetResult();
         }
     }
 
@@ -2298,8 +2301,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         /// <summary>The conversion's run. Never faults: what the fill threw is <see cref="Error"/>.</summary>
         public Task Run { get; set; } = Task.CompletedTask;
 
-        /// <summary>Completes once the UI thread has run the conversion's completion, whichever way it ended.</summary>
-        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>
+        /// Completes once the UI thread has run the conversion's completion, whichever way it ended.
+        /// Only a test's conversion has one.
+        /// </summary>
+        public TaskCompletionSource? Completed { get; init; }
 
         /// <summary>Whether the frame was drawn into the slot; false when device loss was observed.</summary>
         public bool Filled { get; private set; }
