@@ -151,7 +151,9 @@ The matrix now comes from the frame (#796). Every frame used to convert to `Bgra
 whatever the stream signalled. Most HD streams are BT.709, and converted with BT.601 their saturated
 colours shifted: reds leaned orange and greens leaned yellow, by up to 31 levels in one channel on
 75% colour bars. A frame tagged BT.709 now converts with BT.709, one tagged BT.601 (`bt470bg`,
-`smpte170m`) with BT.601, and BT.2020, SMPTE 240M and FCC with their own coefficients. A frame that
+`smpte170m`) with BT.601, and BT.2020, SMPTE 240M and FCC with their own coefficients. BT.2020
+constant luminance is not a matrix, and converts approximately, with the BT.2020 non-constant
+luminance coefficients. A frame that
 signals no matrix, or one swscale has no coefficients for (YCgCo, ICtCp and the like), converts with
 BT.709. That is what the D3D11 and D3D12 presenters convert every frame with, so an untagged stream
 now looks the same on the CPU path and the GPU path. The presenters use no size rule, so neither

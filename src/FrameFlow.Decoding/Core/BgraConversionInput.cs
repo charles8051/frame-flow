@@ -36,8 +36,9 @@ namespace FrameFlow.Decoding.Core;
 /// <para>
 /// The matrix is also taken from the frame (#796). A stream that signals BT.709 converts with
 /// BT.709, one that signals BT.601 with BT.601, and so on for every matrix swscale has
-/// coefficients for. A stream that signals none, or one swscale cannot convert, converts with
-/// BT.709. That is what the D3D11 and D3D12 presenters convert every frame with (ADR-0063), so an
+/// coefficients for. BT.2020 constant luminance is approximated with the BT.2020 non-constant
+/// luminance coefficients. A stream that signals none, or one swscale cannot convert, converts
+/// with BT.709. That is what the D3D11 and D3D12 presenters convert every frame with (ADR-0063), so an
 /// untagged stream looks the same on the CPU path and the GPU path. The presenters apply no size
 /// rule, so neither does this one: an untagged SD stream is BT.709 here too.
 /// </para>
@@ -106,8 +107,10 @@ internal readonly record struct BgraConversionInput(int SourceFormat, bool Split
             AVColorSpace.AVCOL_SPC_FCC => Fcc,
             AVColorSpace.AVCOL_SPC_SMPTE240M => Smpte240M,
             AVColorSpace.AVCOL_SPC_BT2020_NCL => Bt2020,
-            // Constant luminance is not a matrix. swscale's own table gives it the NCL
-            // coefficients.
+            // An approximation. Constant luminance is not a matrix: its conversion is piecewise and
+            // works on linear light, which a choice of coefficients cannot reproduce. The NCL
+            // coefficients share its primaries and luma weights, so they come closer than the
+            // unsignalled BT.709, and swscale's own table gives CL the same ones.
             AVColorSpace.AVCOL_SPC_BT2020_CL => Bt2020,
 
             // Not signalled.
