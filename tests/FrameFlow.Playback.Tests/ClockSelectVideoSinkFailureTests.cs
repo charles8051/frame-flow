@@ -264,7 +264,7 @@ public sealed partial class ClockSelectVideoSinkTests
         clock.Advance(TimeSpan.FromMilliseconds(33));
         await failures.WaitForReportAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);

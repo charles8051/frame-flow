@@ -166,7 +166,7 @@ public sealed partial class ClockSelectVideoSinkTests
         await sink.WaitForCountAsync(1);
         Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         await pacer.PresentAsync(f1, default);
         await pacer.PresentAsync(f2, default);
         // Not yet due — clock still at 0. Parking means the loop has seen both frames and
@@ -223,6 +223,7 @@ public sealed partial class ClockSelectVideoSinkTests
         var clock = new FakeClock();
         var sink = new RecordingSink();
         await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 2);
+        var parked = await pacer.ParkedGenerationAsync();
 
         // Fill the ring with two not-yet-due frames (clock at 0).
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(10)), default);
@@ -231,7 +232,7 @@ public sealed partial class ClockSelectVideoSinkTests
         // The loop has seen both frames and parked with neither due, so the ring is full and
         // no slot has been released. A third enqueue blocks on that, and cannot be completed
         // by anything until the clock moves — so this needs no wait, only the park above.
-        await pacer.WaitForParkAfterAsync(0);
+        await pacer.WaitForParkAfterAsync(parked);
         var third = pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(30)), default);
         Assert.Empty(sink.PresentedPts);
         Assert.False(third.IsCompleted, "PresentAsync should backpressure when the ring is full");
@@ -250,7 +251,7 @@ public sealed partial class ClockSelectVideoSinkTests
 
         var f1 = new TrackingFrame(TimeSpan.FromMilliseconds(50));
         var f2 = new TrackingFrame(TimeSpan.FromMilliseconds(80));
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         await pacer.PresentAsync(f1, default);
         await pacer.PresentAsync(f2, default);
         // The loop has picked up f1 as "earliest" and parked on the clock. Flushing before
@@ -363,6 +364,7 @@ public sealed partial class ClockSelectVideoSinkTests
         await using var pacer = new ClockSelectVideoSink(
             sink, clock, capacity: 4, timeProvider: time);
 
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.BeginRun(TimeSpan.FromSeconds(7), holdForSettle: true);
         clock.Advance(TimeSpan.FromSeconds(7.73)); // the clock ran through the decode-forward
 
@@ -375,7 +377,7 @@ public sealed partial class ClockSelectVideoSinkTests
 
         // The loop has parked inside the hold. An unheld loop would have found this frame due
         // against a clock 0.73 s past it and presented it before ever parking.
-        await pacer.WaitForParkAfterAsync(0);
+        await pacer.WaitForParkAfterAsync(parked);
         Assert.Empty(sink.PresentedPts);
 
         // The session reseats, then releases.
@@ -415,20 +417,27 @@ public sealed partial class ClockSelectVideoSinkTests
         await using var pacer = new ClockSelectVideoSink(
             sink, clock, capacity: 4, timeProvider: time);
 
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.BeginRun(TimeSpan.FromSeconds(7), holdForSettle: true);
         var staleRun = pacer.CurrentRunId;
         clock.Advance(TimeSpan.FromSeconds(7.73));
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(7)), default);
+        await pacer.WaitForParkAfterAsync(parked);
 
-        // The next seek supersedes it before the first settle got anywhere.
+        // The next seek supersedes it before the first settle got anywhere. The flush does not
+        // reach a loop parked on the settle; the new run's BeginRun opens it, and the loop parks
+        // again on the empty ring.
+        parked = pacer.ParkGeneration;
         pacer.Flush();
         pacer.BeginRun(TimeSpan.FromSeconds(20), holdForSettle: true);
+        await pacer.WaitForParkAfterAsync(parked);
+        parked = pacer.ParkGeneration;
         clock.Advance(TimeSpan.FromSeconds(20.5));
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(20)), default);
 
         // Park the loop inside the newer run's hold first, so "still held" below is a
         // statement about the release rather than about the loop not having got there yet.
-        await pacer.WaitForParkAfterAsync(0);
+        await pacer.WaitForParkAfterAsync(parked);
         Assert.True(pacer.IsSettleHeld);
 
         pacer.ReleaseSeekSettle(staleRun);
@@ -606,11 +615,12 @@ public sealed partial class ClockSelectVideoSinkTests
         await pacer.PresentAsync(f0, default);
         await sink.WaitForCountAsync(1);
 
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         // Wait for the loop to actually enter the end-of-content hold (clock 0 < 33). Flushing
         // before it gets there would test nothing, and a sleep could not tell the difference.
-        await pacer.WaitForParkAfterAsync(0);
+        await pacer.WaitForParkAfterAsync(parked);
 
         var flushParked = pacer.ParkGeneration;
         pacer.Flush(); // a seek/loop discontinuity mid-hold.
@@ -651,13 +661,15 @@ public sealed partial class ClockSelectVideoSinkTests
             sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
 
         pacer.BeginRun();
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.Pause();
+        await pacer.WaitForParkAfterAsync(parked);
 
         // A full ring of undue frames against a clock stopped at 0 — exactly the state a
         // pause leaves behind. Uncapped, the cap force-presented one frame every maxWait
         // until the ring was empty, creeping the picture forward while the user was paused
         // and logging each as a suspected stalled master (#127).
-        var parked = pacer.ParkGeneration;
+        parked = pacer.ParkGeneration;
         for (int i = 0; i < 4; i++)
             await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100 + (33 * i))), default);
         await pacer.WaitForParkAfterAsync(parked);
@@ -679,8 +691,10 @@ public sealed partial class ClockSelectVideoSinkTests
             sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
 
         pacer.BeginRun();
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.Pause();
-        var parked = pacer.ParkGeneration;
+        await pacer.WaitForParkAfterAsync(parked);
+        parked = pacer.ParkGeneration;
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
         await pacer.WaitForParkAfterAsync(parked);
 
@@ -707,7 +721,7 @@ public sealed partial class ClockSelectVideoSinkTests
             sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(300), timeProvider: time);
 
         pacer.BeginRun();
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
         await pacer.WaitForParkAfterAsync(parked); // the loop is in the wait, cap armed.
 
@@ -741,13 +755,12 @@ public sealed partial class ClockSelectVideoSinkTests
         await sink.WaitForCountAsync(1);
 
         // Paused before input completes, so the hold is never armed with a cap in the
-        // first place — the loop cannot race us to a cap-out.
-        //
-        // Pause on its own cannot be awaited: a loop parked for want of frames is waiting on
-        // arrival, which the recheck token does not reach. SignalInputComplete sets arrival,
-        // so it is the wake this parks on.
+        // first place — the loop cannot race us to a cap-out. The pause re-parks the loop on
+        // arrival (#547), and each wake is waited out before the next (#778).
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.Pause();
-        var parked = pacer.ParkGeneration;
+        await pacer.WaitForParkAfterAsync(parked);
+        parked = pacer.ParkGeneration;
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
@@ -783,7 +796,7 @@ public sealed partial class ClockSelectVideoSinkTests
         var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
 
         var f1 = new TrackingFrame(TimeSpan.FromMilliseconds(500)); // far future, never due.
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         await pacer.PresentAsync(f1, default);
         await pacer.WaitForParkAfterAsync(parked); // the frame is buffered and the loop is idle.
 
@@ -1066,7 +1079,7 @@ public sealed partial class ClockSelectVideoSinkTests
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
         await sink.WaitForCountAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
 
@@ -1096,7 +1109,7 @@ public sealed partial class ClockSelectVideoSinkTests
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
         await sink.WaitForCountAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
@@ -1140,7 +1153,7 @@ public sealed partial class ClockSelectVideoSinkTests
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
         await sink.WaitForCountAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
@@ -1194,7 +1207,7 @@ public sealed partial class ClockSelectVideoSinkTests
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(5)), default);
         await sink.WaitForCountAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
@@ -1239,7 +1252,7 @@ public sealed partial class ClockSelectVideoSinkTests
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(5)), default);
         await sink.WaitForCountAsync(1);
 
-        var parked = pacer.ParkGeneration;
+        var parked = await pacer.ParkedGenerationAsync();
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
