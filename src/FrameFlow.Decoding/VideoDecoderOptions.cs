@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Media;
+
 namespace FrameFlow.Decoding;
 
 /// <summary>
@@ -17,6 +19,7 @@ public sealed class VideoDecoderOptions
 {
     private readonly int _heldHardwareFrames;
     private readonly int _decoderThreads;
+    private readonly ColorMatrix _colorMatrix;
 
     /// <summary>
     /// Capacity of the decoder's internal bounded packet queue, in packets.
@@ -100,6 +103,29 @@ public sealed class VideoDecoderOptions
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
             _decoderThreads = value;
+        }
+    }
+
+    /// <summary>
+    /// The matrix every frame converts to RGB with (#841). <see cref="ColorMatrix.Auto"/>, the
+    /// default, takes the one the stream signals, and for a stream that signals none BT.709 at 720
+    /// rows or more and BT.601 below.
+    /// </summary>
+    /// <remarks>
+    /// It applies to the software decoder's <see cref="PixelFormat.Bgra32"/> frames, to
+    /// <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/> and to the D3D11 and D3D12 presenters, so a
+    /// hardware frame and a software frame of the same stream convert alike. Pick a fixed matrix to
+    /// keep a consumer calibrated on one conversion, such as a model's embeddings or stored image
+    /// hashes, whatever the stream signals.
+    /// </remarks>
+    public ColorMatrix ColorMatrix
+    {
+        get => _colorMatrix;
+        init
+        {
+            if (!Enum.IsDefined(value))
+                throw new ArgumentOutOfRangeException(nameof(value), value, "Undefined color matrix.");
+            _colorMatrix = value;
         }
     }
 

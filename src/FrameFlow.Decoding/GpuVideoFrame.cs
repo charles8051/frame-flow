@@ -6,6 +6,8 @@ using FrameFlow.Native.Interop;
 using FrameFlow.Graph;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
+using FrameFlow.Decoding.Core;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Decoding;
 
@@ -132,6 +134,14 @@ public sealed class GpuVideoFrame : IVideoFrame
     public TimelineId Timeline { get; }
 
     /// <summary>
+    /// The matrix this frame converts to RGB with (#841): the one its stream signals, or the size
+    /// rule for one that signals none, unless the decoder's <see cref="VideoDecoderOptions.ColorMatrix"/>
+    /// fixed one. <see cref="ReadbackToCpuBgra32"/> converts with it, and so do the D3D11 and D3D12
+    /// presenters, so the CPU and GPU paths agree on every frame.
+    /// </summary>
+    internal YcbcrMatrix Matrix { get; }
+
+    /// <summary>
     /// The FFmpeg device context the frame's pool was made on: a borrowed
     /// <see cref="HardwareDevice"/>'s own, or the one its decoder created. Zero once disposed.
     /// </summary>
@@ -172,9 +182,11 @@ public sealed class GpuVideoFrame : IVideoFrame
         HardwareDecodeBackendKind backend,
         SampleAspectRatio sampleAspectRatio,
         VideoRotation rotation,
-        TimelineId timeline
+        TimelineId timeline,
+        YcbcrMatrix matrix
     )
     {
+        Matrix = matrix;
         SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
         Rotation = rotation;
         Timeline = timeline;
@@ -215,6 +227,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <param name="timeline">The timeline the frame belongs to (ADR-0084).</param>
+    /// <param name="colorMatrix">The decoder's matrix choice (#841).</param>
     /// <returns>
     /// A new <see cref="GpuVideoFrame"/> that owns the cloned
     /// reference, or <see langword="null"/> if <c>av_frame_clone</c>
@@ -231,7 +244,8 @@ public sealed class GpuVideoFrame : IVideoFrame
         DecodePoolGeneration? pool = null,
         SampleAspectRatio sampleAspectRatio = default,
         VideoRotation rotation = VideoRotation.None,
-        TimelineId timeline = default
+        TimelineId timeline = default,
+        ColorMatrix colorMatrix = ColorMatrix.Auto
     )
     {
         nint cloned = FFAvUtil.av_frame_clone(sourceAvFrame);
@@ -239,7 +253,8 @@ public sealed class GpuVideoFrame : IVideoFrame
             return null;
 
         var frame = FromOwnedAvFrame(
-            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline);
+            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline,
+            colorMatrix);
         pool?.AttachFrame();
         frame._pool = pool;
         return frame;
@@ -263,6 +278,10 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <param name="timeline">The timeline the frame belongs to (ADR-0084).</param>
+    /// <param name="colorMatrix">
+    /// The caller's matrix choice (#841). <see cref="ColorMatrix.Auto"/> takes the matrix the
+    /// <c>AVFrame</c>'s <c>colorspace</c> signals, or the size rule.
+    /// </param>
     internal static GpuVideoFrame FromOwnedAvFrame(
         nint ownedAvFrame,
         int width,
@@ -273,15 +292,17 @@ public sealed class GpuVideoFrame : IVideoFrame
         HardwareDecodeBackendKind backend,
         SampleAspectRatio sampleAspectRatio = default,
         VideoRotation rotation = VideoRotation.None,
-        TimelineId timeline = default
+        TimelineId timeline = default,
+        ColorMatrix colorMatrix = ColorMatrix.Auto
     )
     {
+        var matrix = BgraConversionInput.MatrixFor(new AvFrameAccessor(ownedAvFrame).ColorSpace, height, colorMatrix);
         var handle = new FrameHandle(ownedAvFrame);
         // One hwframe-pool slice is now pinned by this frame (perf survey §A1
         // pool-occupancy telemetry). Released at the final ref-drop in Dispose.
         DecodePoolMetrics.OnLeaseAcquired();
         return new GpuVideoFrame(
-            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline);
+            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline, matrix);
     }
 
     /// <inheritdoc/>
@@ -367,6 +388,7 @@ public sealed class GpuVideoFrame : IVideoFrame
             Height,
             Pts,
             Duration,
+            Matrix,
             SampleAspectRatio,
             Rotation,
             Timeline

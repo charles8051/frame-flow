@@ -5,6 +5,7 @@ using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 
@@ -38,6 +39,7 @@ internal static unsafe class GpuFrameReadback
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <param name="timeline">The timeline the frame read back belongs to (ADR-0084).</param>
+    /// <param name="matrix">The matrix the frame converts with: <see cref="GpuVideoFrame.Matrix"/> (#841).</param>
     /// <returns>A new <see cref="CpuVideoFrame"/> owned by the caller.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the native readback or scale call fails.
@@ -48,6 +50,7 @@ internal static unsafe class GpuFrameReadback
         int height,
         TimeSpan pts,
         TimeSpan duration,
+        YcbcrMatrix matrix,
         SampleAspectRatio sampleAspectRatio = default,
         VideoRotation rotation = VideoRotation.None,
         TimelineId timeline = default
@@ -73,13 +76,13 @@ internal static unsafe class GpuFrameReadback
         FrameCopyMetrics.Record(FrameCopySite.ReadbackDownload);
 
         // Convert as the software decoder converts the same stream (#792): NV12 chroma is split
-        // into the planes it would have produced, and the range and the matrix (#796) come from
-        // the hardware frame, since the transfer copies neither.
-        var hardware = new AvFrameAccessor(sourceAvFrame);
+        // into the planes it would have produced, the range comes from the hardware frame, since
+        // the transfer does not copy it, and the matrix is the one the frame resolved from the
+        // hardware frame's tag and the decoder's choice (#796, #841).
         var input = BgraConversionInput.For(
             new AvFrameAccessor(cpuPtr).Format,
-            hardware.ColorRange,
-            hardware.ColorSpace
+            new AvFrameAccessor(sourceAvFrame).ColorRange,
+            matrix
         );
 
         nint swsCtx = BgraConversion.CreateContext(width, height, input);

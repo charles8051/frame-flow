@@ -91,8 +91,8 @@ internal sealed unsafe class GpuFrameUpload
             Check(FFAvUtil.av_hwframe_transfer_data(hardware, software, 0), "av_hwframe_transfer_data");
             FrameCopyMetrics.Record(FrameCopySite.Upload);
 
-            // Tag the surface with what ConvertToNv12 wrote. A readback converts an untagged frame
-            // with BT.709 (#796), so an untagged upload would not read back as the frame it was.
+            // Tag the surface with what ConvertToNv12 wrote. An untagged frame converts by its size
+            // (#841), BT.709 from 720 rows, so an untagged upload would not read back as the frame it was.
             ref AVFrame uploadedFrame = ref Unsafe.AsRef<AVFrame>((void*)hardware);
             uploadedFrame.colorspace = AVColorSpace.AVCOL_SPC_SMPTE170M;
             uploadedFrame.color_range = AVColorRange.AVCOL_RANGE_MPEG;

@@ -334,6 +334,7 @@ public sealed partial class VideoDecoder
         decoder._codecSampleAspectRatio = codecPar.SampleAspectRatio;
         decoder._rotation = DisplayGeometry.RotationOf(codecPar.DisplayRotationDegrees);
         decoder._decodeThreads = DecodeThreadsOf(codecCtx);
+        decoder._colorMatrix = videoOptions?.ColorMatrix ?? ColorMatrix.Auto;
 
         if (hwBinding is not null)
         {

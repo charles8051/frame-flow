@@ -1,11 +1,13 @@
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
+using FrameFlow.Media;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Decoding.Tests;
 
 /// <summary>
 /// An NV12 hardware frame converts from the planar layout its software decode would have, and the
-/// range (#792) and the matrix (#796) are the frame's. Pure.
+/// range (#792) and the matrix (#796, #841) are the frame's. Pure.
 /// </summary>
 public sealed class BgraConversionInputTests
 {
@@ -17,7 +19,7 @@ public sealed class BgraConversionInputTests
     [InlineData(AVPixelFormat.AV_PIX_FMT_YUVA420P, AVPixelFormat.AV_PIX_FMT_YUVA420P, false)]
     public void Nv12ConvertsFromYuv420P(AVPixelFormat decoded, AVPixelFormat converted, bool splitChroma)
     {
-        var input = BgraConversionInput.For((int)decoded, (int)AVColorRange.AVCOL_RANGE_MPEG, (int)AVColorSpace.AVCOL_SPC_BT470BG);
+        var input = BgraConversionInput.For((int)decoded, (int)AVColorRange.AVCOL_RANGE_MPEG, YcbcrMatrix.Bt601);
 
         Assert.Equal(new BgraConversionInput((int)converted, splitChroma, false, BgraConversionInput.Bt601), input);
     }
@@ -28,7 +30,7 @@ public sealed class BgraConversionInputTests
     [InlineData(AVPixelFormat.AV_PIX_FMT_YUVJ444P, AVPixelFormat.AV_PIX_FMT_YUV444P)]
     public void AJpegFormatIsItsPlainFormatAtFullRange(AVPixelFormat decoded, AVPixelFormat converted)
     {
-        var input = BgraConversionInput.For((int)decoded, (int)AVColorRange.AVCOL_RANGE_UNSPECIFIED, (int)AVColorSpace.AVCOL_SPC_BT709);
+        var input = BgraConversionInput.For((int)decoded, (int)AVColorRange.AVCOL_RANGE_UNSPECIFIED, YcbcrMatrix.Bt709);
 
         Assert.Equal(new BgraConversionInput((int)converted, false, true, BgraConversionInput.Bt709), input);
     }
@@ -39,54 +41,59 @@ public sealed class BgraConversionInputTests
     [InlineData(AVColorRange.AVCOL_RANGE_UNSPECIFIED, false)]
     public void TheRangeIsTheFrames(AVColorRange range, bool fullRange)
     {
-        const int unspecified = (int)AVColorSpace.AVCOL_SPC_UNSPECIFIED;
-        Assert.Equal(fullRange, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_NV12, (int)range, unspecified).FullRange);
-        Assert.Equal(fullRange, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUV420P, (int)range, unspecified).FullRange);
+        Assert.Equal(fullRange, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_NV12, (int)range, YcbcrMatrix.Bt709).FullRange);
+        Assert.Equal(fullRange, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUV420P, (int)range, YcbcrMatrix.Bt709).FullRange);
     }
 
     /// <summary>
-    /// The matrix each <c>AVColorSpace</c> converts with. Every member of the enum is here, and
-    /// <see cref="EveryColorSpaceHasAMatrix"/> fails when FFmpeg adds one, so a new value is a
+    /// The matrix each <c>AVColorSpace</c> signals, or none. Every member of the enum is here, and
+    /// <see cref="EveryColorSpaceHasARow"/> fails when FFmpeg adds one, so a new value is a
     /// decision rather than a silent fallback.
     /// </summary>
-    public static TheoryData<AVColorSpace, int> Matrices() =>
+    public static TheoryData<AVColorSpace, string?> Signalled() =>
         new()
         {
-            { AVColorSpace.AVCOL_SPC_RGB, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_BT709, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_UNSPECIFIED, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_RESERVED, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_FCC, BgraConversionInput.Fcc },
-            { AVColorSpace.AVCOL_SPC_BT470BG, BgraConversionInput.Bt601 },
-            { AVColorSpace.AVCOL_SPC_SMPTE170M, BgraConversionInput.Bt601 },
-            { AVColorSpace.AVCOL_SPC_SMPTE240M, BgraConversionInput.Smpte240M },
-            { AVColorSpace.AVCOL_SPC_YCGCO, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_BT2020_NCL, BgraConversionInput.Bt2020 },
-            { AVColorSpace.AVCOL_SPC_BT2020_CL, BgraConversionInput.Bt2020 },
-            { AVColorSpace.AVCOL_SPC_SMPTE2085, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_NCL, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_CL, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_ICTCP, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_IPT_C2, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_YCGCO_RE, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_YCGCO_RO, BgraConversionInput.Bt709 },
-            { AVColorSpace.AVCOL_SPC_NB, BgraConversionInput.Bt709 },
+            { AVColorSpace.AVCOL_SPC_RGB, null },
+            { AVColorSpace.AVCOL_SPC_BT709, nameof(YcbcrMatrix.Bt709) },
+            { AVColorSpace.AVCOL_SPC_UNSPECIFIED, null },
+            { AVColorSpace.AVCOL_SPC_RESERVED, null },
+            { AVColorSpace.AVCOL_SPC_FCC, nameof(YcbcrMatrix.Fcc) },
+            { AVColorSpace.AVCOL_SPC_BT470BG, nameof(YcbcrMatrix.Bt601) },
+            { AVColorSpace.AVCOL_SPC_SMPTE170M, nameof(YcbcrMatrix.Bt601) },
+            { AVColorSpace.AVCOL_SPC_SMPTE240M, nameof(YcbcrMatrix.Smpte240M) },
+            { AVColorSpace.AVCOL_SPC_YCGCO, null },
+            { AVColorSpace.AVCOL_SPC_BT2020_NCL, nameof(YcbcrMatrix.Bt2020) },
+            { AVColorSpace.AVCOL_SPC_BT2020_CL, nameof(YcbcrMatrix.Bt2020) },
+            { AVColorSpace.AVCOL_SPC_SMPTE2085, null },
+            { AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_NCL, null },
+            { AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_CL, null },
+            { AVColorSpace.AVCOL_SPC_ICTCP, null },
+            { AVColorSpace.AVCOL_SPC_IPT_C2, null },
+            { AVColorSpace.AVCOL_SPC_YCGCO_RE, null },
+            { AVColorSpace.AVCOL_SPC_YCGCO_RO, null },
+            { AVColorSpace.AVCOL_SPC_NB, null },
         };
 
+    /// <summary>
+    /// A frame converts with the matrix it signals at every size. One that signals none converts
+    /// with BT.601 below 720 rows and BT.709 from 720 (#841).
+    /// </summary>
     [Theory]
-    [MemberData(nameof(Matrices))]
-    public void TheMatrixIsTheFrames(AVColorSpace colorSpace, int matrix)
+    [MemberData(nameof(Signalled))]
+    public void TheMatrixIsTheFramesElseItsSizes(AVColorSpace colorSpace, string? signalledName)
     {
-        Assert.Equal(matrix, BgraConversionInput.MatrixFor((int)colorSpace));
-        Assert.Equal(matrix, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_NV12, 0, (int)colorSpace).Matrix);
-        Assert.Equal(matrix, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUVJ420P, 0, (int)colorSpace).Matrix);
-        Assert.Equal(matrix, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUV420P10LE, 0, (int)colorSpace).Matrix);
+        YcbcrMatrix? signalled = signalledName is null ? null : Enum.Parse<YcbcrMatrix>(signalledName);
+        Assert.Equal(signalled, BgraConversionInput.Signalled((int)colorSpace));
+        Assert.Equal(signalled ?? YcbcrMatrix.Bt601, BgraConversionInput.MatrixFor((int)colorSpace, 480));
+        Assert.Equal(signalled ?? YcbcrMatrix.Bt601, BgraConversionInput.MatrixFor((int)colorSpace, 719));
+        Assert.Equal(signalled ?? YcbcrMatrix.Bt709, BgraConversionInput.MatrixFor((int)colorSpace, 720));
+        Assert.Equal(signalled ?? YcbcrMatrix.Bt709, BgraConversionInput.MatrixFor((int)colorSpace, 1080));
     }
 
     [Fact]
-    public void EveryColorSpaceHasAMatrix()
+    public void EveryColorSpaceHasARow()
     {
-        var named = Matrices().Select(row => (AVColorSpace)row[0]).ToHashSet();
+        var named = Signalled().Select(row => (AVColorSpace)row[0]).ToHashSet();
 
         Assert.Empty(Enum.GetValues<AVColorSpace>().Where(c => !named.Contains(c)));
     }
@@ -103,17 +110,49 @@ public sealed class BgraConversionInputTests
     [InlineData(int.MinValue)]
     public void AnUnknownColorSpaceConvertsAsUnsignalled(int colorSpace)
     {
-        Assert.Equal(BgraConversionInput.Unsignalled, BgraConversionInput.MatrixFor(colorSpace));
+        Assert.Null(BgraConversionInput.Signalled(colorSpace));
+        Assert.Equal(YcbcrMatrix.Bt601, BgraConversionInput.MatrixFor(colorSpace, 480));
+        Assert.Equal(YcbcrMatrix.Bt709, BgraConversionInput.MatrixFor(colorSpace, 1080));
     }
 
     /// <summary>
-    /// An unsignalled frame converts with BT.709 at every size, as the D3D11 and D3D12 presenters
-    /// convert every frame (ADR-0063), so the CPU path and the GPU path agree on it.
+    /// A caller's fixed matrix replaces a tagged frame's matrix and an untagged frame's size rule
+    /// alike (#841).
     /// </summary>
-    [Fact]
-    public void AnUnsignalledFrameConvertsAsThePresentersDo()
+    [Theory]
+    [InlineData(ColorMatrix.Bt601, nameof(YcbcrMatrix.Bt601))]
+    [InlineData(ColorMatrix.Bt709, nameof(YcbcrMatrix.Bt709))]
+    [InlineData(ColorMatrix.Bt2020, nameof(YcbcrMatrix.Bt2020))]
+    public void AFixedMatrixWinsOverATaggedAndAnUntaggedFrame(ColorMatrix choice, string expectedName)
     {
-        Assert.Equal(BgraConversionInput.Bt709, BgraConversionInput.Unsignalled);
+        var expected = Enum.Parse<YcbcrMatrix>(expectedName);
+        AVColorSpace[] tags =
+        [
+            AVColorSpace.AVCOL_SPC_BT709,
+            AVColorSpace.AVCOL_SPC_SMPTE170M,
+            AVColorSpace.AVCOL_SPC_BT2020_NCL,
+            AVColorSpace.AVCOL_SPC_UNSPECIFIED,
+        ];
+        foreach (int height in new[] { 480, 1080 })
+        {
+            foreach (var tag in tags)
+                Assert.Equal(expected, BgraConversionInput.MatrixFor((int)tag, height, choice));
+        }
+    }
+
+    [Theory]
+    [InlineData(nameof(YcbcrMatrix.Bt601), BgraConversionInput.Bt601)]
+    [InlineData(nameof(YcbcrMatrix.Bt709), BgraConversionInput.Bt709)]
+    [InlineData(nameof(YcbcrMatrix.Bt2020), BgraConversionInput.Bt2020)]
+    [InlineData(nameof(YcbcrMatrix.Fcc), BgraConversionInput.Fcc)]
+    [InlineData(nameof(YcbcrMatrix.Smpte240M), BgraConversionInput.Smpte240M)]
+    public void EachMatrixHasItsSwscaleCoefficients(string matrixName, int sws)
+    {
+        var matrix = Enum.Parse<YcbcrMatrix>(matrixName);
+        Assert.Equal(sws, BgraConversionInput.SwsMatrix(matrix));
+        Assert.Equal(sws, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_NV12, 0, matrix).Matrix);
+        Assert.Equal(sws, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUVJ420P, 0, matrix).Matrix);
+        Assert.Equal(sws, BgraConversionInput.For((int)AVPixelFormat.AV_PIX_FMT_YUV420P10LE, 0, matrix).Matrix);
     }
 
     /// <summary>The <c>SWS_CS_*</c> values the matrices name, as libswscale defines them.</summary>

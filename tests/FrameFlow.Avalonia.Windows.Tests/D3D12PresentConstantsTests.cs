@@ -1,18 +1,19 @@
 using System.Runtime.InteropServices;
 using FrameFlow.Avalonia.Windows.Core;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
 /// <summary>
-/// The D3D12 presenter's root constants: the frame's part of the decode texture, and the sample
-/// levels that make studio-range BT.709 for NV12 and P010 (#429).
+/// The D3D12 presenter's root constants: the frame's part of the decode texture, the sample levels
+/// that make studio-range luma and chroma for NV12 and P010 (#429), and the frame's matrix (#841).
 /// </summary>
 public sealed class D3D12PresentConstantsTests
 {
     [Fact]
-    public void ItIsTheRootSignaturesSixteenValues()
+    public void ItIsTheRootSignaturesTwentyValues()
     {
-        Assert.Equal(16, D3D12PresentConstants.Count);
+        Assert.Equal(20, D3D12PresentConstants.Count);
         Assert.Equal(D3D12PresentConstants.Count * sizeof(float), Marshal.SizeOf<D3D12PresentConstants>());
     }
 
@@ -114,6 +115,29 @@ public sealed class D3D12PresentConstantsTests
     {
         // D3D11 sizes a constant buffer in 16-byte registers.
         Assert.Equal(16, Marshal.SizeOf<YuvLevels>());
+    }
+
+    [Fact]
+    public void TheMatrix_IsTheShadersLastRegister()
+    {
+        // After UvScale, ChromaUvMax, the levels and the two sampling registers.
+        Assert.Equal(64, (int)Marshal.OffsetOf<D3D12PresentConstants>("<Coefficients>k__BackingField"));
+        Assert.Equal(16, Marshal.SizeOf<YcbcrCoefficients>());
+    }
+
+    /// <summary>The frame's matrix reaches the constants; BT.709 when none is given (#841).</summary>
+    [Fact]
+    public void TheMatrix_IsTheFrames()
+    {
+        var whole = SourceRect.Whole(64, 64);
+        var ring = new RingSize(64, 64);
+        foreach (var matrix in Enum.GetValues<YcbcrMatrix>())
+        {
+            var c = D3D12PresentConstants.Create(YuvSampleFormat.Nv12, 64, 64, 64, 64, whole, ring, matrix);
+            Assert.Equal(YcbcrCoefficients.For(matrix), c.Coefficients);
+        }
+
+        Assert.Equal(YcbcrCoefficients.For(YcbcrMatrix.Bt709), D3D12PresentConstants.Create(YuvSampleFormat.Nv12, 64, 64, 64, 64).Coefficients);
     }
 
     [Fact]

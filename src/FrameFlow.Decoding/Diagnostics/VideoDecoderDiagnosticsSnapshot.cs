@@ -108,6 +108,12 @@ public sealed record VideoDecoderDiagnosticsSnapshot(
     public int DecodeThreads { get; init; }
 
     /// <summary>
+    /// The matrix the decoder's frames convert with, as <c>VideoDecoderOptions.ColorMatrix</c> set it:
+    /// <see cref="ColorMatrix.Auto"/> for the stream's own, or the size rule (#841).
+    /// </summary>
+    public ColorMatrix ColorMatrix { get; init; }
+
+    /// <summary>
     /// Zero-valued snapshot used as the seed value for rollups when no
     /// video decoder is active.
     /// </summary>

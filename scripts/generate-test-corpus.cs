@@ -292,6 +292,31 @@ Gen(
     new(Width: 1280, Height: 720, Fps: 24, DurationSec: 0.25)
 );
 
+// The same samples with no colour tag, at an SD and an HD size. An untagged frame converts by its
+// height (#841): BT.601 below 720 rows, BT.709 from 720.
+var untaggedBars = bt709Bars.Replace("colorspace=bt709:color_primaries=bt709:color_trc=bt709", "colorspace=unknown:color_primaries=unknown:color_trc=unknown");
+Gen(
+    "test-video-ffv1-untagged-bars-480p.mkv",
+    untaggedBars.Replace("size=1280x720", "size=720x480"),
+    "-c:v ffv1 -an",
+    new(Width: 720, Height: 480, Fps: 24, DurationSec: 0.25)
+);
+Gen(
+    "test-video-ffv1-untagged-bars-1080p.mkv",
+    untaggedBars.Replace("size=1280x720", "size=1920x1080"),
+    "-c:v ffv1 -an",
+    new(Width: 1920, Height: 1080, Fps: 24, DurationSec: 0.25)
+);
+
+// Untagged SD bars in a codec GPUs decode, for the test that the presenter's shader follows the
+// size rule as the CPU path does.
+Gen(
+    "test-video-vp9-untagged-bars-480p.webm",
+    untaggedBars.Replace("size=1280x720", "size=720x480"),
+    "-c:v libvpx-vp9 -b:v 1M -pix_fmt yuv420p -an",
+    new(Width: 720, Height: 480, Fps: 24, DurationSec: 0.25)
+);
+
 // Four planes, which is one more than the rest of this category has. Every
 // other fixture here is one, two or three, and a call site that passed only
 // three source plane pointers to sws_scale therefore converted all of them and

@@ -161,6 +161,19 @@ public interface IPassBuilder
     IPassBuilder WithDecoderThreads(int threads);
 
     /// <summary>
+    /// The matrix the pass's video frames convert to RGB with (#841). Defaults to
+    /// <see cref="ColorMatrix.Auto"/>: the one the stream signals, and for a stream that signals none
+    /// BT.709 at 720 rows or more and BT.601 below.
+    /// </summary>
+    /// <remarks>
+    /// It applies to software-decoded <see cref="PixelFormat.Bgra32"/> frames and to hardware frames
+    /// read back alike. Pick a fixed matrix to keep a consumer calibrated on one conversion, such as
+    /// a model's embeddings, whatever the stream signals.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="matrix"/> is not a defined value.</exception>
+    IPassBuilder WithColorMatrix(ColorMatrix matrix);
+
+    /// <summary>
     /// How much of the video the decoder skips, for the whole pass. Defaults to
     /// <see cref="DecodeDiscardLevel.None"/>, which decodes every frame.
     /// </summary>

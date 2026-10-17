@@ -153,6 +153,11 @@ public static class PlaybackController
     /// How many threads every item's video decoder uses when it decodes in software: 0 chooses from
     /// the processor count, up to 8, and 1 decodes on one thread. A hardware decoder ignores it.
     /// </param>
+    /// <param name="colorMatrix">
+    /// The matrix every item's video frames convert to RGB with (#841). <see cref="ColorMatrix.Auto"/>
+    /// takes the one the stream signals, and for a stream that signals none BT.709 at 720 rows or
+    /// more and BT.601 below.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     /// Another player, controller or pass holds <paramref name="videoSink"/> or
     /// <paramref name="audioSink"/>. The message names the sink and its holder.
@@ -177,10 +182,12 @@ public static class PlaybackController
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
-        int decoderThreads = 0
+        int decoderThreads = 0,
+        ColorMatrix colorMatrix = ColorMatrix.Auto
     )
     {
         ArgumentOutOfRangeException.ThrowIfNegative(decoderThreads);
+        ThrowIfUndefined(colorMatrix);
 
         // One source at a time, as a queue of one on the playlist session. Each load makes the
         // loaded source the queue's only item.
@@ -205,7 +212,8 @@ public static class PlaybackController
                 hardwareDevice: hardwareDevice,
                 preferredBackends: preferredBackends,
                 excludedCodecs: excludedCodecs,
-                decoderThreads: decoderThreads
+                decoderThreads: decoderThreads,
+                colorMatrix: colorMatrix
             ),
             initialRepeatMode,
             clock,
@@ -304,6 +312,11 @@ public static class PlaybackController
     /// How many threads every item's video decoder uses when it decodes in software: 0 chooses from
     /// the processor count, up to 8, and 1 decodes on one thread. A hardware decoder ignores it.
     /// </param>
+    /// <param name="colorMatrix">
+    /// The matrix every item's video frames convert to RGB with (#841). <see cref="ColorMatrix.Auto"/>
+    /// takes the one the stream signals, and for a stream that signals none BT.709 at 720 rows or
+    /// more and BT.601 below.
+    /// </param>
     /// <param name="prepareNextItem">
     /// Whether the playlist prepares the item its queue would take next while the current one
     /// plays (media-clips decision 8).
@@ -331,11 +344,13 @@ public static class PlaybackController
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
         int decoderThreads = 0,
+        ColorMatrix colorMatrix = ColorMatrix.Auto,
         bool prepareNextItem = false,
         string claimant = "a player"
     )
     {
         ArgumentOutOfRangeException.ThrowIfNegative(decoderThreads);
+        ThrowIfUndefined(colorMatrix);
         ArgumentNullException.ThrowIfNull(coordinator);
         loggerFactory ??= NullLoggerFactory.Instance;
         var factoryLoggers = loggerFactory;
@@ -358,6 +373,7 @@ public static class PlaybackController
                 preferredBackends: preferredBackends,
                 excludedCodecs: excludedCodecs,
                 decoderThreads: decoderThreads,
+                colorMatrix: colorMatrix,
                 prepareNextItem: prepareNextItem
             ),
             initialRepeatMode,
@@ -406,5 +422,11 @@ public static class PlaybackController
             claims.Dispose();
             throw;
         }
+    }
+
+    private static void ThrowIfUndefined(ColorMatrix colorMatrix)
+    {
+        if (!Enum.IsDefined(colorMatrix))
+            throw new ArgumentOutOfRangeException(nameof(colorMatrix), colorMatrix, "Undefined color matrix.");
     }
 }

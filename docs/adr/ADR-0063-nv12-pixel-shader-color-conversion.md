@@ -9,6 +9,10 @@
 > Two converters blitting concurrently on an NVIDIA GPU ran 30 minutes without a stall, so the
 > contention described under Context is not a property of the video processor in general. The
 > pixel shader stays the default converter.
+>
+> **Amended 2026-10-17 (#841), [below](#amended-2026-10-17).** The shader no longer converts with
+> a fixed BT.709. It takes the frame's matrix as a constant: the one the stream signals, else BT.709
+> at 720 rows or more and BT.601 below, the rule the CPU path uses.
 
 ## Status
 
@@ -128,3 +132,29 @@ stream presented nothing.
   as it does for a size change, since the staging texture and its views are built for one format.
 
 HDR transfer functions are still converted as SDR (#548).
+
+## Amended 2026-10-17
+
+**The shader converts with the frame's matrix (#841).** The Decision above fixed the matrix at
+BT.709 because frames carried no colour metadata. Since #796 the CPU path converts with the matrix
+the stream signals, and since #841 an unsignalled frame by its height. A fixed BT.709 in the shader
+made the two paths disagree on untagged SD video and on video tagged BT.601 or BT.2020, by up to
+tens of levels on saturated colour.
+
+- The rule is `YcbcrMatrices` in `FrameFlow.Media.Core`: the signalled matrix, else BT.709 at 720
+  rows or more and BT.601 below, unless the caller fixed one with `ColorMatrix`. The decoder
+  resolves it once per frame and `GpuVideoFrame` carries the result. Readback, the D3D11 converter
+  and the D3D12 converter all read that value, so no path applies the rule on its own.
+- The matrix reaches the shaders as four coefficients (`YcbcrCoefficients`, from the matrix's luma
+  weights): one more 16-byte register of the D3D11 constant buffer, four more D3D12 root constants.
+  The D3D11 converter takes it through `SetMatrix`, which the view calls for every frame, and the
+  D3D12 converter reads it from the frame it converts. Changing the matrix rewrites the constants
+  and rebuilds nothing.
+- A caller's `ColorMatrix` reaches the presenters through the same value, so a fixed matrix shows
+  in the view as in a read-back frame.
+- The video processor mode (ADR-0082) sets its stream colour space from the matrix: P601, P709 or
+  P2020, studio range, G22. DXGI has no FCC or SMPTE 240M space, so those take P601 and P709. For a
+  matrix other than BT.709 a driver may also map the primaries to the BT.709 output, which the
+  shader does not do.
+- Unchanged: limited range and SDR for every frame. Full range and HDR transfer are still separate
+  work (#388, #548).

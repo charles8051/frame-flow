@@ -1684,6 +1684,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                 EnsureConverterOutput(frame, texture, device);
                 FitRingToView(_gpuConverter!, frame);
                 var converter = _gpuConverter!;
+                // The matrix the CPU path converts this frame with (#841).
+                converter.SetMatrix(gpu.Matrix);
                 PresentRing(
                     ref job,
                     frame,

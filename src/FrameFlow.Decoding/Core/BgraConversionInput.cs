@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FFmpeg.AutoGen.Abstractions;
+using FrameFlow.Media;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Decoding.Core;
 
@@ -37,10 +39,10 @@ namespace FrameFlow.Decoding.Core;
 /// The matrix is also taken from the frame (#796). A stream that signals BT.709 converts with
 /// BT.709, one that signals BT.601 with BT.601, and so on for every matrix swscale has
 /// coefficients for. BT.2020 constant luminance is approximated with the BT.2020 non-constant
-/// luminance coefficients. A stream that signals none, or one swscale cannot convert, converts
-/// with BT.709. That is what the D3D11 and D3D12 presenters convert every frame with (ADR-0063), so an
-/// untagged stream looks the same on the CPU path and the GPU path. The presenters apply no size
-/// rule, so neither does this one: an untagged SD stream is BT.709 here too.
+/// luminance coefficients. A stream that signals none, or one swscale cannot convert, converts by
+/// its height (#841): BT.709 at 720 rows or more, BT.601 below. The rule is
+/// <see cref="YcbcrMatrices"/>, which the D3D11 and D3D12 presenters follow too, so a frame looks
+/// the same on the CPU path and the GPU path. A caller's <see cref="ColorMatrix"/> replaces both.
 /// </para>
 /// </remarks>
 /// <param name="SourceFormat">The <c>AVPixelFormat</c> swscale is set up to read.</param>
@@ -74,13 +76,13 @@ internal readonly record struct BgraConversionInput(int SourceFormat, bool Split
 
     /// <summary>
     /// The input for a decoded frame in <paramref name="decodedFormat"/>, an <c>AVPixelFormat</c>,
-    /// whose <c>color_range</c> is <paramref name="colorRange"/>, an <c>AVColorRange</c>, and whose
-    /// <c>colorspace</c> is <paramref name="colorSpace"/>, an <c>AVColorSpace</c>.
+    /// whose <c>color_range</c> is <paramref name="colorRange"/>, an <c>AVColorRange</c>, and which
+    /// converts with <paramref name="ycbcr"/> (from <see cref="MatrixFor"/>).
     /// </summary>
-    public static BgraConversionInput For(int decodedFormat, int colorRange, int colorSpace)
+    public static BgraConversionInput For(int decodedFormat, int colorRange, YcbcrMatrix ycbcr)
     {
         bool fullRange = colorRange == (int)AVColorRange.AVCOL_RANGE_JPEG;
-        int matrix = MatrixFor(colorSpace);
+        int matrix = SwsMatrix(ycbcr);
         return decodedFormat switch
         {
             (int)AVPixelFormat.AV_PIX_FMT_NV12 => new((int)AVPixelFormat.AV_PIX_FMT_YUV420P, true, fullRange, matrix),
@@ -94,49 +96,64 @@ internal readonly record struct BgraConversionInput(int SourceFormat, bool Split
     }
 
     /// <summary>
-    /// The <c>SWS_CS_*</c> matrix a frame whose <c>colorspace</c> is <paramref name="colorSpace"/>
-    /// converts with. Every <c>AVColorSpace</c> is named; a value outside the enum takes the
-    /// unsignalled matrix.
+    /// The matrix a frame whose <c>colorspace</c> is <paramref name="colorSpace"/>, an
+    /// <c>AVColorSpace</c>, and whose picture is <paramref name="height"/> rows tall converts with
+    /// when the caller chose <paramref name="choice"/>. An unsignalled frame takes
+    /// <see cref="YcbcrMatrices.Unsignalled"/>.
     /// </summary>
-    public static int MatrixFor(int colorSpace) =>
+    public static YcbcrMatrix MatrixFor(int colorSpace, int height, ColorMatrix choice = ColorMatrix.Auto) =>
+        YcbcrMatrices.Resolve(choice, Signalled(colorSpace), height);
+
+    /// <summary>
+    /// The matrix a frame whose <c>colorspace</c> is <paramref name="colorSpace"/> signals, or
+    /// <see langword="null"/> when it signals none swscale can convert with. Every
+    /// <c>AVColorSpace</c> is named; a value outside the enum signals none.
+    /// </summary>
+    public static YcbcrMatrix? Signalled(int colorSpace) =>
         (AVColorSpace)colorSpace switch
         {
-            AVColorSpace.AVCOL_SPC_BT709 => Bt709,
-            AVColorSpace.AVCOL_SPC_BT470BG => Bt601,
-            AVColorSpace.AVCOL_SPC_SMPTE170M => Bt601,
-            AVColorSpace.AVCOL_SPC_FCC => Fcc,
-            AVColorSpace.AVCOL_SPC_SMPTE240M => Smpte240M,
-            AVColorSpace.AVCOL_SPC_BT2020_NCL => Bt2020,
+            AVColorSpace.AVCOL_SPC_BT709 => YcbcrMatrix.Bt709,
+            AVColorSpace.AVCOL_SPC_BT470BG => YcbcrMatrix.Bt601,
+            AVColorSpace.AVCOL_SPC_SMPTE170M => YcbcrMatrix.Bt601,
+            AVColorSpace.AVCOL_SPC_FCC => YcbcrMatrix.Fcc,
+            AVColorSpace.AVCOL_SPC_SMPTE240M => YcbcrMatrix.Smpte240M,
+            AVColorSpace.AVCOL_SPC_BT2020_NCL => YcbcrMatrix.Bt2020,
             // An approximation. Constant luminance is not a matrix: its conversion is piecewise and
             // works on linear light, which a choice of coefficients cannot reproduce. The NCL
             // coefficients share its primaries and luma weights, so they come closer than the
-            // unsignalled BT.709, and swscale's own table gives CL the same ones.
-            AVColorSpace.AVCOL_SPC_BT2020_CL => Bt2020,
+            // size rule, and swscale's own table gives CL the same ones.
+            AVColorSpace.AVCOL_SPC_BT2020_CL => YcbcrMatrix.Bt2020,
 
             // Not signalled.
-            AVColorSpace.AVCOL_SPC_UNSPECIFIED => Unsignalled,
-            AVColorSpace.AVCOL_SPC_RESERVED => Unsignalled,
+            AVColorSpace.AVCOL_SPC_UNSPECIFIED => null,
+            AVColorSpace.AVCOL_SPC_RESERVED => null,
 
             // RGB (and an RGB pixel format) does not go through the matrix at all.
-            AVColorSpace.AVCOL_SPC_RGB => Unsignalled,
+            AVColorSpace.AVCOL_SPC_RGB => null,
 
             // Signalled, but swscale has no coefficients for them.
-            AVColorSpace.AVCOL_SPC_YCGCO => Unsignalled,
-            AVColorSpace.AVCOL_SPC_YCGCO_RE => Unsignalled,
-            AVColorSpace.AVCOL_SPC_YCGCO_RO => Unsignalled,
-            AVColorSpace.AVCOL_SPC_SMPTE2085 => Unsignalled,
-            AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_NCL => Unsignalled,
-            AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_CL => Unsignalled,
-            AVColorSpace.AVCOL_SPC_ICTCP => Unsignalled,
-            AVColorSpace.AVCOL_SPC_IPT_C2 => Unsignalled,
-            AVColorSpace.AVCOL_SPC_NB => Unsignalled,
+            AVColorSpace.AVCOL_SPC_YCGCO => null,
+            AVColorSpace.AVCOL_SPC_YCGCO_RE => null,
+            AVColorSpace.AVCOL_SPC_YCGCO_RO => null,
+            AVColorSpace.AVCOL_SPC_SMPTE2085 => null,
+            AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_NCL => null,
+            AVColorSpace.AVCOL_SPC_CHROMA_DERIVED_CL => null,
+            AVColorSpace.AVCOL_SPC_ICTCP => null,
+            AVColorSpace.AVCOL_SPC_IPT_C2 => null,
+            AVColorSpace.AVCOL_SPC_NB => null,
 
-            _ => Unsignalled,
+            _ => null,
         };
 
-    /// <summary>
-    /// The matrix for a frame that signals none swscale can use: BT.709, as the GPU presenters
-    /// convert every frame.
-    /// </summary>
-    public const int Unsignalled = Bt709;
+    /// <summary>The <c>SWS_CS_*</c> value whose coefficients are <paramref name="matrix"/>.</summary>
+    public static int SwsMatrix(YcbcrMatrix matrix) =>
+        matrix switch
+        {
+            YcbcrMatrix.Bt601 => Bt601,
+            YcbcrMatrix.Bt709 => Bt709,
+            YcbcrMatrix.Bt2020 => Bt2020,
+            YcbcrMatrix.Fcc => Fcc,
+            YcbcrMatrix.Smpte240M => Smpte240M,
+            _ => throw new ArgumentOutOfRangeException(nameof(matrix), matrix, "Undefined matrix."),
+        };
 }

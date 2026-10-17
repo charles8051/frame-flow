@@ -214,6 +214,39 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-ffv1-untagged-bars-480p.mkv",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 720,
+    "height": 480,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-ffv1-untagged-bars-1080p.mkv",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 1920,
+    "height": 1080,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-vp9-untagged-bars-480p.webm",
+    "durationSeconds": 0.25,
+    "durationToleranceMs": 500,
+    "width": 720,
+    "height": 480,
+    "fps": 24,
+    "expectedVideoFrames": 6,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-video-ffv1-yuva420p.mkv",
     "durationSeconds": 3,
     "durationToleranceMs": 350,

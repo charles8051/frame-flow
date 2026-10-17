@@ -40,6 +40,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private HardwareDecodeBackendKind[] _preferredBackends = [];
     private string[] _excludedCodecs = [];
     private int _decoderThreads;
+    private ColorMatrix _colorMatrix;
     private bool _activateAudioSink = true;
     private bool _prepareNextItem;
 
@@ -186,6 +187,14 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithColorMatrix(ColorMatrix matrix)
+    {
+        if (!Enum.IsDefined(matrix))
+            throw new ArgumentOutOfRangeException(nameof(matrix), matrix, "Undefined color matrix.");
+        _colorMatrix = matrix;
+        return this;
+    }
+
     public IPlayerBuilder WithNextItemPrepared(bool prepare = true)
     {
         _prepareNextItem = prepare;
@@ -251,6 +260,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             preferredBackends: _preferredBackends,
             excludedCodecs: _excludedCodecs,
             decoderThreads: _decoderThreads,
+            colorMatrix: _colorMatrix,
             prepareNextItem: _prepareNextItem,
             cancellationToken: cancellationToken
         );
