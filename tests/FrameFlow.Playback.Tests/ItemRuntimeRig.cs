@@ -226,14 +226,24 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     /// <summary>
     /// Seeks to <paramref name="target"/>, and cancels the seek once it waits for the run to end.
     /// </summary>
+    /// <remarks>
+    /// The run has to be held by work that ignores its cancellation
+    /// (<see cref="FakeItemMedia.IgnoresCancellation"/>). The seek cancels the run as it arrives,
+    /// and work that ends on that cancellation lets the seek run to its end before the cancel below
+    /// reaches it (#776). The cancel waits until the run's cancellation has reached held work, so
+    /// the seek is still waiting when it comes.
+    /// </remarks>
     public async Task SeekCutShortAsync(TimeSpan target)
     {
         using var cancel = new CancellationTokenSource();
+        var held = Media.HeldThroughCancellation();
         var waiting = Next(Step.WaitingForRun);
         var seek = Session.SeekAsync(target, cancel.Token).AsTask();
 
         var first = await Task.WhenAny(waiting, seek).WaitAsync(Bound);
         Assert.True(first == waiting, $"The seek to {target} did not wait for the run.");
+        var holding = await Task.WhenAny(held, seek).WaitAsync(Bound);
+        Assert.True(holding == held, $"The run ended before the seek to {target} was cut short: no work held it.");
 
         await cancel.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => seek.WaitAsync(Bound));
@@ -426,6 +436,7 @@ internal sealed class FakeWork
 {
     private readonly TaskCompletionSource<Exception?> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _heldThroughCancellation = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public FakeWork(ItemWork kind, int run, CancellationToken token, bool ignoresCancellation)
     {
@@ -433,6 +444,18 @@ internal sealed class FakeWork
         Run = run;
         Token = token;
         IgnoresCancellation = ignoresCancellation;
+        if (ignoresCancellation)
+        {
+            token.UnsafeRegister(
+                static state =>
+                {
+                    var work = (FakeWork)state!;
+                    if (work.Holding)
+                        work._heldThroughCancellation.TrySetResult();
+                },
+                this
+            );
+        }
     }
 
     public ItemWork Kind { get; }
@@ -446,6 +469,15 @@ internal sealed class FakeWork
 
     /// <summary>Completes once the work has ended, however it ended.</summary>
     public Task Ended => _ended.Task;
+
+    /// <summary>Whether the work ignores its cancellation and has not been let go.</summary>
+    public bool Holding => IgnoresCancellation && !_release.Task.IsCompleted;
+
+    /// <summary>
+    /// Completes once its run's cancellation has reached the work while it held: the work goes on,
+    /// and keeps its run going, until the test lets it go.
+    /// </summary>
+    public Task HeldThroughCancellation => _heldThroughCancellation.Task;
 
     /// <summary>Ends the work as having run to its end.</summary>
     public void Complete() => _release.TrySetResult(null);
@@ -678,6 +710,19 @@ internal sealed class FakeItemMedia : IItemMedia
     {
         lock (_gate)
             return _works.Last(w => w.Kind == kind);
+    }
+
+    /// <summary>
+    /// Completes once a run's cancellation reaches a piece of work that holds now
+    /// (<see cref="FakeWork.Holding"/>). With none, it never completes.
+    /// </summary>
+    public Task HeldThroughCancellation()
+    {
+        lock (_gate)
+        {
+            var holding = _works.Where(w => w.Holding).Select(w => w.HeldThroughCancellation).ToArray();
+            return holding.Length == 0 ? new TaskCompletionSource().Task : Task.WhenAny(holding);
+        }
     }
 
     /// <summary>
