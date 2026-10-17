@@ -140,6 +140,20 @@ public static class PresenterTeardownMetrics
             + "rebuild the decode pipeline; the presenter cannot self-recover from a device-level wedge (§9)."
     );
 
+    private static readonly Histogram<double> ConvertDurationMs = Meter.CreateHistogram<double>(
+        "frameflow.presenter.convert_duration_ms",
+        unit: "ms",
+        description: "Wall-clock time of one frame's conversion into the presenter's ring, on the thread pool rather "
+            + "than the UI thread (#781): the copy out of the decoder's texture and the shader pass, or the upload of "
+            + "a CPU frame, tagged by source (d3d11, d3d12 or cpu). The view's LastConvertDuration is its own last one."
+    );
+
+    /// <summary>Records one conversion that took <paramref name="elapsedTicks"/> Stopwatch ticks.</summary>
+    public static void RecordConvert(long elapsedTicks, string source) =>
+        ConvertDurationMs.Record(
+            Stopwatch.GetElapsedTime(0, elapsedTicks).TotalMilliseconds,
+            new KeyValuePair<string, object?>("source", source));
+
     private static readonly Histogram<double> TeardownDurationMs = Meter.CreateHistogram<double>(
         "frameflow.presenter.teardown_duration_ms",
         unit: "ms",
