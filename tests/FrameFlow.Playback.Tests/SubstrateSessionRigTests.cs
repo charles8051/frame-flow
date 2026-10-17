@@ -390,13 +390,17 @@ public sealed class SubstrateSessionRigTests
     {
         await using var rig = ItemRuntimeRig.Create();
         rig.Media.FirstFrameOnGraphStart = false;
+        rig.Media.IgnoresCancellation = ItemWork.Graph;
         await rig.OpenAsync();
         var warm = rig.Session.WarmUpAsync().AsTask();
-        await rig.Media.Started(ItemWork.Graph).WaitAsync(Bound);
+        var graph = await rig.Media.Started(ItemWork.Graph).WaitAsync(Bound);
         await rig.SeekCutShortAsync(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => warm.WaitAsync(Bound));
 
+        var waiting = rig.Next(Step.WaitingForRun);
         var again = rig.Session.WarmUpAsync().AsTask();
+        await waiting.WaitAsync(Bound);
+        graph.Release();
         await rig.Media.Started(ItemWork.Graph, 2).WaitAsync(Bound);
         rig.Media.DecodeFirstFrame();
         await again.WaitAsync(Bound);
