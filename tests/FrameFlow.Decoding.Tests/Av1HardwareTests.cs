@@ -78,10 +78,8 @@ public sealed class Av1HardwareTests(FfmpegBootstrapFixture fixture)
         Assert.Equal(Av1Fixtures.Clip420Frames, run.Frames);
         Assert.NotNull(run.Bound);
         Assert.NotNull(run.Engaged);
-        Assert.True(
-            run.MeanDifference(software) < 3,
-            $"hardware differs from software by {run.MeanDifference(software):F2} levels on average"
-        );
+        // Identical, not close: both decoders are bit-exact and both frames convert alike (#792).
+        Assert.Equal(software.First, run.First);
     }
 
     [RequiresAv1HardwareFact]
@@ -217,18 +215,7 @@ public sealed class Av1HardwareTests(FfmpegBootstrapFixture fixture)
         HardwareDecodeBackendKind? BoundAfter,
         HardwareDecodeBackendKind? Engaged,
         byte[] First
-    )
-    {
-        public double MeanDifference(Run other)
-        {
-            if (First.Length != other.First.Length)
-                return double.MaxValue;
-            long sum = 0;
-            for (int i = 0; i < First.Length; i++)
-                sum += Math.Abs(First[i] - other.First[i]);
-            return (double)sum / First.Length;
-        }
-    }
+    );
 
     private async Task<Run> DecodeAsync(
         byte[] clip,

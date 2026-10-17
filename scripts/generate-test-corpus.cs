@@ -241,6 +241,15 @@ Gen(
     new(Width: 1280, Height: 720, Fps: 60, DurationSec: 3.0)
 );
 
+// Full range, flagged in the stream. VP9 decodes in software as yuv420p carrying the flag, not as
+// a JPEG format, so the conversion has to take the range from the frame (#792).
+Gen(
+    "test-video-vp9-yuv420p-fullrange.webm",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v libvpx-vp9 -b:v 200k -pix_fmt yuv420p -color_range pc -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 // Four planes, which is one more than the rest of this category has. Every
 // other fixture here is one, two or three, and a call site that passed only
 // three source plane pointers to sws_scale therefore converted all of them and

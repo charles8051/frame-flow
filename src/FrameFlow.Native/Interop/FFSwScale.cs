@@ -88,6 +88,39 @@ internal static partial class FFSwScale
     );
 
     /// <summary>
+    /// Sets the conversion matrices and ranges of a context made by <see cref="sws_getContext"/>.
+    /// Returns a negative value when the context cannot take them.
+    /// </summary>
+    /// <param name="ctx">The conversion context.</param>
+    /// <param name="invTable">The YUV-to-RGB coefficients, from <see cref="sws_getCoefficients"/>.</param>
+    /// <param name="srcRange">1 when the source is full range (JPEG), 0 when limited (MPEG).</param>
+    /// <param name="table">The RGB-to-YUV coefficients, from <see cref="sws_getCoefficients"/>.</param>
+    /// <param name="dstRange">1 when the destination is full range, 0 when limited.</param>
+    /// <param name="brightness">16.16 fixed point; 0 leaves it unchanged.</param>
+    /// <param name="contrast">16.16 fixed point; <c>1 &lt;&lt; 16</c> leaves it unchanged.</param>
+    /// <param name="saturation">16.16 fixed point; <c>1 &lt;&lt; 16</c> leaves it unchanged.</param>
+    [LibraryImport("swscale")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int sws_setColorspaceDetails(
+        nint ctx,
+        nint invTable,
+        int srcRange,
+        nint table,
+        int dstRange,
+        int brightness,
+        int contrast,
+        int saturation
+    );
+
+    /// <summary>
+    /// Returns swscale's static four-entry coefficient table for <paramref name="colorspace"/>, a
+    /// <c>SWS_CS_*</c> value. Not owned by the caller.
+    /// </summary>
+    [LibraryImport("swscale")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint sws_getCoefficients(int colorspace);
+
+    /// <summary>
     /// Frees the scaling context. Safe to call with a <see cref="nint.Zero"/> pointer.
     /// </summary>
     [LibraryImport("swscale")]
@@ -127,4 +160,7 @@ internal static partial class FFSwScale
 
     /// <summary>SWS_BILINEAR — bilinear interpolation flag for <see cref="sws_getContext"/>.</summary>
     internal const int SwsBilinear = 2;
+
+    /// <summary>SWS_CS_DEFAULT — the matrix <see cref="sws_getContext"/> starts with (ITU-R BT.601).</summary>
+    internal const int SwsCsDefault = 5;
 }

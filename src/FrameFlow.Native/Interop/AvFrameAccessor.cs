@@ -98,6 +98,16 @@ internal readonly unsafe ref struct AvFrameAccessor
         }
     }
 
+    /// <summary>The frame's <c>AVColorRange</c> as an integer: 1 limited (MPEG), 2 full (JPEG), 0 unspecified.</summary>
+    internal int ColorRange
+    {
+        get
+        {
+            ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+            return (int)f.color_range;
+        }
+    }
+
     /// <summary>
     /// Presentation timestamp in the stream's time base.
     /// Returns <see cref="FFAvUtil.AvNoPtsValue"/> if no PTS is available.

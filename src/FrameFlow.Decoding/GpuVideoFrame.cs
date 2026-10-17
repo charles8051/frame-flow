@@ -47,6 +47,27 @@ namespace FrameFlow.Decoding;
 /// readback buffer.
 /// </para>
 /// <para>
+/// <b>Reading back only some frames.</b> A frame stays on the GPU until it is read back, so a
+/// caller that needs a CPU copy of a few frames reads back those and disposes the rest. Disposing a
+/// frame returns its surface to the decoder's pool without a transfer. Release each frame before
+/// asking for the next one: the pool is fixed on most backends, and frames held back starve the
+/// decoder.
+/// <code>
+/// decoder.YieldHardwareFrames = true;
+/// await foreach (var frame in decoder.DecodeAsync())
+/// {
+///     using (frame)
+///     {
+///         if (frame is GpuVideoFrame gpu &amp;&amp; IsWanted(gpu.Pts))
+///         {
+///             using var bgra = gpu.ReadbackToCpuBgra32();
+///             Consume(bgra);
+///         }
+///     }
+/// }
+/// </code>
+/// </para>
+/// <para>
 /// <b>Software pixel format.</b> The <see cref="Format"/> property
 /// reports the format the frame would have after
 /// <c>av_hwframe_transfer_data</c>, which is the pool's
@@ -313,6 +334,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// pixel data via <c>av_hwframe_transfer_data</c>, then
     /// <c>sws_scale</c>s the result to a tightly-packed
     /// <see cref="PixelFormat.Bgra32"/> <see cref="CpuVideoFrame"/>.
+    /// The pixels are those a software decode of the same stream converts to (#792).
     /// The output's <c>PresentationTime</c>, <c>Duration</c>, pixel shape, rotation and
     /// <see cref="Timeline"/> match this frame's. Caller owns the returned frame and must
     /// dispose it.
