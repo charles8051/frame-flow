@@ -219,6 +219,9 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
 
         public bool DisposeCompleted { get; init; }
 
+        /// <summary>The teardown has said it let go of what the runtime shares (#780).</summary>
+        public bool SharedReleased { get; init; }
+
         /// <summary>The runtime acts on the shared clock and sink: from construction, or since its attach.</summary>
         public bool Attached { get; init; }
 
@@ -526,7 +529,17 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     Ensure(m.Attached || m.Audio != AudioModel.Inactive, "Leaves the shared audio sink alone in a detached runtime that never activated it");
                     m = m with { Audio = AudioModel.Inactive };
                     break;
+                case Action.ReleaseShared:
+                    Ensure(teardown, "Lets go of what it shares only in the teardown");
+                    Ensure(!m.SharedReleased, "Lets go of what it shares once");
+                    Ensure((m.Alive & ItemResources.Pacer) == 0, "Lets go of what it shares once its pacer is freed");
+                    Ensure(m.Working == ItemWork.None && m.Live is null, "Lets go of what it shares once no work of any run is pending");
+                    Ensure(m.Audio == AudioModel.Inactive, "Lets go of what it shares once its audio is deactivated");
+                    Ensure(!m.Attached || m.Clock == ClockModel.Stopped, "Lets go of what it shares once an attached runtime's clock is stopped");
+                    m = m with { SharedReleased = true };
+                    break;
                 case Action.Free free:
+                    Ensure(free.Resource == ItemResources.Pacer || m.SharedReleased, "Frees what is its own only after it lets go of what it shares");
                     Ensure(free.Resource is not ItemResources.None && (free.Resource & (free.Resource - 1)) == 0, "Frees one resource at a time");
                     Ensure((m.Alive & free.Resource) != 0, "Frees each resource exactly once");
                     Ensure((int)m.Alive < 2 * (int)free.Resource, "Frees in reverse allocation order");
@@ -570,6 +583,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     break;
                 case Action.CompleteDispose:
                     Ensure(!m.DisposeCompleted, "Completes the dispose once");
+                    Ensure(m.SharedReleased, "Completes the dispose after it lets go of what it shares");
                     Ensure(
                         m.Alive == ItemResources.None && m.Working == ItemWork.None && m.Live is null,
                         "Completes the dispose once everything is freed and nothing runs"

@@ -260,6 +260,13 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     /// </summary>
     public Exception? FatalCallbackThrows { get; set; }
 
+    /// <summary>
+    /// Whether a fake runtime's dispose lets go of what it shares before its held call, so the
+    /// session goes on while the rest of that dispose is held (#780). Off, it lets go as the
+    /// dispose ends, and the session waits for the whole dispose.
+    /// </summary>
+    public bool ReleasesSharedFirst { get; set; }
+
     private void Record(string line)
     {
         lock (_gate)
@@ -502,10 +509,25 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
 
         public ValueTask AttachAsync() => rig.PerformAsync(this, ItemOp.Attach, "Attach", CancellationToken.None);
 
+        private readonly TaskCompletionSource _sharedReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task SharedReleased => _sharedReleased.Task;
+
+        // Lets go of what it shares as its dispose starts when the rig says so, as SubstrateSession
+        // does before it frees its decoders, and as the dispose ends otherwise.
         public async ValueTask DisposeAsync()
         {
-            await rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
-            Follow(m => m.DisposedNow());
+            if (rig.ReleasesSharedFirst)
+                _sharedReleased.TrySetResult();
+            try
+            {
+                await rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
+                Follow(m => m.DisposedNow());
+            }
+            finally
+            {
+                _sharedReleased.TrySetResult();
+            }
         }
 
         internal void Follow(Func<PlaylistItemModel, PlaylistItemModel> transition) =>

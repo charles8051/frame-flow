@@ -954,6 +954,8 @@ internal static class ItemRuntimeProtocol
                 Emit(new ItemRuntimeAction.DeactivateAudio());
             if (State.Attached)
                 Emit(new ItemRuntimeAction.StopClock());
+            // The rest is the runtime's own, so the playlist need not wait for it to go on (#780).
+            Emit(new ItemRuntimeAction.ReleaseShared());
             foreach (var resource in FreedAfterThePacer)
             {
                 if ((resources & resource) != 0)

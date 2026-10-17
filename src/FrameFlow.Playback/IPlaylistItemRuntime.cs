@@ -61,6 +61,16 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// runtime attached.
     /// </summary>
     ValueTask AttachAsync();
+
+    /// <summary>
+    /// Completes once a dispose has let go of everything the runtime shares with the playlist: no
+    /// more frames reach the video sink, its audio is deactivated and the position clock is
+    /// stopped. What the dispose does after that touches nothing the next item uses, so the
+    /// session goes on to the next item from here and waits for the rest in the background
+    /// (#780). Completes when the dispose does, at the latest, and never faults. See
+    /// <see cref="SubstrateSession.SharedReleased"/>.
+    /// </summary>
+    Task SharedReleased { get; }
 }
 
 /// <summary>Creates the runtime for each item a <see cref="PlaylistSession"/> opens.</summary>

@@ -1,5 +1,15 @@
 # ADR-0086: Work in flight is held until it ends: one owner, one disposal
 
+> **Amended 2026-10-17: a playlist switch waits for the old item to let go of what it shares
+> (#780).** The item runtime's core emits `ReleaseShared` in its teardown once the pacer is freed,
+> the audio deactivated and an attached runtime's clock stopped, before it frees the pipeline, the
+> decoders and the demuxer. `PlaylistSession` goes on to the next item at that point, and keeps the
+> rest of the dispose as it keeps a discarded prepared runtime's: the session's own dispose awaits
+> it. Decision 3 holds. The session is still the one owner, nothing is freed before the work that
+> uses it has ended, and nothing is abandoned. What changes is that the next item no longer waits
+> for frees that touch nothing it uses. On a shared GPU those frees grow with the number of players
+> switching at once.
+
 ## Status
 
 **Accepted (2026-10-14) and implemented (2026-10-14)** under #718: staging slice 1 in #721, slice 2
@@ -657,3 +667,5 @@ None remain. The draft's three were settled on acceptance:
   decisions are unchanged.
 - **2026-10-14, after the slices.** #739 moved from what is left to a note on the change that
   addressed it (#743). The decisions are unchanged.
+- **2026-10-17, #780.** The amendment at the top: a switch waits for `ReleaseShared`, and the
+  session awaits the rest of the old item's dispose at its own. Decision 3 is unchanged.
