@@ -31,13 +31,17 @@ internal static class YuvReference
         (16, 128, 128),
     ];
 
-    /// <summary>The matrix a frame tagged <paramref name="colorSpace"/> should convert with.</summary>
-    public static Matrix For(AVColorSpace colorSpace) =>
+    /// <summary>
+    /// The matrix a frame <paramref name="height"/> rows tall and tagged <paramref name="colorSpace"/>
+    /// should convert with. An untagged frame is BT.601 below 720 rows and BT.709 from 720 (#841).
+    /// </summary>
+    public static Matrix For(AVColorSpace colorSpace, int height) =>
         colorSpace switch
         {
             AVColorSpace.AVCOL_SPC_BT470BG or AVColorSpace.AVCOL_SPC_SMPTE170M => Bt601,
             AVColorSpace.AVCOL_SPC_BT2020_NCL or AVColorSpace.AVCOL_SPC_BT2020_CL => Bt2020,
-            AVColorSpace.AVCOL_SPC_BT709 or AVColorSpace.AVCOL_SPC_UNSPECIFIED => Bt709,
+            AVColorSpace.AVCOL_SPC_BT709 => Bt709,
+            AVColorSpace.AVCOL_SPC_UNSPECIFIED => height >= 720 ? Bt709 : Bt601,
             _ => throw new ArgumentOutOfRangeException(nameof(colorSpace), colorSpace, null),
         };
 

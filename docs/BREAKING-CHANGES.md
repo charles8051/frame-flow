@@ -11,6 +11,50 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.17.0`
+
+### 1. An untagged SD frame converts with BT.601, and the presenters convert with the frame's matrix
+
+**No compile error. Pixels change again for untagged SD video.**
+
+In `v0.17.0` a frame that signals no matrix converted to `Bgra32` with BT.709 at every size (entry
+5 of that release). SD video is mastered in BT.601, so an untagged 480p or 576p stream shifted
+colour the other way: on 480p VP9 files with no colour tag, every frame differed from `v0.16.0` by
+8.5 levels on average and by 47 at worst in a channel (#841). Untagged SD is common in web
+transcodes and older camera files.
+
+A frame that signals no matrix, or one swscale has no coefficients for, now converts by its height:
+BT.709 at 720 rows or more, BT.601 below. Players and FFmpeg's own tools guess the same way. A
+tagged frame converts with its tag, as in `v0.17.0`. The rule applies to the software decoder, to
+hardware readback and to `GpuVideoFrame.ReadbackToCpuBgra32` alike, so hardware and software
+output stay byte-identical.
+
+The D3D11 and D3D12 presenters used to convert every frame with BT.709, whatever it signalled
+(ADR-0063). They now convert with the same matrix the CPU path uses for that frame: the tag, else
+the size rule. An untagged SD stream, and a stream tagged BT.601 or BT.2020, now looks the same in
+the view as in a decoded `Bgra32` frame. The presenters still convert every frame as limited range
+and as SDR.
+
+A caller can now fix the matrix. `VideoDecoderOptions.ColorMatrix`,
+`IPlayerBuilder.WithColorMatrix`, `IPassBuilder.WithColorMatrix` and the new `colorMatrix` parameter
+of `PlaybackController.Create` take `ColorMatrix.Auto` (the default: the tag, else the size rule) or a
+fixed `Bt601`, `Bt709` or `Bt2020`, which replaces the tag and the size rule for every frame. The
+choice reaches the presenters too. `VideoDecoderDiagnosticsSnapshot.ColorMatrix` reports it.
+
+**Who hits this.**
+- Golden images, perceptual hashes or model inputs captured with `v0.17.0` from untagged video
+  below 720 rows.
+- Screenshots of the D3D11 or D3D12 presenter showing untagged SD video or video tagged BT.601 or
+  BT.2020.
+- A caller compiled against `PlaybackController.Create`. The parameter is optional, so source
+  compiles unchanged, but the signature changed.
+
+**What to write instead.** Nothing to change in code. Recapture references taken from untagged SD
+video with `v0.17.0`. To keep `v0.17.0`'s pixels for untagged video at every size, fix the matrix:
+`WithColorMatrix(ColorMatrix.Bt709)` or `new VideoDecoderOptions { ColorMatrix = ColorMatrix.Bt709 }`.
+That also converts tagged BT.601 frames with BT.709. A consumer calibrated on one conversion, such as
+a model's embeddings, can fix the matrix the same way and stop depending on the stream's tag.
+
 ## `v0.17.0` — since `v0.16.0`
 
 ### 1. A playlist whose every item fails to start ends, and `Error` can be left

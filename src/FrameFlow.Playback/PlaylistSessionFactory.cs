@@ -74,7 +74,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
         bool prepareNextItem = false,
-        int decoderThreads = 0
+        int decoderThreads = 0,
+        ColorMatrix colorMatrix = Media.ColorMatrix.Auto
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -96,7 +97,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             hardwareDevice,
             preferredBackends,
             excludedCodecs,
-            decoderThreads
+            decoderThreads,
+            colorMatrix
         );
     }
 
@@ -121,6 +123,9 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
 
     /// <summary>The software decoders' thread count the item factory carries, for the same tests (#788).</summary>
     internal int? DecoderThreads => (_itemFactory as SubstrateSessionFactory)?.DecoderThreads;
+
+    /// <summary>The matrix choice the item factory carries, for the same tests (#841).</summary>
+    internal Media.ColorMatrix? ColorMatrix => (_itemFactory as SubstrateSessionFactory)?.ColorMatrix;
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {

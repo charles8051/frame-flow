@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Runtime.InteropServices;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Avalonia.Windows.Core;
 
@@ -40,5 +41,27 @@ internal readonly record struct YuvLevels(float YOffset, float YScale, float COf
             YScale: (float)(1 / (luma * codeValue)),
             COffset: (float)(neutral * codeValue),
             CScale: (float)(1 / (chroma * codeValue)));
+    }
+}
+
+/// <summary>
+/// The coefficients a presenter's pixel shader turns studio-range luma and chroma into RGB with
+/// (#841): <c>R = Y + RV·V</c>, <c>G = Y - GU·U - GV·V</c> and <c>B = Y + BU·U</c>. Pure: a matrix in,
+/// four values out. The D3D11 and D3D12 presenters share it, and the matrix is the one the frame
+/// converts with on the CPU path, so both paths agree.
+/// </summary>
+/// <remarks>Laid out as one 16-byte row of the shaders' constants.</remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct YcbcrCoefficients(float RV, float GU, float GV, float BU)
+{
+    public static YcbcrCoefficients For(YcbcrMatrix matrix)
+    {
+        var (kr, kb) = YcbcrMatrices.Weights(matrix);
+        double kg = 1 - kr - kb;
+        return new YcbcrCoefficients(
+            RV: (float)(2 * (1 - kr)),
+            GU: (float)(2 * kb * (1 - kb) / kg),
+            GV: (float)(2 * kr * (1 - kr) / kg),
+            BU: (float)(2 * (1 - kb)));
     }
 }

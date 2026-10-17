@@ -43,6 +43,22 @@ public sealed class PassBuilderTests
     }
 
     [Fact]
+    public void WithColorMatrix_Undefined_Throws()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() => builder.WithColorMatrix((Media.ColorMatrix)99));
+    }
+
+    [Fact]
+    public void WithColorMatrix_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+
+        Assert.Same(builder, builder.WithColorMatrix(Media.ColorMatrix.Auto));
+        Assert.Same(builder, builder.WithColorMatrix(Media.ColorMatrix.Bt601));
+    }
+
+    [Fact]
     public void WithDecoderThreads_ReturnsSameBuilderForChaining()
     {
         var builder = FrameFlowPass.Create("any.mp4");

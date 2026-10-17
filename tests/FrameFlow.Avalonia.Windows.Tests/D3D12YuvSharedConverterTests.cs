@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using FrameFlow.Decoding;
 using FrameFlow.Inference.D3D12.Tests;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Vortice.Direct3D;
@@ -25,11 +26,12 @@ public sealed class FrameCopyCountsCollection
 [Collection(FrameCopyCountsCollection.Name)]
 public sealed class D3D12YuvSharedConverterTests
 {
-    // 320x240 H.264, BT.601 in the stream; the presenter converts as BT.709 whatever the stream says.
+    // 320x240 H.264 with no colour tag, so BT.601 by its size, which the presenter converts with as
+    // the CPU path does (#841).
     private const string Clip = "test-video-h264-yuv420p.mp4";
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
-    public async Task EachBuffer_HoldsItsFramesBt709Conversion()
+    public async Task EachBuffer_HoldsItsFramesBt601Conversion()
     {
         var frames = await Decode.FramesAsync(Clip, HardwareDecodeBackendKind.D3D12Va, yieldHardware: true, count: 4);
         try
@@ -43,10 +45,11 @@ public sealed class D3D12YuvSharedConverterTests
             for (int i = 0; i < frames.Count; i++)
             {
                 var frame = (GpuVideoFrame)frames[i];
+                Assert.Equal(YcbcrMatrix.Bt601, frame.Matrix);
                 int buffer = i % D3D12YuvSharedConverter.BufferCount;
                 Assert.True(converter.ConvertInto(buffer, frame));
 
-                var expected = Reference(Nv12Image.Read(frame));
+                var expected = Reference(Nv12Image.Read(frame), Bt601);
                 var presented = compositor.Read(converter.GetSharedHandle(buffer), frame.Width, frame.Height);
                 AssertClose(expected, presented, $"frame {i}");
             }
@@ -120,9 +123,9 @@ public sealed class D3D12YuvSharedConverterTests
     /// <summary>
     /// The shader's arithmetic on the CPU: luma at its own sample, since the output is frame-sized;
     /// chroma bilinear with its samples centred on their 2x2 blocks, clamped to the frame's last
-    /// sample; BT.709 studio range; rounded to 8 bits. BGRA.
+    /// sample; studio range, with <paramref name="matrix"/>; rounded to 8 bits. BGRA.
     /// </summary>
-    private static byte[] Reference(Nv12Image image)
+    private static byte[] Reference(Nv12Image image, (double RV, double GU, double GV, double BU) matrix)
     {
         int width = image.Width, height = image.Height;
         var bgra = new byte[width * height * 4];
@@ -135,15 +138,18 @@ public sealed class D3D12YuvSharedConverterTests
                 double v = (Chroma(image, x, y, 1) / 255.0 - 128.0 / 255) * (255.0 / 224);
 
                 int at = (y * width + x) * 4;
-                bgra[at + 0] = Unorm(luma + 1.8556 * u);
-                bgra[at + 1] = Unorm(luma - 0.1873 * u - 0.4681 * v);
-                bgra[at + 2] = Unorm(luma + 1.5748 * v);
+                bgra[at + 0] = Unorm(luma + matrix.BU * u);
+                bgra[at + 1] = Unorm(luma - matrix.GU * u - matrix.GV * v);
+                bgra[at + 2] = Unorm(luma + matrix.RV * v);
                 bgra[at + 3] = 255;
             }
         }
 
         return bgra;
     }
+
+    // BT.601's inverse matrix, as written in the standard (Kr = 0.299, Kb = 0.114).
+    private static readonly (double RV, double GU, double GV, double BU) Bt601 = (1.402, 0.344136, 0.714136, 1.772);
 
     private static double Chroma(Nv12Image image, int x, int y, int component)
     {

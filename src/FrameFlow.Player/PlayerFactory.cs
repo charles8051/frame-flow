@@ -40,6 +40,7 @@ internal static class PlayerFactory
         IReadOnlyList<HardwareDecodeBackendKind> preferredBackends,
         IReadOnlyList<string> excludedCodecs,
         int decoderThreads,
+        ColorMatrix colorMatrix,
         bool prepareNextItem,
         CancellationToken cancellationToken
     )
@@ -83,6 +84,7 @@ internal static class PlayerFactory
                 preferredBackends: preferredBackends,
                 excludedCodecs: excludedCodecs,
                 decoderThreads: decoderThreads,
+                colorMatrix: colorMatrix,
                 prepareNextItem: prepareNextItem,
                 claimant: initial.Count > 0
                     ? $"a player built for '{initial[0].Source.DisplayName}'"

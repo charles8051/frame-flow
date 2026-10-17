@@ -255,6 +255,18 @@ public interface IPlayerBuilder
     IPlayerBuilder WithDecoderThreads(int threads);
 
     /// <summary>
+    /// The matrix every playlist item's video frames convert to RGB with (#841). Defaults to
+    /// <see cref="ColorMatrix.Auto"/>: the one the stream signals, and for a stream that signals none
+    /// BT.709 at 720 rows or more and BT.601 below.
+    /// </summary>
+    /// <remarks>
+    /// It applies to software-decoded frames, hardware frames read back, and the D3D11 and D3D12
+    /// presenters alike, so the picture does not change with the decode path.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="matrix"/> is not a defined value.</exception>
+    IPlayerBuilder WithColorMatrix(ColorMatrix matrix);
+
+    /// <summary>
     /// Has the built player prepare the item its queue would take next while the current one
     /// plays: open it, position it at its start and decode up to it, so moving on to it costs a
     /// hand-off rather than an open and a decode walk. Off by default.

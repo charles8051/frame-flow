@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
@@ -78,8 +79,8 @@ internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposab
     private static readonly TimeSpan GpuWaitLimit = TimeSpan.FromSeconds(1);
 
     // The D3D11 converter's conversion (ADR-0063), with the sample levels, the frame's part of the
-    // texture and the part of the frame the ring holds as root constants, so NV12 and P010 share one
-    // pipeline.
+    // texture, the part of the frame the ring holds and the frame's matrix (#841) as root constants,
+    // so NV12 and P010, and every matrix, share one pipeline.
     private const string Hlsl = """
         cbuffer Constants : register(b0)
         {
@@ -88,6 +89,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposab
             float YOffset, YScale, COffset, CScale; // YuvLevels
             float2 SourceOrigin, SourceSize;        // ShaderSampling: the part of the frame read,
             float2 Footprint, Unused;               // and the frame each ring pixel covers, in uv
+            float RV, GU, GV, BU;                   // YcbcrCoefficients: the frame's matrix
         };
 
         // The most texels per axis the area filter averages: a 64:1 shrink. Past it the filter reads
@@ -162,11 +164,11 @@ internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposab
             float U = (c.x - COffset) * CScale;
             float V = (c.y - COffset) * CScale;
 
-            // BT.709 inverse matrix (Kr=0.2126, Kb=0.0722).
+            // The frame's YCbCr-to-RGB matrix (YcbcrCoefficients).
             float3 rgb;
-            rgb.r = Y +               1.5748 * V;
-            rgb.g = Y - 0.1873  * U - 0.4681 * V;
-            rgb.b = Y + 1.8556  * U;
+            rgb.r = Y +          RV * V;
+            rgb.g = Y - GU * U - GV * V;
+            rgb.b = Y + BU * U;
             return float4(saturate(rgb), 1.0);
         }
         """;
@@ -451,16 +453,19 @@ internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposab
         if (subresource != 0)
             throw new NotSupportedException("A frame in a texture array is not supported.");
 
-        return ConvertInto(index, textureHandle, fenceHandle, fenceValue, frame.AddRef);
+        return ConvertInto(index, textureHandle, fenceHandle, fenceValue, frame.AddRef, frame.Matrix);
     }
 
     /// <summary>
     /// Converts the frame in <paramref name="textureHandle"/>, an <c>ID3D12Resource*</c> written
     /// once <paramref name="fenceHandle"/> reaches <paramref name="fenceValue"/>, into ring buffer
     /// <paramref name="index"/>. <paramref name="hold"/> keeps the texture alive; the converter
-    /// disposes what it returns once the GPU has read the texture. For tests: a texture of their own.
+    /// disposes what it returns once the GPU has read the texture. The frame converts with
+    /// <paramref name="matrix"/> (#841). For tests: a texture of their own.
     /// </summary>
-    internal bool ConvertInto(int index, nint textureHandle, nint fenceHandle, ulong fenceValue, Func<IDisposable> hold)
+    internal bool ConvertInto(
+        int index, nint textureHandle, nint fenceHandle, ulong fenceValue, Func<IDisposable> hold,
+        YcbcrMatrix matrix = YcbcrMatrix.Bt709)
     {
         if (_deviceLost || _disposed)
             return false;
@@ -478,7 +483,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposab
         var description = texture.Description;
         var (samples, lumaFormat, chromaFormat) = YuvTextureFormats.For(description.Format);
         var constants = D3D12PresentConstants.Create(
-            samples, (int)description.Width, (int)description.Height, Width, Height, Source, Ring);
+            samples, (int)description.Width, (int)description.Height, Width, Height, Source, Ring, matrix);
         var sized = _sized;
 
         int descriptorOffset = slot.FirstDescriptor * (int)_srvSize;

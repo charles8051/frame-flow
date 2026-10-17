@@ -27,3 +27,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("FrameFlow.Player")]
 
 [assembly: InternalsVisibleTo("FrameFlow.Media.Tests")]
+
+// The decoder's and the presenters' tests check the matrix each converts with (#841).
+[assembly: InternalsVisibleTo("FrameFlow.Decoding.Tests")]
+[assembly: InternalsVisibleTo("FrameFlow.Avalonia.Windows.Tests")]

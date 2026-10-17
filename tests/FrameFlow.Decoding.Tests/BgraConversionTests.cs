@@ -116,24 +116,28 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
     }
 
     /// <summary>
-    /// Each bar of flat colour converts to what the frame's matrix gives it (#796). swscale's
-    /// limited-range converter is up to 3 levels off the exact result on these bars, with any
-    /// matrix. The nearest other matrix is 10 or more levels off, so the wrong one fails.
+    /// Each bar of flat colour converts to what the frame's matrix gives it (#796), and an untagged
+    /// frame's matrix follows its height (#841). swscale's limited-range converter is up to 3 levels
+    /// off the exact result on these bars, with any matrix. The nearest other matrix is 10 or more
+    /// levels off, so the wrong one fails.
     /// </summary>
     [RequiresFfmpegTheory]
-    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
-    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12)]
-    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_JPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
-    [InlineData(AVColorSpace.AVCOL_SPC_BT470BG, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
-    [InlineData(AVColorSpace.AVCOL_SPC_SMPTE170M, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12)]
-    [InlineData(AVColorSpace.AVCOL_SPC_BT2020_NCL, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
-    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
-    public void BarsConvertWithTheFramesMatrix(AVColorSpace colorSpace, AVColorRange range, AVPixelFormat format)
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_JPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT470BG, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_SMPTE170M, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT2020_NCL, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 16)]
+    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12, 718)]
+    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P, 720)]
+    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12, 1080)]
+    public void BarsConvertWithTheFramesMatrix(AVColorSpace colorSpace, AVColorRange range, AVPixelFormat format, int height)
     {
         Assert.True(fixture.IsBootstrapped);
-        var matrix = YuvReference.For(colorSpace);
+        var matrix = YuvReference.For(colorSpace, height);
         bool full = range == AVColorRange.AVCOL_RANGE_JPEG;
-        var bars = Samples.Bars(YuvReference.Bars, barWidth: 16, height: 16);
+        var bars = Samples.Bars(YuvReference.Bars, barWidth: 16, height: height);
 
         var bgra = ConvertFrame(bars, format, range, colorSpace);
 
@@ -162,7 +166,8 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
     )
     {
         using var frame = samples.ToFrame(format, range);
-        var input = BgraConversionInput.For((int)format, (int)range, (int)colorSpace);
+        var input = BgraConversionInput.For(
+            (int)format, (int)range, BgraConversionInput.MatrixFor((int)colorSpace, samples.Height));
         nint sws = BgraConversion.CreateContext(samples.Width, samples.Height, input);
         Assert.NotEqual(nint.Zero, sws);
         try

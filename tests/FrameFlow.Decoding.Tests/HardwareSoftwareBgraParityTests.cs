@@ -49,12 +49,25 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
     [RequiresHardwareDecodeFact((int)AVCodecID.AV_CODEC_ID_HEVC)]
     public Task HevcConvertsAlikeOnHardwareAndInSoftware() => AssertParityAsync("test-video-h265-yuv420p.mp4");
 
-    private async Task AssertParityAsync(string clip)
+    /// <summary>An untagged SD stream converts with BT.601 by its size on both paths (#841).</summary>
+    [RequiresHardwareDecodeFact((int)AVCodecID.AV_CODEC_ID_VP9)]
+    public Task UntaggedSdVp9ConvertsAlikeOnHardwareAndInSoftware() =>
+        AssertParityAsync("test-video-vp9-untagged-bars-480p.webm");
+
+    /// <summary>
+    /// A caller's matrix reaches the readback as it reaches the software conversion (#841), on a
+    /// stream whose size rule would pick another.
+    /// </summary>
+    [RequiresHardwareDecodeFact((int)AVCodecID.AV_CODEC_ID_VP9)]
+    public Task AFixedMatrixConvertsAlikeOnHardwareAndInSoftware() =>
+        AssertParityAsync("test-video-vp9-untagged-bars-480p.webm", ColorMatrix.Bt709);
+
+    private async Task AssertParityAsync(string clip, ColorMatrix choice = ColorMatrix.Auto)
     {
         var file = TestEnvironment.GetCorpusFile(clip);
         Assert.True(file is not null, $"Corpus is present but {clip} is missing.");
 
-        var software = await DecodeAsync(file!, HardwareDecodeMode.Disabled, yieldHardwareFrames: false);
+        var software = await DecodeAsync(file!, HardwareDecodeMode.Disabled, yieldHardwareFrames: false, choice: choice);
         Assert.Null(software.Engaged);
         Assert.NotEmpty(software.Frames);
 
@@ -66,7 +79,7 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         {
             foreach (bool yieldHardwareFrames in new[] { false, true })
             {
-                var hardware = await TryDecodeOnAsync(file!, backend, yieldHardwareFrames);
+                var hardware = await TryDecodeOnAsync(file!, backend, yieldHardwareFrames, choice);
                 if (hardware is null)
                 {
                     // A backend that refuses the stream refuses it on both legs.
@@ -105,14 +118,15 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
     // Null when the backend does not decode this stream on hardware here: it has no configuration
     // for the codec, or it fails the stream before producing a frame. A failure after a frame is a
     // failure of the test.
-    private async Task<Run?> TryDecodeOnAsync(string file, HardwareDecodeBackendKind backend, bool yieldHardwareFrames)
+    private async Task<Run?> TryDecodeOnAsync(
+        string file, HardwareDecodeBackendKind backend, bool yieldHardwareFrames, ColorMatrix choice)
     {
         var only = new HardwareDecodeCapabilities(
             fixture.Capabilities.Available.Where(b => b.Kind == backend && b.Initialized).ToList()
         );
         try
         {
-            var run = await DecodeAsync(file, HardwareDecodeMode.Required, yieldHardwareFrames, only, [backend]);
+            var run = await DecodeAsync(file, HardwareDecodeMode.Required, yieldHardwareFrames, only, [backend], choice);
             return run.Refused ? null : run;
         }
         catch (HardwareDecodeUnavailableException)
@@ -128,7 +142,8 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         HardwareDecodeMode mode,
         bool yieldHardwareFrames,
         HardwareDecodeCapabilities? capabilities = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferred = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferred = null,
+        ColorMatrix choice = ColorMatrix.Auto
     )
     {
         await using var demux = await OpenAsync(file);
@@ -137,7 +152,8 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
             demux.MediaInfo.VideoStreams[0].StreamIndex,
             new HardwareDecodeOptions { Mode = mode, PreferredBackends = preferred ?? [] },
             capabilities ?? HardwareDecodeCapabilities.Empty,
-            loggerFactory: null
+            loggerFactory: null,
+            new VideoDecoderOptions { ColorMatrix = choice }
         );
         decoder.YieldHardwareFrames = yieldHardwareFrames;
 

@@ -97,6 +97,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
     private readonly IReadOnlyList<string> _excludedCodecs;
     private int _decoderThreads;
+    private ColorMatrix _colorMatrix;
 
     // The master pacing clock (IClockSource consumed by the pacer). Selected per item at the open,
     // once the stream probe reveals whether THIS item actually has a decodable audio stream the
@@ -216,6 +217,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     internal int DecoderThreads
     {
         init => _decoderThreads = value;
+    }
+
+    /// <summary>The matrix the item's video frames convert with (#841).</summary>
+    internal ColorMatrix ColorMatrix
+    {
+        init => _colorMatrix = value;
     }
 
     public SubstrateSession(
@@ -1102,6 +1109,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             PreferredBackends = _preferredBackends,
             ExcludedCodecs = _excludedCodecs,
             DecoderThreads = _decoderThreads,
+            ColorMatrix = _colorMatrix,
             DeviceCache = DeviceCache,
             VideoConfigurator = _videoConfigurator,
             AudioConfigurator = _audioConfigurator,

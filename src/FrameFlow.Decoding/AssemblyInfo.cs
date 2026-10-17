@@ -37,3 +37,8 @@ using System.Runtime.CompilerServices;
 
 // The DirectML handoff tests share the D3D12 tests' decode support, which reads frames the same way.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]
+
+// The D3D11 and D3D12 presenters convert a GpuVideoFrame with the matrix the CPU path converts it
+// with (#841), which the frame resolves when it is decoded.
+[assembly: InternalsVisibleTo("FrameFlow.Avalonia.Windows")]
+[assembly: InternalsVisibleTo("FrameFlow.Avalonia.Windows.Tests")]

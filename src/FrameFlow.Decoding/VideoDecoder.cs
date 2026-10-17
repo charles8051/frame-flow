@@ -96,6 +96,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private (int Num, int Den) _codecSampleAspectRatio;
     private VideoRotation _rotation;
 
+    // The caller's matrix for every frame's Bgra32 conversion and readback, or Auto (#841).
+    private ColorMatrix _colorMatrix;
+
     // The hwframe pool the latest frame came from (#229), or null before the first hardware
     // frame and after a switch to software. Its size is mirrored in _hwPoolSize for the
     // snapshot. Written by the decode worker and on dispose, both under _codecSync.
@@ -1161,6 +1164,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         )
         {
             DecodeThreads = Volatile.Read(ref _decodeThreads),
+            ColorMatrix = _colorMatrix,
         };
 
     /// <summary>The threads an open context decodes on, as the diagnostics report them.</summary>
@@ -1343,7 +1347,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             pool: _pool,
             sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
             rotation: _rotation,
-            timeline: Timeline
+            timeline: Timeline,
+            colorMatrix: _colorMatrix
         );
 
         if (managed is null)
@@ -1438,7 +1443,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
         // Ensure the sws context matches the current frame dimensions and input.
         // The first frame initialises it; format, range or matrix changes (rare) rebuild it.
-        var input = BgraConversionInput.For(srcFormat, accessor.ColorRange, accessor.ColorSpace);
+        var input = BgraConversionInput.For(
+            srcFormat,
+            accessor.ColorRange,
+            BgraConversionInput.MatrixFor(accessor.ColorSpace, srcHeight, _colorMatrix)
+        );
         EnsureSwsContext(srcWidth, srcHeight, input);
 
         if (_swsCtx is null || _swsCtx.IsInvalid)

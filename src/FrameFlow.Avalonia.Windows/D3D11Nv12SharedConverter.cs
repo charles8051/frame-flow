@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using FrameFlow.Avalonia.Windows.Core;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Vortice.D3DCompiler;
@@ -95,7 +96,8 @@ namespace FrameFlow.Avalonia.Windows;
 /// as <see cref="Format.R8_UNorm"/> and the interleaved UV plane as
 /// <see cref="Format.R8G8_UNorm"/>, or <see cref="Format.R16_UNorm"/> and
 /// <see cref="Format.R16G16_UNorm"/> for P010, with the sample levels in a constant buffer
-/// from <see cref="YuvLevels"/>, as the D3D12 converter takes them. (Making the decoder emit shareable shader-readable
+/// from <see cref="YuvLevels"/> and the frame's matrix from <see cref="YcbcrCoefficients"/>
+/// (<see cref="SetMatrix"/>), as the D3D12 converter takes them. (Making the decoder emit shareable shader-readable
 /// textures to drop this copy is a deferred follow-up — investigation 2026-06-12 §6 step 5.)
 /// </para>
 /// <para>
@@ -116,17 +118,18 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
 
     // NV12 → BGRA color convert on the 3D pipeline. A fullscreen-triangle vertex shader
     // (no vertex/index buffers — positions are synthesized from SV_VertexID) and a pixel
-    // shader that samples the Y + UV planes and applies the BT.709 studio (limited) range
-    // → full-range RGB matrix. This replicates exactly the colorspace the old VideoProcessor
-    // path set: DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709 → RgbFullG22NoneP709. Input and
-    // output share G22 transfer + P709 primaries, so there is no gamma/primary conversion —
-    // only the YCbCr→RGB matrix with the limited→full range expansion folded in.
+    // shader that samples the Y + UV planes and applies the studio (limited) range → full-range
+    // RGB conversion with the frame's matrix (#841; BT.709 for HD that signals none, as the old
+    // VideoProcessor path set: DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709 → RgbFullG22NoneP709).
+    // Input and output share the G22 transfer, so there is no gamma/primary conversion — only
+    // the YCbCr→RGB matrix with the limited→full range expansion folded in.
     private const string Hlsl = """
         cbuffer Constants : register(b0)
         {
             float YOffset, YScale, COffset, CScale;   // YuvLevels
             float2 SourceOrigin, SourceSize;          // ShaderSampling: the part of the frame read,
             float2 Footprint, Unused;                 // and the frame each ring pixel covers, in uv
+            float RV, GU, GV, BU;                     // YcbcrCoefficients: the frame's matrix
         };
 
         // The most texels per axis the area filter averages: a 64:1 shrink. Past it the filter reads
@@ -202,11 +205,11 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
             float U = (cbcr.x - COffset) * CScale;
             float V = (cbcr.y - COffset) * CScale;
 
-            // BT.709 inverse matrix (Kr=0.2126, Kb=0.0722).
+            // The frame's YCbCr-to-RGB matrix (YcbcrCoefficients).
             float3 rgb;
-            rgb.r = Y +               1.5748 * V;
-            rgb.g = Y - 0.1873  * U - 0.4681 * V;
-            rgb.b = Y + 1.8556  * U;
+            rgb.r = Y +          RV * V;
+            rgb.g = Y - GU * U - GV * V;
+            rgb.b = Y + BU * U;
 
             // SV_Target writes RGBA semantics; the B8G8R8A8_UNORM render target's byte order
             // is handled by the output merger, so no manual BGRA swizzle here.
@@ -247,7 +250,7 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
     private readonly ID3D11PixelShader _pixelShader;
     private readonly ID3D11SamplerState _sampler;
     private readonly ID3D11RasterizerState _rasterizer;
-    private readonly ID3D11Buffer _constants; // the shader's YuvLevels and ShaderSampling (ConvertConstants)
+    private readonly ID3D11Buffer _constants; // the shader's YuvLevels, ShaderSampling and YcbcrCoefficients (ConvertConstants)
     private readonly YuvLevels _yuvLevels; // for the texture's sample format
 
     // ── Sized by the frame — replaced together by TryResize ──
@@ -284,6 +287,12 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
     /// <see cref="SetSource"/> crops it.
     /// </summary>
     public SourceRect Source { get; private set; }
+
+    /// <summary>
+    /// The matrix the frame converts with (#841): <see cref="FrameFlow.Decoding.GpuVideoFrame"/>'s, which the
+    /// CPU path converts the same frame with. BT.709 until <see cref="SetMatrix"/> sets another.
+    /// </summary>
+    public YcbcrMatrix Matrix { get; private set; } = YcbcrMatrix.Bt709;
 
     /// <summary>The decode texture's format, NV12 or P010, which the staging texture and views are built for.</summary>
     public FrameFlow.Media.PixelFormat InputFormat { get; }
@@ -395,9 +404,9 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
         }
     }
 
-    /// <summary>The shader's constant buffer: the sample levels, then how it samples the frame.</summary>
+    /// <summary>The shader's constant buffer: the sample levels, how it samples the frame, and the matrix.</summary>
     [StructLayout(LayoutKind.Sequential)]
-    private readonly record struct ConvertConstants(YuvLevels Levels, ShaderSampling Sampling);
+    private readonly record struct ConvertConstants(YuvLevels Levels, ShaderSampling Sampling, YcbcrCoefficients Coefficients);
 
     /// <param name="nv12TexturePtr">The first frame's decode texture.</param>
     /// <param name="width">The frame's width.</param>
@@ -701,6 +710,35 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
             _videoContext!.VideoProcessorSetStreamSourceRect(_videoProcessor, 0, true, ProcessorSourceRect());
     }
 
+    /// <summary>
+    /// Sets the matrix the frame converts to RGB with (#841). The shader reads it from its constants,
+    /// and the video processor mode as its stream's colour space. Takes effect from the next
+    /// <see cref="ConvertInto"/>.
+    /// </summary>
+    public void SetMatrix(YcbcrMatrix matrix)
+    {
+        if (_disposed || matrix == Matrix)
+            return;
+
+        Matrix = matrix;
+        UpdateConstants();
+        if (_videoProcessor is not null)
+            _videoContext!.VideoProcessorSetStreamColorSpace1(_videoProcessor, 0, ProcessorColorSpace(matrix));
+    }
+
+    /// <summary>
+    /// The video processor's stream colour space for <paramref name="matrix"/>: studio range, G22, with
+    /// the matrix's primaries. DXGI names no FCC or SMPTE 240M space, so those take the nearest of
+    /// BT.601 and BT.709 by their luma weights.
+    /// </summary>
+    internal static ColorSpaceType ProcessorColorSpace(YcbcrMatrix matrix) =>
+        matrix switch
+        {
+            YcbcrMatrix.Bt601 or YcbcrMatrix.Fcc => ColorSpaceType.YcbcrStudioG22LeftP601,
+            YcbcrMatrix.Bt2020 => ColorSpaceType.YcbcrStudioG22LeftP2020,
+            _ => ColorSpaceType.YcbcrStudioG22LeftP709,
+        };
+
     /// <summary>The video processor's source rectangle for <see cref="Source"/>: whole pixels, inside the frame.</summary>
     private Vortice.RawRect ProcessorSourceRect()
     {
@@ -712,7 +750,7 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
     }
 
     private ConvertConstants Constants(RingSize ring) =>
-        new(_yuvLevels, ShaderSampling.For(Source, Width, Height, ring));
+        new(_yuvLevels, ShaderSampling.For(Source, Width, Height, ring), YcbcrCoefficients.For(Matrix));
 
     /// <summary>
     /// Writes the shader's constants for the frame's size, the source part and the ring. The command
@@ -801,10 +839,11 @@ internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
                     Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = 0 },
                 });
 
-            // The conversion the shader implements: BT.709 studio-range YCbCr to full-range RGB, both
-            // G22, so the only difference between the modes is the scaler.
+            // The conversion the shader implements: studio-range YCbCr in the frame's matrix to
+            // full-range RGB, both G22. For BT.709 the only difference between the modes is the
+            // scaler; for another matrix the driver may also map the stream's primaries to BT.709.
             var processor = _videoProcessor!;
-            _videoContext.VideoProcessorSetStreamColorSpace1(processor, 0, ColorSpaceType.YcbcrStudioG22LeftP709);
+            _videoContext.VideoProcessorSetStreamColorSpace1(processor, 0, ProcessorColorSpace(Matrix));
             _videoContext.VideoProcessorSetOutputColorSpace1(processor, ColorSpaceType.RgbFullG22NoneP709);
             _videoContext.VideoProcessorSetStreamFrameFormat(processor, 0, VideoFrameFormat.Progressive);
             _videoContext.VideoProcessorSetStreamAutoProcessingMode(processor, 0, false);

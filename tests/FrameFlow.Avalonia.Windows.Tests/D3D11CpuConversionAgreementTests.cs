@@ -2,16 +2,18 @@ using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Decoding;
 using FrameFlow.Inference.D3D12.Tests;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit.Abstractions;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
 /// <summary>
-/// The CPU conversion and the D3D11 presenter's shader agree on a BT.709 frame (#796). Both read
-/// the same decoded samples: the shader from the decode texture, the CPU path from the same frame
-/// read back. Before #796 the CPU path converted it with BT.601, tens of levels off on the
-/// saturated bars.
+/// The CPU conversion and the D3D11 presenter's shader agree on a BT.709 frame (#796) and on an
+/// untagged SD frame, which both convert with BT.601 (#841). Both read the same decoded samples: the
+/// shader from the decode texture, the CPU path from the same frame read back. Before #796 the CPU
+/// path converted the BT.709 frame with BT.601, and before #841 the shader converted the untagged
+/// SD frame with BT.709, tens of levels off on the saturated bars either way.
 /// </summary>
 /// <remarks>
 /// Only the bars' interiors are compared. The shader filters chroma bilinearly and swscale takes
@@ -21,20 +23,30 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 public sealed class D3D11CpuConversionAgreementTests(ITestOutputHelper output)
 {
     private const string Bars = "test-video-vp9-bt709-bars.webm";
+    private const string UntaggedSdBars = "test-video-vp9-untagged-bars-480p.webm";
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D11Va, Bars)]
-    public async Task ABt709Frame_ConvertsAlikeOnTheCpuAndInTheShader()
+    public Task ABt709Frame_ConvertsAlikeOnTheCpuAndInTheShader() => AssertAgreesAsync(Bars, YcbcrMatrix.Bt709);
+
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D11Va, UntaggedSdBars)]
+    public Task AnUntaggedSdFrame_ConvertsAlikeOnTheCpuAndInTheShader() => AssertAgreesAsync(UntaggedSdBars, YcbcrMatrix.Bt601);
+
+    private async Task AssertAgreesAsync(string clip, YcbcrMatrix matrix)
     {
         // One frame: VP9 on D3D11VA hangs when the test holds more of its pool.
-        var frames = await Decode.FramesAsync(Bars, HardwareDecodeBackendKind.D3D11Va, yieldHardware: true, count: 1);
+        var frames = await Decode.FramesAsync(clip, HardwareDecodeBackendKind.D3D11Va, yieldHardware: true, count: 1);
         try
         {
             var frame = (GpuVideoFrame)frames[0];
             Assert.Equal(PixelFormat.Nv12, frame.Format);
+            Assert.Equal(matrix, frame.Matrix);
             Assert.True(frame.TryGetD3D11Texture(out nint texture, out int slice, out _));
             using var converter = new D3D11Nv12SharedConverter(
                 texture, frame.Width, frame.Height, PresenterOutput.Shader(frame.Width, frame.Height), NullLogger.Instance);
             using var compositor = new D3D11CompositorSide(texture);
+
+            // As the presenter does for every frame.
+            converter.SetMatrix(frame.Matrix);
             Assert.True(converter.ConvertInto(0, texture, slice));
             var shader = compositor.Read(converter.GetSharedHandle(0), frame.Width, frame.Height);
 

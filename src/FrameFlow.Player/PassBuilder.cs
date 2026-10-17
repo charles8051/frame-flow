@@ -41,6 +41,7 @@ internal sealed class PassBuilder : IPassBuilder
     private HardwareDecodeBackendKind[] _preferredBackends = [];
     private string[] _excludedCodecs = [];
     private int _decoderThreads;
+    private ColorMatrix _colorMatrix;
     private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
     private PassRange _range = PassRange.Whole;
     private AudioDecoderOptions? _audioDecoderOptions;
@@ -120,6 +121,14 @@ internal sealed class PassBuilder : IPassBuilder
         return this;
     }
 
+    public IPassBuilder WithColorMatrix(ColorMatrix matrix)
+    {
+        if (!Enum.IsDefined(matrix))
+            throw new ArgumentOutOfRangeException(nameof(matrix), matrix, "Undefined color matrix.");
+        _colorMatrix = matrix;
+        return this;
+    }
+
     public IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level)
     {
         if (!Enum.IsDefined(level))
@@ -146,13 +155,14 @@ internal sealed class PassBuilder : IPassBuilder
     /// <summary>
     /// The decoder's options: the caller's, the borrowed device, a pool sized for
     /// <paramref name="budget"/> unless the caller sized it (#292), and the software decoder's
-    /// thread count (#788).
+    /// thread count (#788) and matrix (#841).
     /// </summary>
     internal static VideoDecoderOptions DecoderOptions(
         VideoDecoderOptions? options,
         HardwareDevice? device,
         FrameBudget? budget,
-        int decoderThreads
+        int decoderThreads,
+        ColorMatrix colorMatrix = ColorMatrix.Auto
     ) =>
         new()
         {
@@ -163,6 +173,7 @@ internal sealed class PassBuilder : IPassBuilder
             Device = device ?? options?.Device,
             DeviceCache = options?.DeviceCache,
             DecoderThreads = decoderThreads != 0 ? decoderThreads : options?.DecoderThreads ?? 0,
+            ColorMatrix = colorMatrix != ColorMatrix.Auto ? colorMatrix : options?.ColorMatrix ?? ColorMatrix.Auto,
         };
 
     /// <summary>
@@ -378,7 +389,7 @@ internal sealed class PassBuilder : IPassBuilder
                         },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
-                        DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget, _decoderThreads)
+                        DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget, _decoderThreads, _colorMatrix)
                     )(demux) as VideoDecoder;
 
                 // Which domain the frames are in depends on the backend the decoder bound: they

@@ -262,6 +262,42 @@ public sealed class PlaybackControllerFactoryTests
     }
 
     [Fact]
+    public async Task Create_ColorMatrix_ReachesTheItemFactory()
+    {
+        await using var controller = PlaybackController.Create(colorMatrix: ColorMatrix.Bt601);
+
+        Assert.Equal(ColorMatrix.Bt601, SessionFactory(controller).ColorMatrix);
+    }
+
+    [Fact]
+    public async Task Create_NoColorMatrix_IsAuto()
+    {
+        await using var controller = PlaybackController.Create();
+
+        Assert.Equal(ColorMatrix.Auto, SessionFactory(controller).ColorMatrix);
+    }
+
+    [Fact]
+    public async Task CreatePlaylist_ColorMatrix_ReachesTheItemFactory()
+    {
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off),
+            colorMatrix: ColorMatrix.Bt2020
+        );
+
+        Assert.Equal(ColorMatrix.Bt2020, SessionFactory(controller).ColorMatrix);
+    }
+
+    [Fact]
+    public void AnUndefinedColorMatrix_IsRefused()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PlaybackController.Create(colorMatrix: (ColorMatrix)99));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PlaybackController.CreatePlaylist(new PlaylistCoordinator(RepeatMode.Off), colorMatrix: (ColorMatrix)99)
+        );
+    }
+
+    [Fact]
     public void NegativeDecoderThreads_AreRefused()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => PlaybackController.Create(decoderThreads: -1));

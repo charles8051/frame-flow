@@ -49,6 +49,7 @@ internal sealed class SubstrateSessionFactory
     private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
     private readonly IReadOnlyList<string> _excludedCodecs;
     private readonly int _decoderThreads;
+    private readonly ColorMatrix _colorMatrix;
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
 
@@ -79,6 +80,9 @@ internal sealed class SubstrateSessionFactory
     /// <summary>The software decoders' thread count every item gets (#788).</summary>
     internal int DecoderThreads => _decoderThreads;
 
+    /// <summary>The matrix choice every item's decoder gets (#841).</summary>
+    internal ColorMatrix ColorMatrix => _colorMatrix;
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -92,7 +96,8 @@ internal sealed class SubstrateSessionFactory
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
-        int decoderThreads = 0
+        int decoderThreads = 0,
+        ColorMatrix colorMatrix = ColorMatrix.Auto
     )
     {
         // Checked here rather than in the worker: this runs on the caller's thread,
@@ -113,6 +118,7 @@ internal sealed class SubstrateSessionFactory
         _preferredBackends = preferredBackends is null ? [] : [.. preferredBackends];
         _excludedCodecs = excludedCodecs is null ? [] : [.. excludedCodecs];
         _decoderThreads = decoderThreads;
+        _colorMatrix = colorMatrix;
         _deviceCache = hardwareDevice is null && hwMode != HardwareDecodeMode.Disabled
             ? new HardwareDeviceCache(_loggerFactory.CreateLogger<HardwareDeviceCache>())
             : null;
@@ -148,6 +154,7 @@ internal sealed class SubstrateSessionFactory
         )
         {
             DecoderThreads = _decoderThreads,
+            ColorMatrix = _colorMatrix,
             LatenessRecovery = _latenessRecovery,
             FormatAnnouncer = _formatAnnouncer,
             SinkFailures = _sinkFailures,

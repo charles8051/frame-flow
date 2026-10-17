@@ -707,3 +707,8 @@ FrameFlow.Media.PlaybackError.DeviceLoss.get -> FrameFlow.Media.DeviceLostExcept
 FrameFlow.Media.VideoPlacementMode
 FrameFlow.Media.VideoPlacementMode.Fill = 1 -> FrameFlow.Media.VideoPlacementMode
 FrameFlow.Media.VideoPlacementMode.Fit = 0 -> FrameFlow.Media.VideoPlacementMode
+FrameFlow.Media.ColorMatrix
+FrameFlow.Media.ColorMatrix.Auto = 0 -> FrameFlow.Media.ColorMatrix
+FrameFlow.Media.ColorMatrix.Bt601 = 1 -> FrameFlow.Media.ColorMatrix
+FrameFlow.Media.ColorMatrix.Bt709 = 2 -> FrameFlow.Media.ColorMatrix
+FrameFlow.Media.ColorMatrix.Bt2020 = 3 -> FrameFlow.Media.ColorMatrix

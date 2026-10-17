@@ -152,6 +152,21 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
         Assert.Equal(3, player.GetDiagnostics().Pipeline.Stream.VideoDecoder.DecodeThreads);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task TheColorMatrix_ReachesTheLoadedItemsDecoder()
+    {
+        // Through the builder to the decoder the player opened for its first item (#841).
+        await using var player = await FrameFlowPlayer
+            .Create()
+            .WithMedia(SourceOf(Clip))
+            .WithVideoSink(new CapturingVideoSink())
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithColorMatrix(ColorMatrix.Bt601)
+            .BuildPlayerAsync();
+
+        Assert.Equal(ColorMatrix.Bt601, player.GetDiagnostics().Pipeline.Stream.VideoDecoder.ColorMatrix);
+    }
+
     private static IMediaSource SourceOf(string clip)
     {
         var path = IntegrationTestEnvironment.GetCorpusFile(clip);

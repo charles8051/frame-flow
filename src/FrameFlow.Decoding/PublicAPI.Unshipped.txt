@@ -277,3 +277,7 @@ FrameFlow.Decoding.VideoDecoderOptions.DecoderThreads.get -> int
 FrameFlow.Decoding.VideoDecoderOptions.DecoderThreads.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeThreads.get -> int
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeThreads.init -> void
+FrameFlow.Decoding.VideoDecoderOptions.ColorMatrix.get -> FrameFlow.Media.ColorMatrix
+FrameFlow.Decoding.VideoDecoderOptions.ColorMatrix.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.ColorMatrix.get -> FrameFlow.Media.ColorMatrix
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.ColorMatrix.init -> void

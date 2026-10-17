@@ -40,6 +40,9 @@ internal sealed class SubstrateMediaOpener : IItemMediaOpener
     // The software decoder's thread count; 0 chooses from the processor count (#788).
     public int DecoderThreads { get; init; }
 
+    // The matrix every frame converts with (#841).
+    public ColorMatrix ColorMatrix { get; init; }
+
     /// <inheritdoc cref="SubstrateSession.DeviceCache"/>
     public HardwareDeviceCache? DeviceCache { get; init; }
 
@@ -315,6 +318,7 @@ internal sealed class SubstrateMedia : IItemMedia
                         Device = settings.HardwareDevice,
                         DeviceCache = settings.DeviceCache,
                         DecoderThreads = settings.DecoderThreads,
+                        ColorMatrix = settings.ColorMatrix,
                     }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;

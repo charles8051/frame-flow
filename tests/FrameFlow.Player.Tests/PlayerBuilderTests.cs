@@ -144,6 +144,13 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
+    public void WithColorMatrix_Undefined_Throws()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() => builder.WithColorMatrix((ColorMatrix)99));
+    }
+
+    [Fact]
     public void WithDecoderThreads_Negative_Throws()
     {
         var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
@@ -178,6 +185,7 @@ public sealed class PlayerBuilderTests
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .WithExcludedCodecs("av1")
             .WithDecoderThreads(2)
+            .WithColorMatrix(ColorMatrix.Bt709)
             .WithLogger(null);
 
         Assert.Same(builder, same);
