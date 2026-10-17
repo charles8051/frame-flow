@@ -31,5 +31,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\DerivedItemConformance.cs" Link="Shared\DerivedItemConformance.cs" />
+    <Compile Include="..\Shared\HeldTimerDisposeTimeProvider.cs" Link="Shared\HeldTimerDisposeTimeProvider.cs" />
   </ItemGroup>
 </Project>

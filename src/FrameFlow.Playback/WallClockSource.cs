@@ -167,10 +167,9 @@ public sealed class WallClockSource : IClockSource, ISeekableClock, IAsyncDispos
 
     private async Task WaitUntilCoreAsync(TimeSpan target, CancellationToken cancellationToken)
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _shutdownCts.Token
-        );
+        // Not a linked source: its dispose, on the way out of a cancelled sleep, would wait for the
+        // canceller to finish the link callback it is still in (#785).
+        using var linked = LinkedCancellation.Create(cancellationToken, _shutdownCts.Token);
         var token = linked.Token;
         while (true)
         {
