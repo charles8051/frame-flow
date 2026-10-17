@@ -340,3 +340,53 @@ result in a list, or the one under the cursor (#25).
   memory, and one covers both the next item and the one under the cursor.
 - **Preparing by opening the file only.** It saves the open, which is the smaller cost on long
   keyframe intervals, and leaves the walk.
+
+## Decision 9: the walk to a run's start skips non-reference frames
+
+**Date:** 2026-10-17
+**Status:** Accepted
+
+### Context
+
+A run that starts past a keyframe decodes from the keyframe to the start, and the source drops every
+frame before the start (decision 8). On a replace across four players sharing one device, that walk
+was the largest stage that grew with the player count (#784). A non-reference frame before the start
+is decoded and dropped, and no other frame is built from it.
+
+### Decision
+
+- **Skip by packet.** Until the first decoded frame at or past the run's start, each packet whose
+  presentation time is before the start is sent with `skip_frame = AVDISCARD_NONREF`. A packet at
+  or past the start, or with no time, is decoded at the level the decoder was given. The decision is
+  per packet because decode order is not presentation order: a B-frame before the start can follow a
+  reference frame past it.
+- **Spent like the run's floor.** The first decoded frame at or past the start ends it, as it ends
+  the source's floor. A non-reference frame before the start precedes that frame in presentation
+  order, so its packet has been sent by then.
+- **Added to lateness recovery, never lowering it.** The level is the higher of the two.
+- **Only for streams that can carry non-reference frames**, read as the codec's reorder delay
+  (`has_b_frames`). Elsewhere the context is left as it is.
+- **Every run.** The run's start is armed where the source's floor is (`SubstrateMedia.BeginRun`),
+  so an open at a clip's start, a seek and a loop's rewind all take it.
+- The pure rule is `PrerollDiscard`. The decoder records its start-up stages on
+  `frameflow.decoder.warmup_stage_ms` (tag `stage`: `device`, `codec_open`, `first_packet`,
+  `first_frame`, `preroll`).
+
+### Consequences
+
+- On 1080p30 H.264 High with two B-frames, a keyframe every 2 s and clips starting 0, 5, 10 or 15 s
+  in, a replace's first presented frame fell from 84 to 51 ms on one player. On four players sharing
+  a device, the last player's first frame fell from 317 and 326 ms to 232 and 206 ms (two
+  interleaved runs each, medians of eight rounds).
+- A stream without non-reference frames gains nothing. Constrained Baseline H.264, which the
+  pinned LGPL FFmpeg's only software H.264 encoder writes, is one.
+- The replace still grows with the player count. Most of the rest is the first packet's decode:
+  `get_format` creating the frame pool and the driver's decoder, then the first slice. It grows with
+  a device per player as well, so the driver serialises it across devices.
+
+### Alternatives considered
+
+- **Switch the level once, at the first frame past the start.** It would decode the B-frames that
+  follow a reference frame past the start in decode order and precede it in presentation order.
+- **Skip `AVDISCARD_BIDIR`.** It skips B-frames used as references, and every frame built from them
+  would be wrong.
