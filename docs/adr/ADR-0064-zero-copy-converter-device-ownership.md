@@ -21,6 +21,10 @@
 > that part through an area filter. A view-driven resize replaces the ring alone and is counted by
 > `frameflow.presenter.view_resizes`. See the amendment at the end.
 
+> **Amended 2026-10-16: the D3D12 converter's ring follows the view too (#774).** Its draw target
+> and ring are resized in place by the same policy, and its shader reads the visible part through
+> the same area filter. See the last amendment.
+
 ## Status
 
 Accepted. Decision 1 (interim) **implemented** (2026-06-16). Decision 2 (durable —
@@ -264,4 +268,69 @@ again. That redraw does not raise `FramePresented`. A smaller ring waits for the
 - A change of display scaling alone, as when a paused window moves to another monitor, waits for the
   next frame.
 - The D3D12 converter keeps a frame-sized ring. It draws in D3D12, copies into the ring and has no
-  in-place resize, so the policy does not drop in (#774).
+  in-place resize, so the policy does not drop in (#774). Superseded by the next amendment.
+
+## Amendment (2026-10-16): the D3D12 converter's ring follows the view
+
+### Context
+
+`D3D12YuvSharedConverter` draws a D3D12VA frame with a D3D12 pixel shader into a BGRA draw target on
+a shared heap, and a D3D11 device of its own copies that into the keyed-mutex ring, since a D3D12
+resource cannot carry a keyed mutex. Both were the frame's size. A 1080p source in a 384x216 view
+held three ring buffers and the draw target, 4 x 1920 x 1080 x 4 bytes = 33.2 MB, and a filled view
+drew the whole frame for the clip to cut. The converter had no in-place resize, so the previous
+amendment's policy would have rebuilt it on every view-driven change (#774).
+
+### Decision 1: one policy for both converters
+
+The view drives the D3D12 converter with the same pure rules as the D3D11 shader mode:
+`PlanRing` for the visible part and its capped size, `RingSettle` for when a size applies, a new
+converter built at the view's size at once, and a paused view drawn again when its layout needs it.
+Both converters implement `IViewSizedRing` (frame size, ring size, source part, `SetSource`,
+`TryResizeRing`, and whether the ring follows the view at all), and the view's fit, resize and redraw
+code takes that interface, not one converter. The D3D11 video processor mode says its ring does not
+follow the view; the D3D12 converter has only the shader, so its ring always does. Nothing in the
+policy changed.
+
+### Decision 2: a view-driven resize replaces the draw target and the ring only
+
+`TryResizeRing` builds a new draw target, opens it on the D3D11 device, builds a new ring, and points
+the one render target view at the new target. The devices, the queue, the root signature, the
+pipeline state, the shared fence and the draw slots with their command lists and descriptors are
+kept. A render target view is read when a list is recorded, so the draws already recorded keep the
+old target. Each resize is counted on `frameflow.presenter.view_resizes`.
+
+D3D12 does not keep a resource alive for GPU work that still uses it, as D3D11 does. The old parts
+therefore go to the reaper inside a retirement that, off the UI thread, waits for the shared fence to
+reach the copy of the last frame drawn before the resize, bounded by the same one second as the
+converter's disposal, and then releases them. A device that neither finishes nor reports removal
+keeps them, as the converter's disposal does. The retirement holds references of its own to the
+fence and the device, so it can be disposed after the converter.
+
+A frame of another size still rebuilds the converter (`ConverterAction.RebuildForResolutionChange`),
+as before. Only the view's own changes resize in place.
+
+### Decision 3: the area filter and the source part as root constants
+
+`D3D12PresentConstants` grows from 8 to 16 root constants: the existing texture scale, chroma clamp
+and sample levels, then the D3D11 shader's `ShaderSampling` for the source part and the ring. The
+shader's `Read` is the D3D11 shader's, with one difference: the decode texture can be larger than the
+frame (1080 rows in 1088), so positions are in the frame's coordinates and the filter's texel range
+is the frame's first `UvScale * size` texels of each plane, not the texture's. At 1:1 it takes the
+one bilinear sample it took before, with the chroma clamp to the frame's last sample.
+
+The surface visual is laid out from `VideoPlacement.Shown` for the converter's part, and the 1:1 snap
+compares the ring with that rectangle, for either converter.
+
+`D3D12ConverterViewRingTests` draws a synthetic NV12 texture on a D3D12 device of the test's own and
+reads the ring back: every stripe at 1:1, mid grey within 40 levels at 5:1, a crop that matches the
+whole frame's pixels, and an aligned texture whose padding rows are never read.
+
+### Consequences
+
+- A 1080p D3D12VA source in a 384x216 view holds 4 x 384 x 216 x 4 bytes = 1.3 MB of draw target and
+  ring instead of 33.2 MB.
+- A view-driven resize costs a draw target and a ring, not a converter: in the example app each took
+  about 2 ms on the UI thread.
+- The only producer whose ring still holds the whole frame is the CPU uploader.
+- A change in the source's size still rebuilds the D3D12 converter.

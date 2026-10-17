@@ -10,9 +10,42 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 public sealed class D3D12PresentConstantsTests
 {
     [Fact]
-    public void ItIsTheRootSignaturesEightValues()
+    public void ItIsTheRootSignaturesSixteenValues()
     {
+        Assert.Equal(16, D3D12PresentConstants.Count);
         Assert.Equal(D3D12PresentConstants.Count * sizeof(float), Marshal.SizeOf<D3D12PresentConstants>());
+    }
+
+    [Fact]
+    public void TheSampling_IsTheShadersThirdRegister()
+    {
+        // The cbuffer's third and fourth 16-byte registers: SourceOrigin, SourceSize, Footprint.
+        Assert.Equal(32, (int)Marshal.OffsetOf<D3D12PresentConstants>("<Sampling>k__BackingField"));
+    }
+
+    [Fact]
+    public void TheSampling_IsTheD3D11ConvertersForTheSamePartAndRing()
+    {
+        // A filled view's crop, drawn at 384x216 from a 1080p frame decoded into 1088 rows (#774).
+        var source = new SourceRect(240, 0, 1440, 1080);
+        var ring = new RingSize(384, 216);
+        var c = D3D12PresentConstants.Create(YuvSampleFormat.Nv12, 1920, 1088, 1920, 1080, source, ring);
+
+        // In the frame's coordinates, not the texture's: the shader scales them by UvScale.
+        Assert.Equal(ShaderSampling.For(source, 1920, 1080, ring), c.Sampling);
+        Assert.Equal(240f / 1920, c.Sampling.U, 1e-6f);
+        Assert.Equal(1440f / 1920 / 384, c.Sampling.FootprintU, 1e-9f);
+        Assert.Equal(1f / 216, c.Sampling.FootprintV, 1e-9f);
+    }
+
+    [Fact]
+    public void WithoutAPartOrRing_TheWholeFrameIsDrawnAtItsSize()
+    {
+        var c = D3D12PresentConstants.Create(YuvSampleFormat.Nv12, 1920, 1088, 1920, 1080);
+
+        Assert.Equal(
+            ShaderSampling.For(SourceRect.Whole(1920, 1080), 1920, 1080, new RingSize(1920, 1080)),
+            c.Sampling);
     }
 
     [Fact]
