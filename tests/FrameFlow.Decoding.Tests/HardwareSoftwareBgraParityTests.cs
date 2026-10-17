@@ -53,13 +53,19 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         // Every backend that initialised here and decodes the codec, not only the first one bound.
         var backends = fixture.Capabilities.Available.Where(b => b.Initialized).Select(b => b.Kind).Distinct();
         var compared = new List<HardwareDecodeBackendKind>();
+        var refused = new List<HardwareDecodeBackendKind>();
         foreach (var backend in backends)
         {
             foreach (bool yieldHardwareFrames in new[] { false, true })
             {
                 var hardware = await TryDecodeOnAsync(file!, backend, yieldHardwareFrames);
                 if (hardware is null)
+                {
+                    // A backend that refuses the stream refuses it on both legs.
+                    Assert.False(yieldHardwareFrames, $"{backend} decoded {clip} once and refused it the second time.");
+                    refused.Add(backend);
                     break;
+                }
 
                 Assert.Equal(backend, hardware.Engaged);
                 Assert.Equal(software.Frames.Count, hardware.Frames.Count);
@@ -71,7 +77,10 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         }
 
         Assert.NotEmpty(compared);
-        output.WriteLine($"{clip}: {software.Frames.Count} frames identical on {string.Join(", ", compared)}.");
+        output.WriteLine(
+            $"{clip}: {software.Frames.Count} frames identical on {string.Join(", ", compared)}; "
+                + $"refused by {(refused.Count == 0 ? "none" : string.Join(", ", refused))}."
+        );
     }
 
     private static void AssertSame(byte[] expected, byte[] actual, string what)
@@ -85,7 +94,9 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         Assert.Fail($"{what} differs from software by up to {worst} levels.");
     }
 
-    // Null when the backend does not decode this stream on hardware here.
+    // Null when the backend does not decode this stream on hardware here: it has no configuration
+    // for the codec, or it fails the stream before producing a frame. A failure after a frame is a
+    // failure of the test.
     private async Task<Run?> TryDecodeOnAsync(string file, HardwareDecodeBackendKind backend, bool yieldHardwareFrames)
     {
         var only = new HardwareDecodeCapabilities(
@@ -94,19 +105,15 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
         try
         {
             var run = await DecodeAsync(file, HardwareDecodeMode.Required, yieldHardwareFrames, only, [backend]);
-            return run.Engaged is null ? null : run;
+            return run.Refused ? null : run;
         }
         catch (HardwareDecodeUnavailableException)
         {
             return null;
         }
-        catch (MediaException)
-        {
-            return null;
-        }
     }
 
-    private sealed record Run(List<byte[]> Frames, HardwareDecodeBackendKind? Engaged);
+    private sealed record Run(List<byte[]> Frames, HardwareDecodeBackendKind? Engaged, bool Refused = false);
 
     private async Task<Run> DecodeAsync(
         string file,
@@ -128,20 +135,28 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
 
         var frames = new List<byte[]>();
         await QueueAllAsync(demux, decoder);
-        await foreach (var frame in decoder.DecodeAsync())
+        try
         {
-            using (frame)
+            await foreach (var frame in decoder.DecodeAsync())
             {
-                if (frame is GpuVideoFrame gpu)
+                using (frame)
                 {
-                    using var read = gpu.ReadbackToCpuBgra32();
-                    frames.Add(Pixels(read));
-                }
-                else
-                {
-                    frames.Add(Pixels((CpuVideoFrame)frame));
+                    if (frame is GpuVideoFrame gpu)
+                    {
+                        using var read = gpu.ReadbackToCpuBgra32();
+                        frames.Add(Pixels(read));
+                    }
+                    else
+                    {
+                        frames.Add(Pixels((CpuVideoFrame)frame));
+                    }
                 }
             }
+        }
+        catch (MediaException) when (mode == HardwareDecodeMode.Required && frames.Count == 0)
+        {
+            // Required on hardware that refuses the stream fails its first packet.
+            return new Run(frames, decoder.HardwareBackend, Refused: true);
         }
 
         return new Run(frames, decoder.HardwareBackend);
