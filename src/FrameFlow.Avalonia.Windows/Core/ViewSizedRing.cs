@@ -81,7 +81,7 @@ internal static class ViewSizedRingPolicy
         new(Axis(wanted.Width, current.Width, cap.Width), Axis(wanted.Height, current.Height, cap.Height));
 
     private static int Axis(int wanted, int current, int cap) =>
-        wanted > current ? Math.Min(RoundUp(wanted), cap) : Math.Max(wanted, Math.Min(current, cap));
+        Math.Min(wanted > current ? RoundUp(wanted) : current, cap);
 
     private static int RoundUp(int value) => (value + Step - 1) / Step * Step;
 }

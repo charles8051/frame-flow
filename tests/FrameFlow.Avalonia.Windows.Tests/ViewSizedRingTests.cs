@@ -77,6 +77,10 @@ public sealed class ViewSizedRingTests
 
         // Past a cap that has since come down, as a narrower crop brings, the axis drops to the cap.
         Assert.Equal(new RingSize(1152, 800), ViewSizedRingPolicy.Grown(new RingSize(1100, 500), square, new RingSize(1920, 800)));
+
+        // The cap wins over a wanted size above it on either axis.
+        Assert.Equal(new RingSize(1152, 800), ViewSizedRingPolicy.Grown(new RingSize(1100, 900), square, new RingSize(1920, 800)));
+        Assert.Equal(new RingSize(1920, 800), ViewSizedRingPolicy.Grown(new RingSize(2500, 900), square, new RingSize(1920, 800)));
     }
 
     // ── The view's plan ──
