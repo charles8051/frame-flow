@@ -5,6 +5,7 @@ using FrameFlow.Audio.OpenAL;
 using FrameFlow.Audio.TestKit;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Tests.Shared;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
@@ -375,6 +376,44 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         var wait = ((IClockSource)sink).WaitUntilAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.AsTask());
+    }
+
+    /// <summary>
+    /// A clock wait ends on its cancel while the thread that cancels is still inside the
+    /// cancellation's callbacks, held there by the sleep's timer dispose. Its linked source's
+    /// dispose waited for that thread to leave the link, which costs a system timer tick when the
+    /// runtime's wait falls back to sleeping (#785).
+    /// </summary>
+    [Fact]
+    public async Task AClockWait_EndsOnItsCancel_WhileTheCancelIsStillRunningItsCallbacks()
+    {
+        var bound = TimeSpan.FromSeconds(30);
+        var time = new HeldTimerDisposeTimeProvider();
+        var device = new FakeOpenAlDevice();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+        using var caller = new CancellationTokenSource();
+
+        // Nothing has played, so the clock stands at zero and the wait sleeps until it is cancelled.
+        var armed = time.NextTimerArmed;
+        var wait = ((IClockSource)sink).WaitUntilAsync(TimeSpan.FromSeconds(10), caller.Token).AsTask();
+        await armed.WaitAsync(bound);
+
+        time.HoldNextDispose();
+        var cancelling = Task.Run(caller.Cancel);
+        try
+        {
+            await time.DisposeHeld.Task.WaitAsync(bound);
+
+            // The bound only turns a wait held by the canceller into a failure.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.WaitAsync(bound));
+        }
+        finally
+        {
+            time.Release();
+        }
+
+        await cancelling.WaitAsync(bound);
     }
 
     /// <summary>

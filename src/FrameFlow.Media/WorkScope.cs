@@ -38,8 +38,8 @@ internal sealed class WorkScope
 {
     private readonly object _gate = new();
 
-    // Cancelled by the first stop, and never disposed: it has no timer, and the source linked to it
-    // for a piece of work is disposed when that work ends, which leaves nothing registered on it.
+    // Cancelled by the first stop, and never disposed: it has no timer, and the link to it for a
+    // piece of work is removed when that work ends, which leaves nothing registered on it.
     private readonly CancellationTokenSource _stop = new();
 
     // The task each piece of held work runs as, by the number the ledger gave it. Kept in step with
@@ -111,7 +111,7 @@ internal sealed class WorkScope
             // CA2000 cannot follow it into the task.
 #pragma warning disable CA2000
             var linked = cancellationToken.CanBeCanceled
-                ? CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, cancellationToken)
+                ? LinkedCancellation.Create(_stop.Token, cancellationToken)
                 : null;
 #pragma warning restore CA2000
             var token = linked?.Token ?? _stop.Token;
@@ -170,7 +170,7 @@ internal sealed class WorkScope
         string name,
         Func<CancellationToken, Task> work,
         CancellationToken token,
-        CancellationTokenSource? linked
+        LinkedCancellation? linked
     )
     {
         Exception? error = null;

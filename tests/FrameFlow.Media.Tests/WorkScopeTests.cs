@@ -351,6 +351,53 @@ public sealed class WorkScopeTests
         Assert.Empty(scope.Pending);
     }
 
+    [Fact]
+    public async Task WorkWokenByItsTokensCancel_IsLetGo_WhileTheCancelIsStillRunningItsCallbacks()
+    {
+        // The work's wait resumes on a pool thread, as a Task.Delay's does, while the thread that
+        // cancels is held inside the link from the caller's token to the work's. Letting the work
+        // go removes that link, and must not wait for the canceller to leave it (#785).
+        var scope = new WorkScope();
+        var ends = new WorkEnds(scope);
+        using var caller = new CancellationTokenSource();
+        using var release = new ManualResetEventSlim();
+        var waiting = Signal();
+        var held = Signal();
+
+        scope.TryStart(
+            "pump",
+            async ct =>
+            {
+                var woken = Signal();
+                // Not disposed: that would wait for this callback, which is the one held.
+                ct.Register(() =>
+                {
+                    woken.TrySetCanceled(ct);
+                    held.TrySetResult();
+                    release.Wait();
+                });
+                waiting.TrySetResult();
+                await woken.Task;
+            },
+            caller.Token
+        );
+        await waiting.Task.WaitAsync(Bound);
+
+        var cancelling = Task.Run(caller.Cancel);
+        try
+        {
+            await held.Task.WaitAsync(Bound);
+            await ends.For("pump");
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await cancelling.WaitAsync(Bound);
+        Assert.Empty(await scope.StopAsync().WaitAsync(Bound));
+    }
+
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
