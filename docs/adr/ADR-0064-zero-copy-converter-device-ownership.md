@@ -231,9 +231,10 @@ Each resize builds a ring and imports it into the compositor again, so a drag mu
 every frame. `RingSettle.Advance` decides, with timestamps from the view's `TimeProvider`
 (`RingSizeTime`):
 
-- A ring smaller than the wanted size on either axis grows at once, to the wanted size rounded up to
-  64 px and capped. A ring too small would be scaled up by the compositor, which blurs. A drag that
-  keeps growing rebuilds once per 64 px step on either axis.
+- A ring smaller than the wanted size on either axis grows at once. Each axis that grows is rounded
+  up to 64 px and capped, and the other axis keeps its size, so its shrink still waits. A ring too
+  small would be scaled up by the compositor, which blurs. A drag that keeps growing rebuilds once
+  per 64 px step on either axis.
 - Any other change, a shrink or the exact size after a rounded-up grow, applies once the same size
   has been wanted for 500 ms. A shrinking drag rebuilds once when it stops, and a grown ring settles
   on the size it is drawn at, where the 1:1 snap holds.

@@ -73,11 +73,15 @@ internal static class ViewSizedRingPolicy
     }
 
     /// <summary>
-    /// <paramref name="wanted"/> rounded up to <see cref="Step"/> on each axis, held to
-    /// <paramref name="cap"/>: the size a ring grows to.
+    /// The size a <paramref name="current"/> ring grows to for <paramref name="wanted"/>: each axis
+    /// that grows is rounded up to <see cref="Step"/>, and each other axis keeps its size, so a
+    /// shrink on it still waits for the hold. Both are held to <paramref name="cap"/>.
     /// </summary>
-    public static RingSize Grown(RingSize wanted, RingSize cap) =>
-        new(Math.Min(RoundUp(wanted.Width), cap.Width), Math.Min(RoundUp(wanted.Height), cap.Height));
+    public static RingSize Grown(RingSize wanted, RingSize current, RingSize cap) =>
+        new(Axis(wanted.Width, current.Width, cap.Width), Axis(wanted.Height, current.Height, cap.Height));
+
+    private static int Axis(int wanted, int current, int cap) =>
+        wanted > current ? Math.Min(RoundUp(wanted), cap) : Math.Max(wanted, Math.Min(current, cap));
 
     private static int RoundUp(int value) => (value + Step - 1) / Step * Step;
 }
@@ -91,8 +95,9 @@ internal static class ViewSizedRingPolicy
 /// <list type="bullet">
 /// <item><description>
 /// A ring smaller than the wanted size on either axis is too small to draw 1:1, and the compositor
-/// would scale it up. It grows at once, to the wanted size rounded up to
-/// <see cref="ViewSizedRingPolicy.Step"/>, so a drag that keeps growing rebuilds it once per step.
+/// would scale it up. It grows at once: each axis that grows is rounded up to
+/// <see cref="ViewSizedRingPolicy.Step"/>, so a drag that keeps growing rebuilds it once per step,
+/// and the other axis keeps its size.
 /// </description></item>
 /// <item><description>
 /// A ring at least the wanted size takes the exact size once that size has been wanted, unchanged,
@@ -120,7 +125,7 @@ internal readonly record struct RingSettle(RingSize? Pending, long PendingSince)
             return (default, null);
 
         if (size.Width > current.Width || size.Height > current.Height)
-            return (default, ViewSizedRingPolicy.Grown(size, cap));
+            return (default, ViewSizedRingPolicy.Grown(size, current, cap));
 
         if (Pending != size)
             return (new RingSettle(size, now), null);

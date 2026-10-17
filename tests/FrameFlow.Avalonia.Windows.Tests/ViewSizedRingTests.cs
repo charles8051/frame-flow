@@ -61,11 +61,22 @@ public sealed class ViewSizedRingTests
     }
 
     [Fact]
-    public void Grown_RoundsUpToTheStep_WithinTheCap()
+    public void Grown_RoundsAGrowingAxisUpToTheStep_WithinTheCap()
     {
-        Assert.Equal(new RingSize(448, 256), ViewSizedRingPolicy.Grown(new RingSize(385, 216), Frame1080));
-        Assert.Equal(new RingSize(384, 256), ViewSizedRingPolicy.Grown(new RingSize(384, 256), Frame1080));
-        Assert.Equal(new RingSize(1920, 1080), ViewSizedRingPolicy.Grown(new RingSize(1900, 1070), Frame1080));
+        var small = new RingSize(384, 216);
+        Assert.Equal(new RingSize(448, 256), ViewSizedRingPolicy.Grown(new RingSize(385, 217), small, Frame1080));
+        Assert.Equal(new RingSize(1920, 1080), ViewSizedRingPolicy.Grown(new RingSize(1900, 1070), small, Frame1080));
+    }
+
+    [Fact]
+    public void Grown_KeepsAnAxisThatShrinks_ForTheHold()
+    {
+        // A 1000x1000 ring wanting 1100x500 grows across at once and keeps its height.
+        var square = new RingSize(1000, 1000);
+        Assert.Equal(new RingSize(1152, 1000), ViewSizedRingPolicy.Grown(new RingSize(1100, 500), square, new RingSize(1920, 1920)));
+
+        // Past a cap that has since come down, as a narrower crop brings, the axis drops to the cap.
+        Assert.Equal(new RingSize(1152, 800), ViewSizedRingPolicy.Grown(new RingSize(1100, 500), square, new RingSize(1920, 800)));
     }
 
     // ── The view's plan ──
@@ -154,8 +165,11 @@ public sealed class ViewSizedRingTests
             var r = Assert.NotNull(resize);
             Assert.True(r.Width >= wanted.Width && r.Height >= wanted.Height, $"{r} for {wanted}");
             Assert.True(r.Width <= Frame1080.Width && r.Height <= Frame1080.Height, $"{r} past the cap");
-            Assert.True(r.Width - wanted.Width < ViewSizedRingPolicy.Step, $"{r} for {wanted}");
-            Assert.True(r.Height - wanted.Height < ViewSizedRingPolicy.Step, $"{r} for {wanted}");
+
+            // A growing axis is rounded up by less than a step; any other axis keeps its size, so
+            // its shrink still waits for the hold.
+            Assert.Equal(GrownAxis(wanted.Width, current.Width, Frame1080.Width), r.Width);
+            Assert.Equal(GrownAxis(wanted.Height, current.Height, Frame1080.Height), r.Height);
             Assert.Equal(default, next);
         }
         else
@@ -163,6 +177,15 @@ public sealed class ViewSizedRingTests
             Assert.Null(resize);
             Assert.Equal(new RingSettle(wanted, 1000), next);
         }
+    }
+
+    private static int GrownAxis(int wanted, int current, int cap)
+    {
+        if (wanted <= current)
+            return Math.Min(current, cap);
+        int r = Math.Min((wanted + ViewSizedRingPolicy.Step - 1) / ViewSizedRingPolicy.Step * ViewSizedRingPolicy.Step, cap);
+        Assert.InRange(r - wanted, 0, ViewSizedRingPolicy.Step - 1);
+        return r;
     }
 
     [Theory]
