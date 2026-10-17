@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
@@ -22,10 +23,10 @@ internal static unsafe class GpuFrameReadback
     /// <summary>
     /// Reads back a hardware-resident <c>AVFrame</c> to a managed
     /// <see cref="CpuVideoFrame"/> in tightly-packed
-    /// <see cref="PixelFormat.Bgra32"/>. Two native operations
-    /// internally: <c>av_hwframe_transfer_data</c> (PCIe readback to
-    /// an intermediate CPU <c>AVFrame</c>, typically in NV12), then
-    /// <c>sws_scale</c> to Bgra32 packed into the output buffer.
+    /// <see cref="PixelFormat.Bgra32"/>. <c>av_hwframe_transfer_data</c>
+    /// reads it back to an intermediate CPU <c>AVFrame</c>, in NV12 or
+    /// P010, and <see cref="BgraConversion"/> converts that to Bgra32 the
+    /// way the software decoder converts the same stream (#792).
     /// </summary>
     /// <param name="sourceAvFrame">
     /// The GPU-resident <c>AVFrame*</c> to read back. Not consumed.
@@ -71,27 +72,19 @@ internal static unsafe class GpuFrameReadback
 
         FrameCopyMetrics.Record(FrameCopySite.ReadbackDownload);
 
-        // Now sws_scale the NV12 (or whatever CPU format the transfer
-        // picked) → tight-packed Bgra32 into a managed buffer.
-        var accessor = new AvFrameAccessor(cpuPtr);
-        int swFormat = accessor.Format;
-
-        nint swsCtx = FFSwScale.sws_getContext(
-            width,
-            height,
-            swFormat,
-            width,
-            height,
-            FFSwScale.AvPixFmtBgra,
-            FFSwScale.SwsBilinear,
-            srcFilter: nint.Zero,
-            dstFilter: nint.Zero,
-            param: nint.Zero
+        // Convert as the software decoder converts the same stream (#792): NV12 chroma is split
+        // into the planes it would have produced, and the range comes from the
+        // hardware frame, since the transfer does not copy it.
+        var input = BgraConversionInput.For(
+            new AvFrameAccessor(cpuPtr).Format,
+            new AvFrameAccessor(sourceAvFrame).ColorRange
         );
+
+        nint swsCtx = BgraConversion.CreateContext(width, height, input);
         if (swsCtx == nint.Zero)
         {
             throw new InvalidOperationException(
-                $"sws_getContext returned null for {width}x{height} fmt={swFormat} → Bgra32."
+                $"sws_getContext returned null for {width}x{height} {input} to Bgra32."
             );
         }
 
@@ -105,8 +98,8 @@ internal static unsafe class GpuFrameReadback
                 pts,
                 duration,
                 timeline,
-                (SwsCtx: swsCtx, Source: cpuPtr),
-                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                (SwsCtx: swsCtx, Input: input, Source: cpuPtr),
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Input, s.Source),
                 sampleAspectRatio: sampleAspectRatio,
                 rotation: rotation
             );
@@ -117,33 +110,10 @@ internal static unsafe class GpuFrameReadback
         }
     }
 
-    private static void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, nint source)
+    private static void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, BgraConversionInput input, nint source)
     {
-        var accessor = new AvFrameAccessor(source);
-
-        // All four planes, matching VideoDecoder.BuildManagedFrameFromCpu. No
-        // four-plane format reaches here today: this converts a frame
-        // transferred off the GPU, and the transfer formats are nv12 and p010.
-        // Kept identical anyway so the two call sites cannot drift, and because
-        // it is a no-op for the formats that do arrive.
-        byte** srcSlice = stackalloc byte*[4];
-        int* srcStrides = stackalloc int[4];
-        for (int plane = 0; plane < 4; plane++)
-        {
-            srcSlice[plane] = accessor.GetDataPointer(plane);
-            srcStrides[plane] = accessor.GetLineSize(plane);
-        }
-
-        // Through PackedConversion, as the decoder does (#724).
-        int rows = PackedConversion.Scale(
-            swsCtx,
-            srcSlice,
-            srcStrides,
-            planes.Height,
-            planes.Y,
-            planes.Width,
-            planes.StrideY
-        );
+        // Through BgraConversion, as the decoder does (#724, #792).
+        int rows = BgraConversion.Convert(swsCtx, input, source, planes.Y, planes.Width, planes.StrideY);
 
         if (rows <= 0)
         {

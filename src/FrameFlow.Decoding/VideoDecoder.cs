@@ -296,9 +296,17 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// frames.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Safe to toggle at any time; the next call to
     /// <see cref="DecodeAsync"/> observes the new value. Existing in-flight
     /// frames are not retroactively converted.
+    /// </para>
+    /// <para>
+    /// Set it to read back only the frames a caller selects: each yielded frame stays on the GPU
+    /// until <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/> is called on it, and disposing it
+    /// costs no transfer. <see cref="GpuVideoFrame"/> has an example. Either way a hardware frame
+    /// converts to the same pixels as a software decode of the same stream (#792).
+    /// </para>
     /// </remarks>
     public bool YieldHardwareFrames
     {
@@ -385,12 +393,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// <summary>Height reported by the stream codec parameters (used for sws context sizing).</summary>
     private readonly int _height;
 
-    // Tracks the source geometry/format that the current swscale context was created for.
-    // Some streams can change pixel format or dimensions mid-stream; reusing a stale
+    // Tracks the source geometry and input that the current swscale context was created for.
+    // Some streams can change pixel format, range or dimensions mid-stream; reusing a stale
     // SwsContext across incompatible frames is unsafe.
     private int _swsSrcWidth = -1;
     private int _swsSrcHeight = -1;
-    private int _swsSrcFormat = -1;
+    private BgraConversionInput _swsInput;
 
     // Depth of the bounded packet queue, configured at construction via
     // VideoDecoderOptions.PacketQueueCapacity (default 512). For video one demuxed
@@ -1352,6 +1360,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 dst.time_base = src.time_base;
                 dst.duration = src.duration;
                 dst.sample_aspect_ratio = src.sample_aspect_ratio;
+                // Nor the range, which the conversion reads (#792).
+                dst.color_range = src.color_range;
             }
 
             try
@@ -1390,9 +1400,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         if (srcWidth <= 0 || srcHeight <= 0)
             return null;
 
-        // Ensure the sws context matches the current frame dimensions and format.
-        // The first frame initialises it; format changes (rare) rebuild it.
-        EnsureSwsContext(srcWidth, srcHeight, srcFormat);
+        // Ensure the sws context matches the current frame dimensions and input.
+        // The first frame initialises it; format or range changes (rare) rebuild it.
+        var input = BgraConversionInput.For(srcFormat, accessor.ColorRange);
+        EnsureSwsContext(srcWidth, srcHeight, input);
 
         if (_swsCtx is null || _swsCtx.IsInvalid)
             return null;
@@ -1410,8 +1421,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 presentationTime,
                 duration,
                 Timeline,
-                (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
-                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                (SwsCtx: _swsCtx.DangerousGetHandle(), Input: input, Source: framePtr),
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Input, s.Source),
                 pool: FrameStoragePool,
                 sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
                 rotation: _rotation
@@ -1434,39 +1445,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// Converts the decoded <c>AVFrame</c> at <paramref name="source"/> into the frame's
     /// BGRA plane. Throws <see cref="ScaleFailedException"/> when swscale writes no rows.
     /// </summary>
-    private static unsafe void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, nint source)
+    private static void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, BgraConversionInput input, nint source)
     {
-        var accessor = new AvFrameAccessor(source);
-
-        // sws_scale expects arrays of plane pointers and strides.
-        // Source planes come from the AVFrame data array.
-        //
-        // All four, not three. swscale validates one pointer per plane the
-        // source format declares, and four-plane formats exist: yuva420p and
-        // the other YUVA variants, plus GBRAP. Hardcoding srcSlice[3] = null
-        // made every one of them fail the check with "bad src image pointers",
-        // so nothing decoded at all. Reading data[3] costs nothing on a
-        // three-plane format, where FFmpeg leaves it null and linesize[3] zero
-        // — the same values this used to write by hand.
-        byte** srcSlice = stackalloc byte*[4];
-        int* srcStrides = stackalloc int[4];
-        for (int plane = 0; plane < 4; plane++)
-        {
-            srcSlice[plane] = accessor.GetDataPointer(plane);
-            srcStrides[plane] = accessor.GetLineSize(plane);
-        }
-
-        // Not sws_scale straight into planes.Y: at some widths swscale leaves the end of a
-        // tightly packed row unwritten or writes past it (#724).
-        int rowsWritten = PackedConversion.Scale(
-            swsCtx,
-            srcSlice,
-            srcStrides,
-            accessor.Height,
-            planes.Y,
-            planes.Width,
-            planes.StrideY
-        );
+        // Through BgraConversion, as the hardware readback does, so a frame converts the same
+        // whichever decoder produced it (#792). It hands swscale all four source planes: four-plane
+        // formats such as yuva420p fail swscale's pointer check with a null fourth plane.
+        int rowsWritten = BgraConversion.Convert(swsCtx, input, source, planes.Y, planes.Width, planes.StrideY);
 
         if (rowsWritten <= 0)
             throw new ScaleFailedException(rowsWritten);
@@ -1482,9 +1466,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
     /// <summary>
     /// Ensures the <c>SwsContext</c> is allocated and matches the given source
-    /// dimensions and pixel format. Rebuilds it if the format changes.
+    /// dimensions and input. Rebuilds it if either changes.
     /// </summary>
-    private void EnsureSwsContext(int srcWidth, int srcHeight, int srcFormat)
+    private void EnsureSwsContext(int srcWidth, int srcHeight, BgraConversionInput input)
     {
         // Reuse only when the existing context matches the current frame exactly.
         if (
@@ -1492,7 +1476,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             && !_swsCtx.IsInvalid
             && _swsSrcWidth == srcWidth
             && _swsSrcHeight == srcHeight
-            && _swsSrcFormat == srcFormat
+            && _swsInput == input
         )
             return;
 
@@ -1500,20 +1484,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         _swsCtx = null;
         _swsSrcWidth = -1;
         _swsSrcHeight = -1;
-        _swsSrcFormat = -1;
+        _swsInput = default;
 
-        nint ctx = FFSwScale.sws_getContext(
-            srcWidth,
-            srcHeight,
-            srcFormat,
-            srcWidth,
-            srcHeight,
-            FFSwScale.AvPixFmtBgra,
-            FFSwScale.SwsBilinear,
-            nint.Zero,
-            nint.Zero,
-            nint.Zero
-        );
+        nint ctx = BgraConversion.CreateContext(srcWidth, srcHeight, input);
 
         if (ctx == nint.Zero)
         {
@@ -1524,7 +1497,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         _swsCtx = new SwsContextHandle(ctx);
         _swsSrcWidth = srcWidth;
         _swsSrcHeight = srcHeight;
-        _swsSrcFormat = srcFormat;
+        _swsInput = input;
     }
 
     /// <summary>
@@ -1589,7 +1562,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             _swsCtx?.Dispose();
             _swsSrcWidth = -1;
             _swsSrcHeight = -1;
-            _swsSrcFormat = -1;
+            _swsInput = default;
 
             // ADR-0033: release hwaccel resources. The codec context owns one
             // ref on the hw_device_ctx — disposing it (via avcodec_free_context)

@@ -143,6 +143,32 @@ with it is ruled out for later models, as the other device-loss codes already we
   them all on a new device from that one event. A player without a lent device drops its own device
   when an item faults, so loading again on the same player is enough.
 
+### 5. A hardware-decoded frame converts to the same BGRA as a software-decoded one
+
+**No compile error. Pixels change.**
+
+A hardware frame reads back as NV12, and the same stream decoded in software is `yuv420p` holding
+the same samples. They used to convert differently (#792). swscale converts `yuv420p` to BGRA with
+a converter that gives each chroma row to the two luma rows it covers. From NV12 it takes its
+general scaler, which blends neighbouring chroma rows on every even luma row after the first. The
+two differed by up to 179 levels in one channel on the corpus clips, at sharp vertical chroma
+edges. The decoder's own readback and `GpuVideoFrame.ReadbackToCpuBgra32` now split NV12's chroma
+into planes and convert as the software decoder does. The output is byte-identical on the CUDA,
+D3D11VA, D3D12VA, DXVA2 and Vulkan backends for H.264, HEVC and VP9, 8-bit and 10-bit.
+
+The range now comes from the frame. A full-range stream used to convert as full range only when the
+software decoder named it a JPEG format (`yuvj420p`, as the H.264 and HEVC decoders do). The same
+stream on hardware, and a full-range VP9 or AV1 stream in software, converted as limited range:
+blacks lifted and whites dimmed. Every path now converts a frame flagged full range as full range.
+
+**Who hits this.**
+- Golden images, perceptual hashes or model inputs captured from hardware-decoded frames.
+- Golden images of full-range content that is not H.264 or JPEG, from either decoder.
+
+**What to write instead.** Nothing to change in code. Recapture references taken from hardware
+frames or from full-range streams. A reference captured from a limited-range software decode is
+unchanged.
+
 ## `v0.16.0` — since `v0.15.1`
 
 ### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out
