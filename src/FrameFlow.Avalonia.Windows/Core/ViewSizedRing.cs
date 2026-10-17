@@ -138,7 +138,8 @@ internal readonly record struct RingSettle(RingSize? Pending, long PendingSince)
 /// <summary>
 /// What the shader pass reads for one ring: the source part as texture coordinates, and how much
 /// of the frame each ring pixel covers (#767). Laid out as the D3D11 shader's constant buffer reads
-/// it after <see cref="YuvLevels"/>. Pure.
+/// it after <see cref="YuvLevels"/>, and as the D3D12 shader's root constants read it at the end of
+/// <see cref="D3D12PresentConstants"/> (#774). Pure.
 /// </summary>
 /// <remarks>
 /// Where a ring pixel covers more than one texel of a plane, the shader averages every texel under

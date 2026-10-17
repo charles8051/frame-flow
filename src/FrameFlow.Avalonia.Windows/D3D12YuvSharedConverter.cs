@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Decoding;
@@ -37,12 +38,21 @@ namespace FrameFlow.Avalonia.Windows;
 /// and signals back. The ring's keyed mutex is the D3D11 converter's: acquire 0, release 1.
 /// </para>
 /// <para>
-/// <b>Frame lifetime.</b> The GPU reads the decode texture after <see cref="ConvertInto"/> returns,
+/// <b>Frame lifetime.</b> The GPU reads the decode texture after <see cref="ConvertInto(int, GpuVideoFrame)"/> returns,
 /// so the converter holds a reference to the frame until the draw has finished. Up to
 /// <see cref="InFlight"/> draws are outstanding, each with its own command list, descriptors and
 /// frame. A call releases the frames whose draws have finished without waiting; when every draw
 /// is still outstanding it drops the frame rather than wait on the UI thread. The sink's
 /// <c>MaxHeldFrames</c> counts the held frames.
+/// </para>
+/// <para>
+/// <b>The ring follows the view (#774).</b> The draw target, its D3D11 view and the ring are the
+/// size the view draws the frame's visible part at, up to that part's coded size, and the shader
+/// reads only that part (<see cref="SetSource"/>) with the D3D11 converter's area filter where the
+/// ring is smaller than it. <see cref="TryResizeRing"/> replaces those three and keeps the devices,
+/// the root signature, the pipeline state and the draw slots. The view decides the size with
+/// <see cref="ViewSizedRingPolicy"/> and <see cref="RingSettle"/>, as it does for the D3D11
+/// converter. A frame of another size still rebuilds the converter.
 /// </para>
 /// <para>
 /// <b>The decoder's device.</b> The D3D12 half is built on the device the frames are decoded on,
@@ -56,7 +66,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// </remarks>
 [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Reliability", "CA2213", Justification = "Every object is released through _owned, in reverse creation order.")]
-internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
+internal sealed unsafe class D3D12YuvSharedConverter : IViewSizedRing, IDisposable
 {
     /// <summary>Number of shared BGRA textures in the ring, as the D3D11 converter has.</summary>
     public const int BufferCount = D3D11Nv12SharedConverter.BufferCount;
@@ -67,19 +77,26 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     // How long Dispose waits, off the UI thread, for the GPU to finish before it releases anything.
     private static readonly TimeSpan GpuWaitLimit = TimeSpan.FromSeconds(1);
 
-    // The D3D11 converter's conversion (ADR-0063), with the sample levels and the frame's part of
-    // the texture as root constants, so NV12 and P010 share one pipeline.
+    // The D3D11 converter's conversion (ADR-0063), with the sample levels, the frame's part of the
+    // texture and the part of the frame the ring holds as root constants, so NV12 and P010 share one
+    // pipeline.
     private const string Hlsl = """
         cbuffer Constants : register(b0)
         {
-            float2 UvScale;
-            float2 ChromaUvMax;
-            float YOffset, YScale, COffset, CScale;
+            float2 UvScale;                         // the frame's part of the texture
+            float2 ChromaUvMax;                     // the frame's last chroma sample, in texture uv
+            float YOffset, YScale, COffset, CScale; // YuvLevels
+            float2 SourceOrigin, SourceSize;        // ShaderSampling: the part of the frame read,
+            float2 Footprint, Unused;               // and the frame each ring pixel covers, in uv
         };
 
-        Texture2D<float>  Luma   : register(t0);
-        Texture2D<float2> Chroma : register(t1);
-        SamplerState      Samp   : register(s0);
+        // The most texels per axis the area filter averages: a 64:1 shrink. Past it the filter reads
+        // the 64 nearest the ring pixel's centre.
+        static const int MaxSpan = 64;
+
+        Texture2D    Luma   : register(t0);   // R8_UNORM or R16_UNORM view of the Y plane
+        Texture2D    Chroma : register(t1);   // R8G8_UNORM or R16G16_UNORM view of the UV plane
+        SamplerState Samp   : register(s0);
 
         struct VSOut
         {
@@ -96,11 +113,50 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             return o;
         }
 
+        // One plane's value for the ring pixel centred at `centre`, in the frame's uv (#774), as the
+        // D3D11 converter reads it (#767). Where the pixel covers at most a texel of the plane on each
+        // axis, one bilinear sample, at most `uvMax`. Where it covers more, the area filter: every
+        // texel of the frame under the pixel's footprint, weighted by how much of it the footprint
+        // covers. The texture can be larger than the frame: the frame's texels are its first
+        // UvScale * size, and the filter reads none past them.
+        float4 Read(Texture2D plane, float2 centre, float2 uvMax)
+        {
+            float2 size;
+            plane.GetDimensions(size.x, size.y);
+            float2 frame = UvScale * size;
+            float2 texels = Footprint * frame;
+            if (max(texels.x, texels.y) <= 1.001)
+                return plane.SampleLevel(Samp, min(centre * UvScale, uvMax), 0);
+
+            float2 lo = centre * frame - texels * 0.5;
+            float2 hi = lo + texels;
+            int2 first = max((int2)floor(lo), 0);
+            int2 last = min((int2)ceil(hi) - 1, (int2)ceil(frame) - 1);
+            int2 skip = max(last - first + 1 - MaxSpan, 0) / 2;
+            first += skip;
+            last = min(last - skip, first + MaxSpan - 1);
+
+            float4 sum = 0.0;
+            float total = 0.0;
+            [loop] for (int y = first.y; y <= last.y; y++)
+            {
+                float wy = min(hi.y, y + 1.0) - max(lo.y, (float)y);
+                [loop] for (int x = first.x; x <= last.x; x++)
+                {
+                    float w = (min(hi.x, x + 1.0) - max(lo.x, (float)x)) * wy;
+                    sum += plane.Load(int3(x, y, 0)) * w;
+                    total += w;
+                }
+            }
+            return sum / total;
+        }
+
         float4 PSMain(VSOut input) : SV_Target
         {
-            float2 uv = input.uv * UvScale;
-            float  y  = Luma.Sample(Samp, uv);
-            float2 c  = Chroma.Sample(Samp, min(uv, ChromaUvMax));
+            // The ring pixel's centre in the frame: the ring covers the source part only.
+            float2 centre = SourceOrigin + input.uv * SourceSize;
+            float  y      = Read(Luma, centre, float2(1.0, 1.0)).r;
+            float2 c      = Read(Chroma, centre, ChromaUvMax).rg;
 
             float Y = (y   - YOffset) * YScale;
             float U = (c.x - COffset) * CScale;
@@ -133,15 +189,16 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     private readonly uint _srvSize;
     private readonly ID3D12DescriptorHeap _rtvHeap;
     private readonly DrawSlot[] _slots = new DrawSlot[InFlight];
-    private readonly ID3D12Resource _drawn;
     private readonly ID3D12Fence _fence;
     private readonly ManualResetEvent _fenceReached = new(false);
 
     // D3D11, the converter's own device on the same adapter.
+    private readonly ID3D11Device1 _device11;
     private readonly ID3D11DeviceContext4 _context;
-    private readonly ID3D11Texture2D _drawnOn11;
     private readonly ID3D11Fence _fenceOn11;
-    private readonly RingBuffer[] _buffers = new RingBuffer[BufferCount];
+
+    // Sized by the ring: the draw target, its D3D11 view and the ring. Replaced by TryResizeRing.
+    private Sized _sized;
 
     private ulong _frames;
     private int _nextSlot;
@@ -156,7 +213,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         public required int FirstDescriptor;
 
         /// <summary>The frame the draw reads, until the fence reaches <see cref="Drawn"/>.</summary>
-        public IVideoFrame? Frame;
+        public IDisposable? Frame;
         public ulong Drawn;
     }
 
@@ -168,14 +225,98 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     }
 
     /// <summary>
+    /// The parts the ring's size fixes: the texture the shader draws into, which the D3D11 device
+    /// copies from, that device's view of it, and the ring. Released in reverse creation order.
+    /// </summary>
+    private sealed class Sized(ILogger logger) : IDisposable
+    {
+        private readonly List<IDisposable> _owned = [];
+
+        public ID3D12Resource Drawn = null!;
+        public ID3D11Texture2D DrawnOn11 = null!;
+        public readonly RingBuffer[] Buffers = new RingBuffer[BufferCount];
+
+        public T Own<T>(T disposable) where T : IDisposable
+        {
+            _owned.Add(disposable);
+            return disposable;
+        }
+
+        public void Dispose()
+        {
+            for (int i = _owned.Count - 1; i >= 0; i--)
+            {
+                try
+                {
+                    _owned[i].Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Ignored fault releasing a D3D12 presenter ring.");
+                }
+            }
+
+            _owned.Clear();
+        }
+    }
+
+    /// <summary>
+    /// The sized parts <see cref="TryResizeRing"/> replaced. The caller disposes it off the UI
+    /// thread, after detaching the old ring's compositor imports. D3D12 does not keep a resource
+    /// alive for work in flight, so it first waits, bounded, for the shared fence to reach the copy
+    /// of the last frame drawn into them. It holds references of its own to the fence and its
+    /// device, so it can outlive the converter.
+    /// </summary>
+    private sealed class Retired(Sized sized, ID3D12Device device, ID3D12Fence fence, ulong copied, ILogger logger)
+        : IDisposable
+    {
+        public void Dispose()
+        {
+            try
+            {
+                using var reached = new ManualResetEvent(false);
+                if (copied > 0 && !GpuFinished(device, fence, copied, reached, logger))
+                {
+                    logger.LogWarning(
+                        "A D3D12 presenter ring was retired while its GPU work had not finished in {Limit}ms and the "
+                            + "device reports no removal; leaving it unreleased rather than freeing it under that work.",
+                        (int)GpuWaitLimit.TotalMilliseconds);
+                    return;
+                }
+
+                sized.Dispose();
+            }
+            finally
+            {
+                fence.Dispose();
+                device.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
     /// Builds the converter for <paramref name="width"/> by <paramref name="height"/> frames on the
-    /// device <paramref name="texture"/>, a frame's <c>ID3D12Resource*</c>, belongs to.
+    /// device <paramref name="texture"/>, a frame's <c>ID3D12Resource*</c>, belongs to, with a ring
+    /// the frame's size.
     /// </summary>
     public D3D12YuvSharedConverter(nint texture, int width, int height, ILogger logger)
+        : this(texture, width, height, new RingSize(width, height), logger)
+    {
+    }
+
+    /// <summary>
+    /// Builds the converter for <paramref name="width"/> by <paramref name="height"/> frames on the
+    /// device <paramref name="texture"/>, a frame's <c>ID3D12Resource*</c>, belongs to, with a
+    /// <paramref name="ring"/>-sized ring (#774) that holds the whole frame until
+    /// <see cref="SetSource"/> crops it.
+    /// </summary>
+    public D3D12YuvSharedConverter(nint texture, int width, int height, RingSize ring, ILogger logger)
     {
         _logger = logger;
         Width = width;
         Height = height;
+        Ring = ring;
+        Source = SourceRect.Whole(width, height);
 
         _owned.Add(_fenceReached);
         try
@@ -213,14 +354,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
                 _slots[i] = new DrawSlot { Allocator = allocator, List = list, FirstDescriptor = 2 * i };
             }
 
-            // The texture the shader draws into and the D3D11 device copies from, and the fence the
-            // two signal in turn. Both are shared, so the D3D11 device can open them.
-            _drawn = Own(_device12.CreateCommittedResource(
-                new HeapProperties(HeapType.Default),
-                HeapFlags.Shared,
-                ResourceDescription.Texture2D(Format.B8G8R8A8_UNorm, (uint)width, (uint)height, 1, 1, flags: ResourceFlags.AllowRenderTarget),
-                ResourceStates.Common));
-            _device12.CreateRenderTargetView(_drawn, null, _rtvHeap.GetCPUDescriptorHandleForHeapStart());
+            // The fence the two devices signal in turn, shared so the D3D11 device can open it.
             _fence = Own(_device12.CreateFence(0, Vortice.Direct3D12.FenceFlags.Shared));
 
             // A D3D11 device on the same adapter; BgraSupport so the compositor can import the ring.
@@ -233,53 +367,45 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
                 device11 = Own(created!);
             }
 
+            _device11 = Own(device11.QueryInterface<ID3D11Device1>());
             _context = Own(device11.ImmediateContext.QueryInterface<ID3D11DeviceContext4>());
-            using (var device1 = device11.QueryInterface<ID3D11Device1>())
-            using (var handle = new SafeFileHandle(_device12.CreateSharedHandle(_drawn, null, Unnamed), ownsHandle: true))
-                _drawnOn11 = Own(device1.OpenSharedResource1<ID3D11Texture2D>(handle.DangerousGetHandle()));
             using (var device5 = device11.QueryInterface<ID3D11Device5>())
             using (var handle = new SafeFileHandle(_device12.CreateSharedHandle(_fence, null, Unnamed), ownsHandle: true))
                 _fenceOn11 = Own(device5.OpenSharedFence<ID3D11Fence>(handle.DangerousGetHandle()));
 
-            for (var i = 0; i < BufferCount; i++)
-            {
-                var ring = Own(device11.CreateTexture2D(new Texture2DDescription
-                {
-                    Width = (uint)width,
-                    Height = (uint)height,
-                    MipLevels = 1,
-                    ArraySize = 1,
-                    Format = Format.B8G8R8A8_UNorm,
-                    SampleDescription = new SampleDescription(1, 0),
-                    Usage = ResourceUsage.Default,
-                    BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
-                    CPUAccessFlags = CpuAccessFlags.None,
-                    MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
-                }));
-                using var dxgi = ring.QueryInterface<IDXGIResource>();
-                _buffers[i] = new RingBuffer
-                {
-                    Texture = ring,
-                    KeyedMutex = Own(ring.QueryInterface<IDXGIKeyedMutex>()),
-                    SharedHandle = dxgi.SharedHandle,
-                };
-            }
+            _sized = CreateSized(ring);
+            _device12.CreateRenderTargetView(_sized.Drawn, null, _rtvHeap.GetCPUDescriptorHandleForHeapStart());
         }
         catch
         {
+            _sized?.Dispose();
             ReleaseOwned();
             throw;
         }
 
         _logger.LogInformation(
-            "D3D12 presenter converter ready (#429): {W}x{H}, pixel shader on the decoder's D3D12 device 0x{Device:X}, "
-                + "copied by an own D3D11 device into a {N}-buffer shared keyed-mutex ring.",
-            width, height, _deviceIdentity, BufferCount);
+            "D3D12 presenter converter ready (#429): {W}x{H} frames, pixel shader on the decoder's D3D12 device "
+                + "0x{Device:X}, copied by an own D3D11 device into a {N}-buffer {RW}x{RH} shared keyed-mutex ring.",
+            width, height, _deviceIdentity, BufferCount, ring.Width, ring.Height);
     }
 
+    /// <summary>The frame's width.</summary>
     public int Width { get; }
 
+    /// <summary>The frame's height.</summary>
     public int Height { get; }
+
+    /// <summary>The ring's size, and the draw target's (#774).</summary>
+    public RingSize Ring { get; private set; }
+
+    /// <summary>
+    /// The part of the frame the ring holds, in coded pixels (#774). The whole frame until
+    /// <see cref="SetSource"/> crops it.
+    /// </summary>
+    public SourceRect Source { get; private set; }
+
+    /// <summary>Always: the D3D12 converter has only the shader (#774).</summary>
+    public bool RingFollowsView => true;
 
     /// <summary>
     /// The decoder's device, as its <c>IUnknown</c> identity. Frames from another device need a new
@@ -295,7 +421,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     public bool IsDeviceLost => _deviceLost;
 
     /// <summary>The legacy global shared handle for ring buffer <paramref name="index"/>.</summary>
-    public nint GetSharedHandle(int index) => _buffers[index].SharedHandle;
+    public nint GetSharedHandle(int index) => _sized.Buffers[index].SharedHandle;
 
     /// <summary>The <c>IUnknown</c> identity of the device a frame's <c>ID3D12Resource*</c> belongs to.</summary>
     public static nint DeviceIdentity(nint texture)
@@ -325,6 +451,20 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         if (subresource != 0)
             throw new NotSupportedException("A frame in a texture array is not supported.");
 
+        return ConvertInto(index, textureHandle, fenceHandle, fenceValue, frame.AddRef);
+    }
+
+    /// <summary>
+    /// Converts the frame in <paramref name="textureHandle"/>, an <c>ID3D12Resource*</c> written
+    /// once <paramref name="fenceHandle"/> reaches <paramref name="fenceValue"/>, into ring buffer
+    /// <paramref name="index"/>. <paramref name="hold"/> keeps the texture alive; the converter
+    /// disposes what it returns once the GPU has read the texture. For tests: a texture of their own.
+    /// </summary>
+    internal bool ConvertInto(int index, nint textureHandle, nint fenceHandle, ulong fenceValue, Func<IDisposable> hold)
+    {
+        if (_deviceLost || _disposed)
+            return false;
+
         if (!ReleaseFinished())
             return false;
 
@@ -338,7 +478,8 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         var description = texture.Description;
         var (samples, lumaFormat, chromaFormat) = YuvTextureFormats.For(description.Format);
         var constants = D3D12PresentConstants.Create(
-            samples, (int)description.Width, (int)description.Height, Width, Height);
+            samples, (int)description.Width, (int)description.Height, Width, Height, Source, Ring);
+        var sized = _sized;
 
         int descriptorOffset = slot.FirstDescriptor * (int)_srvSize;
         var srv = _srvHeap.GetCPUDescriptorHandleForHeapStart() + descriptorOffset;
@@ -352,20 +493,20 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         list.SetDescriptorHeaps(_srvHeap);
         list.SetGraphicsRoot32BitConstants(0, D3D12PresentConstants.Count, &constants, 0);
         list.SetGraphicsRootDescriptorTable(1, _srvHeap.GetGPUDescriptorHandleForHeapStart() + descriptorOffset);
-        list.RSSetViewport(0, 0, Width, Height, 0, 1);
-        list.RSSetScissorRect(Width, Height);
-        list.ResourceBarrierTransition(_drawn, ResourceStates.Common, ResourceStates.RenderTarget);
+        list.RSSetViewport(0, 0, Ring.Width, Ring.Height, 0, 1);
+        list.RSSetScissorRect(Ring.Width, Ring.Height);
+        list.ResourceBarrierTransition(sized.Drawn, ResourceStates.Common, ResourceStates.RenderTarget);
         list.OMSetRenderTargets(_rtvHeap.GetCPUDescriptorHandleForHeapStart(), null);
         list.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         list.DrawInstanced(3, 1, 0, 0);
         // COMMON, so the D3D11 device, which tracks no D3D12 state, can read it.
-        list.ResourceBarrierTransition(_drawn, ResourceStates.RenderTarget, ResourceStates.Common);
+        list.ResourceBarrierTransition(sized.Drawn, ResourceStates.RenderTarget, ResourceStates.Common);
         list.Close();
 
         var values = BridgeFenceValues.For(_frames + 1);
 
         // From here the GPU may read the frame, so hold it whatever happens next.
-        slot.Frame = frame.AddRef();
+        slot.Frame = hold();
         slot.Drawn = values.Drawn;
         _nextSlot = (_nextSlot + 1) % InFlight;
         try
@@ -385,7 +526,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
 
         _frames++;
 
-        var buffer = _buffers[index];
+        var buffer = sized.Buffers[index];
         var acquired = false;
         var copied = false;
         try
@@ -393,7 +534,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             _context.Wait(_fenceOn11, values.Drawn);
             buffer.KeyedMutex.AcquireSync(0, 1000);
             acquired = true;
-            _context.CopyResource(buffer.Texture, _drawnOn11);
+            _context.CopyResource(buffer.Texture, sized.DrawnOn11);
             copied = true;
             FrameCopyMetrics.Record(FrameCopySite.PresenterGpuCopy);
         }
@@ -416,6 +557,72 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     }
 
     /// <summary>
+    /// Resizes the draw target and the ring for the size the view draws the frame at (#774). The
+    /// devices, the root signature, the pipeline state and the draw slots are kept. The ring is new,
+    /// so the caller imports it again.
+    /// </summary>
+    /// <returns>
+    /// The old draw target and ring, for the caller to dispose off the UI thread once it has detached
+    /// their compositor imports; the disposal waits for the GPU work that used them.
+    /// <see langword="null"/> when the converter is lost or disposed, or allocating the new parts
+    /// failed; the converter is then unchanged.
+    /// </returns>
+    public IDisposable? TryResizeRing(RingSize ring)
+    {
+        if (_disposed || _deviceLost)
+            return null;
+
+        long started = Stopwatch.GetTimestamp();
+        Sized sized;
+        try
+        {
+            // CA2000 is a false positive: the new parts become the converter's below.
+#pragma warning disable CA2000
+            sized = CreateSized(ring);
+#pragma warning restore CA2000
+        }
+        catch (Exception ex)
+        {
+            if (D3D11DeviceLoss.IsDeviceLost(ex) || _fence.CompletedValue == ulong.MaxValue)
+                MarkLost(ex, "Resizing the D3D12 presenter's ring lost a device");
+            else
+                _logger.LogWarning(ex, "D3D12 converter could not resize its ring to {W}x{H}; it keeps the old one.", ring.Width, ring.Height);
+            return null;
+        }
+
+        // The draws recorded so far hold the old target's descriptor as it was: a render target view
+        // is read when the list is recorded, not when it runs.
+        var retired = new Retired(
+            _sized,
+            Borrow<ID3D12Device>(_device12.NativePointer),
+            Borrow<ID3D12Fence>(_fence.NativePointer),
+            _frames > 0 ? BridgeFenceValues.For(_frames).Copied : 0,
+            _logger);
+        var previous = Ring;
+        _sized = sized;
+        Ring = ring;
+        _device12.CreateRenderTargetView(sized.Drawn, null, _rtvHeap.GetCPUDescriptorHandleForHeapStart());
+
+        _logger.LogDebug(
+            "D3D12 converter resized its ring from {OW}x{OH} to {W}x{H} for the view in {Ms:F1} ms ({FW}x{FH} frames).",
+            previous.Width, previous.Height, ring.Width, ring.Height,
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds, Width, Height);
+        return retired;
+    }
+
+    /// <summary>
+    /// Sets the part of the frame the ring holds, in coded pixels (#774): the crop a filled view
+    /// shows, or the whole frame. The shader reads only that part from the next conversion. An
+    /// empty part reads the whole frame.
+    /// </summary>
+    public void SetSource(SourceRect source)
+    {
+        if (source.IsEmpty)
+            source = SourceRect.Whole(Width, Height);
+        Source = source;
+    }
+
+    /// <summary>
     /// Waits for the GPU to finish with everything the converter submitted, bounded, then releases
     /// the held frames and every D3D12 and D3D11 object. A device that neither finishes nor reports
     /// removal keeps its objects and frames: releasing them under GPU work in flight would be a
@@ -427,7 +634,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             return;
         _disposed = true;
 
-        if (_frames > 0 && !GpuFinished(BridgeFenceValues.For(_frames).Copied))
+        if (_frames > 0 && !GpuFinished(_device12, _fence, BridgeFenceValues.For(_frames).Copied, _fenceReached, _logger))
         {
             _logger.LogWarning(
                 "D3D12 presenter converter disposed while its GPU work had not finished in {Limit}ms and the device "
@@ -442,6 +649,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             slot.Frame = null;
         }
 
+        _sized.Dispose();
         ReleaseOwned();
     }
 
@@ -468,36 +676,36 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     }
 
     /// <summary>
-    /// True once the shared fence reaches <paramref name="value"/>, waiting on the CPU for at most
-    /// <see cref="GpuWaitLimit"/>, or once the device is removed, which abandons its work. Only
-    /// <see cref="Dispose"/> calls it, off the UI thread.
+    /// True once <paramref name="fence"/> reaches <paramref name="value"/>, waiting on the CPU for at
+    /// most <see cref="GpuWaitLimit"/>, or once <paramref name="device"/> is removed, which abandons
+    /// its work. Only disposals call it, off the UI thread.
     /// </summary>
-    private bool GpuFinished(ulong value)
+    private static bool GpuFinished(ID3D12Device device, ID3D12Fence fence, ulong value, ManualResetEvent reached, ILogger logger)
     {
         try
         {
             // A removed device's fence reads ulong.MaxValue, which passes this.
-            if (_fence.CompletedValue >= value)
+            if (fence.CompletedValue >= value)
                 return true;
 
-            _fenceReached.Reset();
-            _fence.SetEventOnCompletion(value, _fenceReached.SafeWaitHandle.DangerousGetHandle()).CheckError();
-            if (_fenceReached.WaitOne(GpuWaitLimit))
+            reached.Reset();
+            fence.SetEventOnCompletion(value, reached.SafeWaitHandle.DangerousGetHandle()).CheckError();
+            if (reached.WaitOne(GpuWaitLimit))
                 return true;
         }
         catch (Exception ex)
         {
             // Removal between the read and the registration fails the registration.
-            _logger.LogDebug(ex, "Waiting for the D3D12 presenter's GPU work failed; checking for device removal.");
+            logger.LogDebug(ex, "Waiting for the D3D12 presenter's GPU work failed; checking for device removal.");
         }
 
         try
         {
-            return _device12.DeviceRemovedReason.Failure || _fence.CompletedValue == ulong.MaxValue;
+            return device.DeviceRemovedReason.Failure || fence.CompletedValue == ulong.MaxValue;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Reading the D3D12 device's removal state failed; treating it as removed.");
+            logger.LogDebug(ex, "Reading the D3D12 device's removal state failed; treating it as removed.");
             return true;
         }
     }
@@ -546,6 +754,57 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     {
         _owned.Add(disposable);
         return disposable;
+    }
+
+    /// <summary>
+    /// The draw target, shared so the D3D11 device can open it, that device's view of it, and the
+    /// ring, all <paramref name="ring"/>-sized. Releases what it made when a step fails.
+    /// </summary>
+    private Sized CreateSized(RingSize ring)
+    {
+        var sized = new Sized(_logger);
+        try
+        {
+            sized.Drawn = sized.Own(_device12.CreateCommittedResource(
+                new HeapProperties(HeapType.Default),
+                HeapFlags.Shared,
+                ResourceDescription.Texture2D(
+                    Format.B8G8R8A8_UNorm, (uint)ring.Width, (uint)ring.Height, 1, 1, flags: ResourceFlags.AllowRenderTarget),
+                ResourceStates.Common));
+            using (var handle = new SafeFileHandle(_device12.CreateSharedHandle(sized.Drawn, null, Unnamed), ownsHandle: true))
+                sized.DrawnOn11 = sized.Own(_device11.OpenSharedResource1<ID3D11Texture2D>(handle.DangerousGetHandle()));
+
+            for (var i = 0; i < BufferCount; i++)
+            {
+                var texture = sized.Own(_device11.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = (uint)ring.Width,
+                    Height = (uint)ring.Height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+                    CPUAccessFlags = CpuAccessFlags.None,
+                    MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
+                }));
+                using var dxgi = texture.QueryInterface<IDXGIResource>();
+                sized.Buffers[i] = new RingBuffer
+                {
+                    Texture = texture,
+                    KeyedMutex = sized.Own(texture.QueryInterface<IDXGIKeyedMutex>()),
+                    SharedHandle = dxgi.SharedHandle,
+                };
+            }
+
+            return sized;
+        }
+        catch
+        {
+            sized.Dispose();
+            throw;
+        }
     }
 
     private static RootSignatureDescription1 RootSignature() => new(

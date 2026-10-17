@@ -105,7 +105,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Reliability", "CA2213", Justification = "Disposed by FinishTeardownAsync, which StopPresenting hands it to.")]
     private D3D11Nv12SharedConverter? _gpuConverter;
-    private D3D12YuvSharedConverter? _d3d12Converter; // GPU zero-copy source, D3D12VA frames
+    // GPU zero-copy source, D3D12VA frames. Disposed the same way.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "Disposed by FinishTeardownAsync, which StopPresenting hands it to.")]
+    private D3D12YuvSharedConverter? _d3d12Converter;
     private D3D11BgraUploader? _cpuUploader; // CPU upload fallback source
     private bool? _activeIsGpu; // which source the imported[] ring is currently bound to
 
@@ -1360,8 +1363,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// <summary>
     /// Sizes + centers the surface visual to the video's display shape within the control bounds,
     /// letterboxed (the black window background shows in the bars) or filling them (#766), turned
-    /// upright about its centre (#542). The D3D11 converter's ring holds only the part of the frame a
-    /// fill shows (#767), so the visual is that part's rectangle; any other producer's ring holds the
+    /// upright about its centre (#542). A GPU converter's ring holds only the part of the frame a fill
+    /// shows (#767, #774), so the visual is that part's rectangle; the CPU uploader's ring holds the
     /// whole frame, which overflows the bounds under a fill, and the control's
     /// <see cref="Visual.ClipToBounds"/> cuts the surface visual, its child. Called on attach, on
     /// resize, when <see cref="Placement"/> changes, when the video size, pixel shape or rotation
@@ -1396,10 +1399,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         double scaling = RenderScaling;
         if (_videoRotation is VideoRotation.None or VideoRotation.Clockwise180
             && converter is not null
-            && SuperResolutionPolicy.TargetSize(w, h, scaling) == (converter.Output.Width, converter.Output.Height))
+            && SuperResolutionPolicy.TargetSize(w, h, scaling) == (converter.Ring.Width, converter.Ring.Height))
         {
-            w = converter.Output.Width / scaling;
-            h = converter.Output.Height / scaling;
+            w = converter.Ring.Width / scaling;
+            h = converter.Ring.Height / scaling;
             x = Math.Round(x * scaling) / scaling;
             y = Math.Round(y * scaling) / scaling;
         }
@@ -1413,11 +1416,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     /// <summary>
-    /// The D3D11 converter whose ring the surface shows, or null when another producer's does: the
-    /// CPU uploader after a flip, or a converter not yet resized for the video's size.
+    /// The GPU converter, D3D11 or D3D12, whose ring the surface shows, or null when another
+    /// producer's does: the CPU uploader after a flip, or a converter not yet built for the video's
+    /// size.
     /// </summary>
-    private D3D11Nv12SharedConverter? RingConverter =>
-        _activeIsGpu != false && _gpuConverter is { } c && c.Width == _videoWidth && c.Height == _videoHeight ? c : null;
+    private IViewSizedRing? RingConverter =>
+        _activeIsGpu != false && ((IViewSizedRing?)_gpuConverter ?? _d3d12Converter) is { } c
+            && c.Width == _videoWidth && c.Height == _videoHeight
+            ? c
+            : null;
 
     /// <summary>The ring a view of the current layout wants for a frame (#767).</summary>
     /// <param name="Source">The part of the frame the view shows, in coded pixels.</param>
@@ -1458,22 +1465,20 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         PlanRing(Placement, Bounds.Width, Bounds.Height, RenderScaling, frame.Width, frame.Height, frame.SampleAspectRatio, frame.Rotation);
 
     /// <summary>
-    /// Fits the D3D11 converter's ring to the view for <paramref name="frame"/> (#767): the part of
+    /// Fits a GPU converter's ring to the view for <paramref name="frame"/> (#767, #774): the part of
     /// the frame it reads, at once, and the ring's size when <see cref="RingSettle"/> applies it. The
-    /// video processor mode keeps its size, which the super-resolution decision picks, and reads the
-    /// part too (#772).
+    /// D3D11 video processor mode keeps its size, which the super-resolution decision picks, and reads
+    /// the part too (#772).
     /// </summary>
-    private void FitRingToView(IVideoFrame frame)
+    private void FitRingToView(IViewSizedRing converter, IVideoFrame frame)
     {
-        var converter = _gpuConverter!;
         var plan = PlanRing(frame);
         bool changed = false;
 
-        if (!converter.Output.SuperResolution)
+        if (converter.RingFollowsView)
         {
-            var ring = new RingSize(converter.Output.Width, converter.Output.Height);
             var (settle, resize) = _ringSettle.Advance(
-                ring, plan.Wanted, plan.Cap, RingSizeTime.GetTimestamp(),
+                converter.Ring, plan.Wanted, plan.Cap, RingSizeTime.GetTimestamp(),
                 (long)(RingShrinkHold.TotalSeconds * RingSizeTime.TimestampFrequency));
             _ringSettle = settle;
             if (resize is { } size)
@@ -1491,11 +1496,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     /// <summary>
-    /// Resizes the converter's ring for the view (#767), counted apart from a resize for the frame's
-    /// size. The old ring goes to the reaper, as a resized converter's parts do. Returns whether the
-    /// ring changed; when it could not be allocated, the old one stays and the view scales it.
+    /// Resizes the converter's ring for the view (#767, #774), counted apart from a resize for the
+    /// frame's size. The old ring goes to the reaper, as a resized converter's parts do. Returns
+    /// whether the ring changed; when it could not be allocated, the old one stays and the view scales
+    /// it.
     /// </summary>
-    private bool ResizeRing(D3D11Nv12SharedConverter converter, RingSize size)
+    private bool ResizeRing(IViewSizedRing converter, RingSize size)
     {
         // CA2000 is a false positive: the old ring is handed to the reaper below.
 #pragma warning disable CA2000
@@ -1517,7 +1523,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// </summary>
     private void RedrawForLayout()
     {
-        if (_redrawPosted || _gpuConverter is null || _lastPresented is null)
+        if (_redrawPosted || (_gpuConverter is null && _d3d12Converter is null) || _lastPresented is null)
             return;
         try
         {
@@ -1535,13 +1541,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         _redrawPosted = false;
         if (!_lifecycle.Presents || _interop is null || _surface is null || _sink is { HasPendingFrame: true })
             return;
-        if (RingConverter is not { } converter || _lastPresented is not GpuVideoFrame frame || !frame.TryGetD3D11Texture(out _, out _, out _))
+        if (RingConverter is not { } converter || _lastPresented is not GpuVideoFrame frame)
+            return;
+        if (!frame.TryGetD3D11Texture(out _, out _, out _) && !frame.TryGetD3D12Texture(out _, out _, out _, out _))
             return;
 
         var plan = PlanRing(frame);
-        bool tooSmall = !converter.Output.SuperResolution
+        bool tooSmall = converter.RingFollowsView
             && plan.Wanted is { } wanted
-            && (wanted.Width > converter.Output.Width || wanted.Height > converter.Output.Height);
+            && (wanted.Width > converter.Ring.Width || wanted.Height > converter.Ring.Height);
         if (!tooSmall && plan.Source == converter.Source)
             return;
 
@@ -1645,7 +1653,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                         break;
                 }
                 EnsureConverterOutput(frame, texture, device);
-                FitRingToView(frame);
+                FitRingToView(_gpuConverter!, frame);
                 PresentRing(
                     ref filled,
                     PresentSource.D3D11,
@@ -1836,7 +1844,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// Presents a D3D12VA frame (#429): the same converter decisions as the D3D11VA path, except
     /// that a new decode device rebuilds the converter. Its D3D12 half lives on that device, and
     /// decoders on one adapter share a device unless it came from <c>ID3D12DeviceFactory</c>, so a
-    /// change is rare enough that an in-place rebind is not worth its code.
+    /// change is rare enough that an in-place rebind is not worth its code. A frame of another size
+    /// rebuilds it too; the view's own size changes resize its ring in place (#774).
     /// </summary>
     private void PresentD3D12(GpuVideoFrame frame, nint texture, ref bool filled)
     {
@@ -1864,14 +1873,23 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                 break;
         }
 
-        var converter = _d3d12Converter ??= new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, _logger);
+        if (_d3d12Converter is null)
+        {
+            // Built at the view's size at once (#774), as a new D3D11 shader ring is.
+            _ringSettle = default;
+            _d3d12Converter = new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, PlanRing(frame).Immediate, _logger);
+            UpdateSurfaceLayout();
+        }
+
+        var converter = _d3d12Converter;
+        FitRingToView(converter, frame);
         PresentRing(
             ref filled,
             PresentSource.D3D12,
             frame.Width,
             frame.Height,
-            frame.Width,
-            frame.Height,
+            converter.Ring.Width,
+            converter.Ring.Height,
             converter.GetSharedHandle,
             i =>
             {

@@ -109,7 +109,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// Built without it, the converter is exactly the shader converter ADR-0063 describes.
 /// </para>
 /// </remarks>
-internal sealed class D3D11Nv12SharedConverter : IDisposable
+internal sealed class D3D11Nv12SharedConverter : IViewSizedRing, IDisposable
 {
     /// <summary>Number of shared BGRA textures in the ring.</summary>
     public const int BufferCount = 3;
@@ -294,6 +294,12 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// <see cref="SuperResolutionFailed"/>.
     /// </summary>
     public PresenterOutput Output { get; private set; }
+
+    /// <summary>The ring's size: <see cref="Output"/>'s.</summary>
+    public RingSize Ring => new(Output.Width, Output.Height);
+
+    /// <summary>The shader mode's ring follows the view (#767); the video processor's is sized by its output.</summary>
+    public bool RingFollowsView => !Output.SuperResolution;
 
     /// <summary>
     /// True when the video processor mode was requested and could not be used: it failed to set up,

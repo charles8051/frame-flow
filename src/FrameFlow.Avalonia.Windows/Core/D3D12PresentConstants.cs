@@ -7,14 +7,16 @@ namespace FrameFlow.Avalonia.Windows.Core;
 
 /// <summary>
 /// The root constants the D3D12 presenter's pixel shader reads for one frame: where the frame sits
-/// in its texture, and how a sample becomes limited-range BT.709 luma and chroma. Pure: sizes and a
-/// sample format in, eight values out.
+/// in its texture, how a sample becomes limited-range BT.709 luma and chroma, and which part of the
+/// frame the ring holds at what size (#774). Pure: sizes and a sample format in, sixteen values out.
 /// </summary>
 /// <remarks>
 /// The conversion is the D3D11 presenter's (ADR-0063): BT.709, studio range, whatever the stream
 /// says, since frames carry no colour metadata. The decode texture can be taller or wider than the
 /// frame, so the shader scales its coordinates to the frame's part of the texture and clamps chroma
 /// to the frame's last chroma sample, where the D3D11 path clamps at a frame-sized copy's edge.
+/// <see cref="Sampling"/> is the D3D11 shader's <see cref="ShaderSampling"/>, in the frame's own
+/// coordinates, so both converters read the same part with the same area filter (#767).
 /// </remarks>
 [StructLayout(LayoutKind.Sequential)]
 internal readonly record struct D3D12PresentConstants(
@@ -25,13 +27,20 @@ internal readonly record struct D3D12PresentConstants(
     float YOffset,
     float YScale,
     float COffset,
-    float CScale)
+    float CScale,
+    ShaderSampling Sampling)
 {
     /// <summary>The number of 32-bit values, as the root signature declares them.</summary>
-    public const int Count = 8;
+    public const int Count = 16;
 
+    /// <summary>
+    /// The constants that draw <paramref name="source"/> of a <paramref name="frameWidth"/> x
+    /// <paramref name="frameHeight"/> frame, decoded into a <paramref name="textureWidth"/> x
+    /// <paramref name="textureHeight"/> texture, into a <paramref name="ring"/>-sized target.
+    /// </summary>
     public static D3D12PresentConstants Create(
-        YuvSampleFormat samples, int textureWidth, int textureHeight, int frameWidth, int frameHeight)
+        YuvSampleFormat samples, int textureWidth, int textureHeight, int frameWidth, int frameHeight,
+        SourceRect source, RingSize ring)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameWidth);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameHeight);
@@ -55,8 +64,15 @@ internal readonly record struct D3D12PresentConstants(
             YOffset: levels.YOffset,
             YScale: levels.YScale,
             COffset: levels.COffset,
-            CScale: levels.CScale);
+            CScale: levels.CScale,
+            Sampling: ShaderSampling.For(source, frameWidth, frameHeight, ring));
     }
+
+    /// <summary>The constants that draw the whole frame at its own size.</summary>
+    public static D3D12PresentConstants Create(
+        YuvSampleFormat samples, int textureWidth, int textureHeight, int frameWidth, int frameHeight) =>
+        Create(samples, textureWidth, textureHeight, frameWidth, frameHeight,
+            SourceRect.Whole(frameWidth, frameHeight), new RingSize(frameWidth, frameHeight));
 }
 
 /// <summary>
