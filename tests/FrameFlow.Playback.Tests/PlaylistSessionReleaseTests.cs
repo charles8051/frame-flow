@@ -74,8 +74,10 @@ public sealed class PlaylistSessionReleaseTests
 
 /// <summary>
 /// The session times each awaited step of a switch on <c>frameflow.playlist.step_duration_ms</c>,
-/// tagged by step, so a switch's time splits into stages (#780).
+/// tagged by step, so a switch's time splits into stages (#780). Runs alone: the instrument is
+/// process-wide, and every playlist session in the test run records on it.
 /// </summary>
+[Collection(PlaylistStepMetricsCollection.Name)]
 public sealed class PlaylistStepMetricsTests
 {
     [Fact]
@@ -104,10 +106,17 @@ public sealed class PlaylistStepMetricsTests
         rig.Coordinator.RequestJump(rig.PlaylistItem("b"));
         await rig.SettleAsync();
 
-        // Other tests' sessions record on the same instrument, so this asserts presence only.
         Assert.Contains("dispose", steps);
         Assert.Contains("open", steps);
         Assert.Contains("warm_up", steps);
         Assert.Contains("play", steps);
     }
+}
+
+/// <summary>Runs <see cref="PlaylistStepMetricsTests"/> with no other test alongside.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class PlaylistStepMetricsCollection
+{
+    /// <summary>The collection name, referenced by <see cref="CollectionAttribute"/>.</summary>
+    public const string Name = "Playlist step metrics";
 }
