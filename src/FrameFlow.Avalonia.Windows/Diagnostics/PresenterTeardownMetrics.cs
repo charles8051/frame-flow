@@ -122,6 +122,16 @@ public static class PresenterTeardownMetrics
             + "shader compiled. The ring is new, so it was imported into the compositor again."
     );
 
+    private static readonly Counter<long> ViewResizes = Meter.CreateCounter<long>(
+        "frameflow.presenter.view_resizes",
+        unit: "{resize}",
+        description: "Times the presenter resized the shader-mode converter's ring because the size the view draws "
+            + "the frame at changed (#767). Only the ring was replaced, and imported into the compositor again; "
+            + "the staging texture, decode bridge, device and shader pipeline were kept. A ring grows at once, "
+            + "rounded up to 64 px, and takes a smaller size once it has been wanted for 500 ms. Distinct from "
+            + "resolution_resizes, which counts changes in the source's size."
+    );
+
     private static readonly Counter<long> Stalls = Meter.CreateCounter<long>(
         "frameflow.presenter.stalls",
         unit: "{stall}",
@@ -203,6 +213,13 @@ public static class PresenterTeardownMetrics
     /// pipeline.
     /// </summary>
     public static void RecordResolutionChangeResize() => ResolutionChangeResizes.Add(1);
+
+    /// <summary>
+    /// Records the shader-mode ring resized for the size the view draws the frame at (increments
+    /// <c>view_resizes</c>, #767): new ring, same staging texture, decode bridge, device and shader
+    /// pipeline.
+    /// </summary>
+    public static void RecordViewResize() => ViewResizes.Add(1);
 
     /// <summary>
     /// Records a detected present-stall (increments <c>stalls</c>) — the presenter frozen in a hung

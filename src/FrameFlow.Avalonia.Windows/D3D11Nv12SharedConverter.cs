@@ -46,6 +46,13 @@ namespace FrameFlow.Avalonia.Windows;
 /// device and a shader compile.
 /// </para>
 /// <para>
+/// <b>The ring follows the view (#767).</b> In the shader mode the ring is the size the view draws
+/// the frame's visible part at, up to that part's coded size, and the shader reads only that part
+/// (<see cref="SetSource"/>) with an area filter where the ring is smaller than it.
+/// <see cref="TryResizeRing"/> replaces the ring alone, over the same staging texture. The view
+/// decides the size with <see cref="ViewSizedRingPolicy"/> and <see cref="RingSettle"/>.
+/// </para>
+/// <para>
 /// <b>Why a pixel shader, not <c>VideoProcessorBlt</c> (ADR-0063).</b> The previous
 /// implementation converted via <c>ID3D11VideoContext.VideoProcessorBlt</c> — the
 /// fixed-function VideoProcessor unit, the same single hardware block DWM uses for
@@ -115,10 +122,16 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     // output share G22 transfer + P709 primaries, so there is no gamma/primary conversion —
     // only the YCbCr→RGB matrix with the limited→full range expansion folded in.
     private const string Hlsl = """
-        cbuffer Levels : register(b0)
+        cbuffer Constants : register(b0)
         {
-            float YOffset, YScale, COffset, CScale;
+            float YOffset, YScale, COffset, CScale;   // YuvLevels
+            float2 SourceOrigin, SourceSize;          // ShaderSampling: the part of the frame read,
+            float2 Footprint, Unused;                 // and the frame each ring pixel covers, in uv
         };
+
+        // The most texels per axis the area filter averages: a 64:1 shrink. Past it the filter reads
+        // the 64 nearest the ring pixel's centre.
+        static const int MaxSpan = 64;
 
         Texture2D    LumaTex   : register(t0);   // R8_UNORM or R16_UNORM view of the Y plane
         Texture2D    ChromaTex : register(t1);   // R8G8_UNORM or R16G16_UNORM view of the UV plane
@@ -141,10 +154,48 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             return o;
         }
 
+        // One plane's value for the ring pixel centred at `centre` (#767). Where the pixel covers at
+        // most a texel of the plane on each axis, one bilinear sample, as before the ring followed the
+        // view. Where it covers more, the area filter: every texel under the pixel's footprint,
+        // weighted by how much of it the footprint covers. A single bilinear sample there would skip
+        // the texels between samples, and they would alias.
+        float4 Read(Texture2D plane, float2 centre)
+        {
+            float2 size;
+            plane.GetDimensions(size.x, size.y);
+            float2 texels = Footprint * size;
+            if (max(texels.x, texels.y) <= 1.001)
+                return plane.SampleLevel(Samp, centre, 0);
+
+            float2 lo = centre * size - texels * 0.5;
+            float2 hi = lo + texels;
+            int2 first = max((int2)floor(lo), 0);
+            int2 last = min((int2)ceil(hi) - 1, (int2)size - 1);
+            int2 skip = max(last - first + 1 - MaxSpan, 0) / 2;
+            first += skip;
+            last = min(last - skip, first + MaxSpan - 1);
+
+            float4 sum = 0.0;
+            float total = 0.0;
+            [loop] for (int y = first.y; y <= last.y; y++)
+            {
+                float wy = min(hi.y, y + 1.0) - max(lo.y, (float)y);
+                [loop] for (int x = first.x; x <= last.x; x++)
+                {
+                    float w = (min(hi.x, x + 1.0) - max(lo.x, (float)x)) * wy;
+                    sum += plane.Load(int3(x, y, 0)) * w;
+                    total += w;
+                }
+            }
+            return sum / total;
+        }
+
         float4 PSMain(VSOut input) : SV_Target
         {
-            float  yX   = LumaTex.Sample(Samp, input.uv).r;
-            float2 cbcr = ChromaTex.Sample(Samp, input.uv).rg;
+            // The ring pixel's centre in the frame: the ring covers the source part only.
+            float2 centre = SourceOrigin + input.uv * SourceSize;
+            float  yX     = Read(LumaTex, centre).r;
+            float2 cbcr   = Read(ChromaTex, centre).rg;
 
             // Studio (limited) range bias + scale for the texture's sample format (YuvLevels).
             float Y = (yX     - YOffset) * YScale;
@@ -196,7 +247,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private readonly ID3D11PixelShader _pixelShader;
     private readonly ID3D11SamplerState _sampler;
     private readonly ID3D11RasterizerState _rasterizer;
-    private readonly ID3D11Buffer _levels; // the shader's YuvLevels for the texture's sample format
+    private readonly ID3D11Buffer _constants; // the shader's YuvLevels and ShaderSampling (ConvertConstants)
+    private readonly YuvLevels _yuvLevels; // for the texture's sample format
 
     // ── Sized by the frame — replaced together by TryResize ──
     private Staging _staging; // SHAREABLE shader-readable copy target for the decode slice
@@ -226,6 +278,12 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
     /// <summary>The frame's height.</summary>
     public int Height { get; private set; }
+
+    /// <summary>
+    /// The part of the frame the ring holds, in coded pixels (#767). The whole frame until
+    /// <see cref="SetSource"/> crops it.
+    /// </summary>
+    public SourceRect Source { get; private set; }
 
     /// <summary>The decode texture's format, NV12 or P010, which the staging texture and views are built for.</summary>
     public FrameFlow.Media.PixelFormat InputFormat { get; }
@@ -315,19 +373,25 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     }
 
     /// <summary>
-    /// The sized parts a resize replaced. The caller disposes it off the UI thread, as it disposes a
-    /// dropped converter, after detaching the old ring's compositor imports.
+    /// The sized parts a resize replaced: the ring, and for a new frame size the staging texture and
+    /// decode bridge too. The caller disposes it off the UI thread, as it disposes a dropped
+    /// converter, after detaching the old ring's compositor imports.
     /// </summary>
-    private sealed class Retired(D3D11Nv12SharedConverter owner, DecodeBridge? bridge, RingBuffer[] ring, Staging staging)
+    private sealed class Retired(D3D11Nv12SharedConverter owner, DecodeBridge? bridge, RingBuffer[] ring, Staging? staging)
         : IDisposable
     {
         public void Dispose()
         {
             owner.ReleaseDecodeBridge(bridge);
             owner.ReleaseRing(ring);
-            owner.ReleaseStaging(staging);
+            if (staging is not null)
+                owner.ReleaseStaging(staging);
         }
     }
+
+    /// <summary>The shader's constant buffer: the sample levels, then how it samples the frame.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly record struct ConvertConstants(YuvLevels Levels, ShaderSampling Sampling);
 
     /// <param name="nv12TexturePtr">The first frame's decode texture.</param>
     /// <param name="width">The frame's width.</param>
@@ -353,6 +417,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         Width = width;
         Height = height;
         Output = output;
+        Source = SourceRect.Whole(width, height);
 
         // Borrow the first frame's texture: AddRef so disposing our wrapper is balanced
         // and FFmpeg's own reference is untouched. We use it only to (a) read the decode
@@ -422,7 +487,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         // when that mode was asked for; the shader mode keeps the binding it always had.
         _staging = CreateStaging(width, height, srcFormat, videoProcessorInput: output.SuperResolution);
 
-        _levels = CreateLevelsBuffer(_device, YuvLevels.For(samples));
+        _yuvLevels = YuvLevels.For(samples);
+        _constants = CreateConstantsBuffer(_device, Constants(new RingSize(output.Width, output.Height)));
         _deferred = _device.CreateDeferredContext();
 
         if (output.SuperResolution && !TrySetUpVideoProcessor(output, superResolutionExtension))
@@ -443,6 +509,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             Output = PresenterOutput.Shader(width, height);
             _buffers = CreateRing(Output.Width, Output.Height, _staging);
         }
+        if (Output != output)
+            UpdateConstants();
         long resourcesDone = Stopwatch.GetTimestamp();
 
         // Seed the decode-device bridge for the first frame's decode device. After this the
@@ -486,19 +554,23 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// of another resolution. Only the parts the frame's size fixes are replaced: the staging texture
     /// and its plane views, the ring and its recorded passes, and the decode bridge, which opens the new
     /// staging texture on <paramref name="frameTexturePtr"/>'s decode device. The own device, the
-    /// shaders, the sampler, the rasterizer and the levels buffer are kept. The ring is new, so the
+    /// shaders, the sampler, the rasterizer and the constant buffer are kept. The ring is new, so the
     /// caller imports it again.
     /// </summary>
     /// <param name="frameTexturePtr">The new frame's decode texture.</param>
     /// <param name="width">The new frame's width.</param>
     /// <param name="height">The new frame's height.</param>
+    /// <param name="ring">
+    /// The new ring's size (#767): the frame's own size, or the smaller size the view draws it at.
+    /// The ring holds the whole new frame until <see cref="SetSource"/> crops it.
+    /// </param>
     /// <returns>
     /// The parts the resize replaced, for the caller to dispose off the UI thread once it has detached
     /// their compositor imports. <see langword="null"/> when the converter cannot be resized for this
     /// frame or allocating the new parts failed; the converter is then unchanged, and the caller
     /// rebuilds it.
     /// </returns>
-    public IDisposable? TryResize(nint frameTexturePtr, int width, int height)
+    public IDisposable? TryResize(nint frameTexturePtr, int width, int height, RingSize ring)
     {
         // The video processor mode is not resized: its processor and output views are built for one
         // input and output size, and the presenter picks that output per frame (#560). A converter
@@ -510,19 +582,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         Marshal.AddRef(frameTexturePtr);
         using var nv12 = new ID3D11Texture2D(frameTexturePtr);
 
-        // The plane views and the kept levels buffer are built for one sample format (#559).
+        // The plane views and the levels in the kept constant buffer are for one sample format (#559).
         var format = nv12.Description.Format;
         if (format != _staging.Texture.Description.Format)
             return null;
 
         Staging? staging = null;
-        RingBuffer[]? ring = null;
+        RingBuffer[]? buffers = null;
         DecodeBridge bridge;
         long resourcesDone;
         try
         {
             staging = CreateStaging(width, height, format, videoProcessorInput: false);
-            ring = CreateRing(width, height, staging);
+            buffers = CreateRing(ring.Width, ring.Height, staging);
             resourcesDone = Stopwatch.GetTimestamp();
             bridge = OpenDecodeBridge(nv12.Device, staging.SharedHandle);
         }
@@ -532,8 +604,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 _deviceLost = true;
             _logger.LogWarning(
                 ex, "Converter could not resize to {W}x{H}; the presenter rebuilds it instead.", width, height);
-            if (ring is not null)
-                ReleaseRing(ring);
+            if (buffers is not null)
+                ReleaseRing(buffers);
             if (staging is not null)
                 ReleaseStaging(staging);
             return null;
@@ -541,17 +613,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
         var retired = new Retired(this, _bridge, _buffers, _staging);
         _staging = staging;
-        _buffers = ring;
+        _buffers = buffers;
         _bridge = bridge;
         Width = width;
         Height = height;
-        Output = PresenterOutput.Shader(width, height);
+        Output = PresenterOutput.Shader(ring.Width, ring.Height);
+        Source = SourceRect.Whole(width, height);
+        UpdateConstants();
 
         long done = Stopwatch.GetTimestamp();
         _logger.LogInformation(
-            "Converter resized in place to {W}x{H} in {ResizeMs:F1} ms: resources {ResourceMs:F1}, bridge "
-                + "{BridgeMs:F1}. Device and shader pipeline kept; bound to decode device 0x{Dev:X}.",
-            width, height,
+            "Converter resized in place to {W}x{H} frames in a {RW}x{RH} ring in {ResizeMs:F1} ms: resources "
+                + "{ResourceMs:F1}, bridge {BridgeMs:F1}. Device and shader pipeline kept; bound to decode device 0x{Dev:X}.",
+            width, height, ring.Width, ring.Height,
             Stopwatch.GetElapsedTime(started, done).TotalMilliseconds,
             Stopwatch.GetElapsedTime(started, resourcesDone).TotalMilliseconds,
             Stopwatch.GetElapsedTime(resourcesDone, done).TotalMilliseconds,
@@ -559,6 +633,87 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         );
         return retired;
     }
+
+    /// <summary>
+    /// Resizes only the ring, for the size the view draws the frame at (#767). The staging texture,
+    /// the decode bridge, the device and the shader pipeline are kept. The shader mode only: the
+    /// video processor's output views are built for one output size.
+    /// </summary>
+    /// <returns>
+    /// The old ring, for the caller to dispose off the UI thread once it has detached its compositor
+    /// imports. <see langword="null"/> when the converter is in the video processor mode, or
+    /// allocating the new ring failed; the converter is then unchanged.
+    /// </returns>
+    public IDisposable? TryResizeRing(RingSize ring)
+    {
+        if (_disposed || _deviceLost || Output.SuperResolution)
+            return null;
+
+        long started = Stopwatch.GetTimestamp();
+        RingBuffer[] buffers;
+        try
+        {
+            buffers = CreateRing(ring.Width, ring.Height, _staging);
+        }
+        catch (Exception ex)
+        {
+            if (D3D11DeviceLoss.IsDeviceLost(ex))
+                _deviceLost = true;
+            _logger.LogWarning(ex, "Converter could not resize its ring to {W}x{H}; it keeps the old one.", ring.Width, ring.Height);
+            return null;
+        }
+
+        var retired = new Retired(this, null, _buffers, null);
+        var previous = Output;
+        _buffers = buffers;
+        Output = PresenterOutput.Shader(ring.Width, ring.Height);
+        UpdateConstants();
+
+        _logger.LogDebug(
+            "Converter resized its ring from {OW}x{OH} to {W}x{H} for the view in {Ms:F1} ms ({FW}x{FH} frames).",
+            previous.Width, previous.Height, ring.Width, ring.Height,
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds, Width, Height);
+        return retired;
+    }
+
+    /// <summary>
+    /// Sets the part of the frame the ring holds, in coded pixels (#767): the crop a filled view
+    /// shows, or the whole frame. The shader reads only that part, and the video processor mode
+    /// reads it as its stream's source rectangle (#772). Takes effect from the next
+    /// <see cref="ConvertInto"/>. An empty part reads the whole frame.
+    /// </summary>
+    public void SetSource(SourceRect source)
+    {
+        if (source.IsEmpty)
+            source = SourceRect.Whole(Width, Height);
+        if (_disposed || source == Source)
+            return;
+
+        Source = source;
+        UpdateConstants();
+        if (_videoProcessor is not null)
+            _videoContext!.VideoProcessorSetStreamSourceRect(_videoProcessor, 0, true, ProcessorSourceRect());
+    }
+
+    /// <summary>The video processor's source rectangle for <see cref="Source"/>: whole pixels, inside the frame.</summary>
+    private Vortice.RawRect ProcessorSourceRect()
+    {
+        int left = Math.Clamp((int)Math.Round(Source.X), 0, Width - 1);
+        int top = Math.Clamp((int)Math.Round(Source.Y), 0, Height - 1);
+        int right = Math.Clamp((int)Math.Round(Source.X + Source.Width), left + 1, Width);
+        int bottom = Math.Clamp((int)Math.Round(Source.Y + Source.Height), top + 1, Height);
+        return new Vortice.RawRect(left, top, right, bottom);
+    }
+
+    private ConvertConstants Constants(RingSize ring) =>
+        new(_yuvLevels, ShaderSampling.For(Source, Width, Height, ring));
+
+    /// <summary>
+    /// Writes the shader's constants for the frame's size, the source part and the ring. The command
+    /// lists bind the buffer, not its contents, so the next replay reads them.
+    /// </summary>
+    private void UpdateConstants() =>
+        _immediate.UpdateSubresource(Constants(new RingSize(Output.Width, Output.Height)), _constants);
 
     /// <summary>
     /// The PCI vendor ID of the adapter <paramref name="texturePtr"/>'s device is on, read before a
@@ -647,7 +802,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             _videoContext.VideoProcessorSetOutputColorSpace1(processor, ColorSpaceType.RgbFullG22NoneP709);
             _videoContext.VideoProcessorSetStreamFrameFormat(processor, 0, VideoFrameFormat.Progressive);
             _videoContext.VideoProcessorSetStreamAutoProcessingMode(processor, 0, false);
-            _videoContext.VideoProcessorSetStreamSourceRect(processor, 0, true, new Vortice.RawRect(0, 0, Width, Height));
+            _videoContext.VideoProcessorSetStreamSourceRect(processor, 0, true, ProcessorSourceRect());
             _videoContext.VideoProcessorSetStreamDestRect(processor, 0, true, new Vortice.RawRect(0, 0, output.Width, output.Height));
             _videoContext.VideoProcessorSetOutputTargetRect(processor, true, new Vortice.RawRect(0, 0, output.Width, output.Height));
 
@@ -882,11 +1037,14 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         _videoDevice = null;
     }
 
-    /// <summary>The shader's sample levels, as an immutable constant buffer on <paramref name="device"/>.</summary>
-    private static unsafe ID3D11Buffer CreateLevelsBuffer(ID3D11Device device, YuvLevels levels) =>
+    /// <summary>
+    /// The shader's constants, as a constant buffer on <paramref name="device"/> that
+    /// <see cref="UpdateConstants"/> rewrites when the source part or the ring changes.
+    /// </summary>
+    private static unsafe ID3D11Buffer CreateConstantsBuffer(ID3D11Device device, ConvertConstants constants) =>
         device.CreateBuffer(
-            new BufferDescription((uint)sizeof(YuvLevels), BindFlags.ConstantBuffer, ResourceUsage.Immutable),
-            new SubresourceData(&levels));
+            new BufferDescription((uint)sizeof(ConvertConstants), BindFlags.ConstantBuffer, ResourceUsage.Default),
+            new SubresourceData(&constants));
 
     /// <summary>
     /// Compiles one entry point of <see cref="Hlsl"/> at runtime via <c>D3DCompile</c> and
@@ -934,7 +1092,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         _deferred.PSSetShader(_pixelShader);
         _deferred.PSSetShaderResources(0, new[] { staging.Luma, staging.Chroma });
         _deferred.PSSetSampler(0, _sampler);
-        _deferred.PSSetConstantBuffer(0, _levels);
+        _deferred.PSSetConstantBuffer(0, _constants);
         _deferred.RSSetState(_rasterizer);
         _deferred.RSSetViewport(new Viewport(0, 0, width, height, 0.0f, 1.0f));
         _deferred.OMSetRenderTargets(rtv, null);
@@ -1301,7 +1459,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         ReleaseVideoProcessor();
         ReleaseRing(_buffers);
         ReleaseStaging(_staging);
-        Release(() => _levels.Dispose());
+        Release(() => _constants.Dispose());
         Release(() => _rasterizer.Dispose());
         Release(() => _sampler.Dispose());
         Release(() => _pixelShader.Dispose());

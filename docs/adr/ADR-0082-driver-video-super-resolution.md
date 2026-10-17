@@ -380,3 +380,14 @@ rectangle, the whole drawn frame, so §7's 1:1 snap holds.
 - A filled view on the driver's path pays for a ring larger than it shows. A 9:16 picture filling a
   16:9 view draws about 3.2 times the pixels the view shows.
 - A fitted view is unchanged: its visible part is the whole drawn frame.
+
+## Amendment (2026-10-16, later): the target is the visible part (#772)
+
+The decision of the amendment above is implemented with #767. The target is
+`VisibleVideo.PhysicalSize`, and the video processor reads `VisibleVideo.Source*` through
+`VideoProcessorSetStreamSourceRect`, which the converter's `SetSource` sets whenever the part
+changes. `SuperResolutionPolicy` compares the target with the visible part's coded size
+(`SuperResolutionInputs.SourceWidth`, `SourceHeight`), so a filled view that upscales its crop
+engages even when the view is smaller than the whole frame. The surface visual is sized to the
+part's rectangle (`VideoPlacement.Shown`), so §7's 1:1 snap still compares the ring with the
+rectangle it is drawn at. A 9:16 picture filling a 16:9 view now pays only for the pixels it shows.
