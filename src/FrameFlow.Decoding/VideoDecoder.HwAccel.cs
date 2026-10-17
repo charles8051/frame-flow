@@ -1,10 +1,12 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
+using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native;
@@ -605,6 +607,7 @@ public sealed partial class VideoDecoder
             // backend the decoder creates its own, as it would without one.
             int rc = 0;
             HardwareDevice? owner = null;
+            long deviceStarted = Stopwatch.GetTimestamp();
             if (device is not null)
             {
                 deviceCtxRef = device.Borrow();
@@ -625,6 +628,7 @@ public sealed partial class VideoDecoder
                     opts: nint.Zero,
                     flags: 0
                 );
+            DecoderWarmupMetrics.Record(DecoderWarmupMetrics.Device, deviceStarted);
             if (rc != 0 || deviceCtxRef == nint.Zero)
             {
                 attempts.Add(
@@ -683,7 +687,9 @@ public sealed partial class VideoDecoder
                     ctx.extra_hw_frames = extraHwFrames;
             }
 
+            long openStarted = Stopwatch.GetTimestamp();
             int rcOpen = FFAvCodec.avcodec_open2(ctxPtr, codec, nint.Zero);
+            DecoderWarmupMetrics.Record(DecoderWarmupMetrics.CodecOpen, openStarted);
             if (rcOpen < 0)
             {
                 attempts.Add(

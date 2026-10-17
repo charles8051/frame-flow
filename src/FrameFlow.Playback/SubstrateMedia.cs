@@ -526,6 +526,11 @@ internal sealed class SubstrateMedia : IItemMedia
         _videoFloor.Arm(floor);
         _audioFloor.Arm(floor);
 
+        // What the video floor refuses need not be decoded in full: up to the first frame at or
+        // past the floor, the decoder skips the non-reference frames (#784).
+        if (_videoDecoder is { } decoder)
+            decoder.PrerollFloor = floor;
+
         // ADR-0057 Stage 2: reset the select-by-clock pacer's per-run drain state so a prior
         // run's "drained" signal can't satisfy this run's end of stream. Done for every run, so
         // a rewind over the retained graph re-arms it too.
