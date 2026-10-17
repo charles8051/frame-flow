@@ -618,8 +618,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 return CodecReturn.EndOfStream;
 
             nint pktArg = _inFlushMode ? nint.Zero : _pendingRetryPacketPtr;
-            if (pktArg != nint.Zero)
-                ApplyPrerollDiscard(pktArg);
+            var acceptedDiscard = pktArg != nint.Zero ? ApplyPrerollDiscard(pktArg) : (AVDiscard?)null;
 
             bool firstSend = _firstSendEndedAt == 0 && pktArg != nint.Zero;
             long sendStartedAt = firstSend ? Stopwatch.GetTimestamp() : 0;
@@ -630,6 +629,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 _firstSendEndedAt = Stopwatch.GetTimestamp();
             }
             CodecReturn result = DecodeDriver.Classify(_lastReturnCode);
+            if (result == CodecReturn.Again && acceptedDiscard is { } accepted)
+                RestoreDiscard(accepted);
 
             // A hardware decoder can bind and then refuse the stream at its first packet (a
             // progressive JPEG on the CUDA MJPEG decoder, #572). Under Auto the same packet goes
@@ -1077,10 +1078,18 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         };
 
     /// <summary>
-    /// Sets the codec's discard level for the packet about to be sent (#784). Under
-    /// <see cref="_codecSync"/>, so it lands while no decode call is inside the context.
+    /// Sets the codec's discard level for the packet about to be sent (#784), and returns the
+    /// level it replaced. Under <see cref="_codecSync"/>, so it lands while no decode call is
+    /// inside the context.
     /// </summary>
-    private unsafe void ApplyPrerollDiscard(nint packetPtr)
+    /// <remarks>
+    /// <c>skip_frame</c> is context state, read when a packet is decoded rather than when it is
+    /// sent. The decode driver drains every frame before it sends again, so a packet is decoded
+    /// inside its own send. The exception is a send refused with <c>EAGAIN</c>: the drain that
+    /// follows decodes the packet accepted before it, so the caller puts that packet's level back
+    /// until the refused one is sent again.
+    /// </remarks>
+    private unsafe AVDiscard ApplyPrerollDiscard(nint packetPtr)
     {
         ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)_codecCtx.DangerousGetHandle());
         long pts = new AvPacketAccessor(packetPtr).Pts;
@@ -1090,10 +1099,13 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             pts == FFAvUtil.AvNoPtsValue ? null : ComputePresentationTime(pts),
             ctx.has_b_frames > 0
         );
-        var discard = ToAvDiscard(level);
-        if (ctx.skip_frame != discard)
-            ctx.skip_frame = discard;
+        var previous = ctx.skip_frame;
+        ctx.skip_frame = ToAvDiscard(level);
+        return previous;
     }
+
+    private unsafe void RestoreDiscard(AVDiscard discard) =>
+        Unsafe.AsRef<AVCodecContext>((void*)_codecCtx.DangerousGetHandle()).skip_frame = discard;
 
     /// <summary>Signals end-of-stream to flush buffered frames.</summary>
     public ValueTask FlushAsync(CancellationToken cancellationToken = default)
