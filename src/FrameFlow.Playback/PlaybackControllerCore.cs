@@ -808,6 +808,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         }
     }
 
+    /// <summary>
+    /// Fails the commands queued behind the active seek as disposed, and cancels and lets go of the
+    /// seek. Changes state only the dispatch loop changes, so the dispose calls it once the loop has
+    /// ended.
+    /// </summary>
     private void PrepareActiveSeekForDisposal()
     {
         FailPendingSeekDrainCommands(DisposeFailureMessage);
@@ -1911,7 +1916,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         _loopStallSubscription?.Dispose();
                         _loopStallSubscription = null;
 
-                        PrepareActiveSeekForDisposal();
+                        // Cancels the seek the loop started, and no more: cancelling is safe from
+                        // any thread. The commands queued behind the seek, its id and its token
+                        // source are the loop's until it ends (ADR-0023), and the loop may be
+                        // draining that queue now. They are let go below, once it has ended.
+                        CancelSeek(_activeSeekCancellation);
                         await StopTickerAsync(failures).ConfigureAwait(false);
                     }
                     finally

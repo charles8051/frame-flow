@@ -15,7 +15,7 @@ namespace FrameFlow.Playback.Tests;
 /// command that was waiting fails as disposed rather than as a load that failed, and the session is
 /// disposed only once the operation has ended. A ticker the loop starts as it finishes its command
 /// is stopped before the dispose returns, and a seek still going is waited for before the session
-/// goes.
+/// goes. The commands queued behind a seek are the loop's until it ends.
 /// </summary>
 /// <remarks>
 /// The session's held operations end on their token and nothing else, as an open over a stalled
@@ -130,6 +130,41 @@ public sealed class ControllerDisposeTests
     }
 
     [Fact]
+    public async Task ADispose_LeavesTheCommandsQueuedBehindASeekToTheLoopDrainingThem()
+    {
+        // A pause and an unload sent during a seek are queued behind it, in a queue only the loop
+        // touches (ADR-0023). The seek ends, and the loop is running the pause, which ignores its
+        // token and is held, with the unload still queued, when the dispose begins. A dispose that
+        // failed the unload as it began took it off that queue on its own thread while the loop was
+        // draining it: the two could take the same command, and the one that found the queue empty
+        // threw.
+        var session = new HeldSession { HoldSeek = true, HoldPause = true };
+        var controller = NewController(session);
+        Assert.True((await controller.LoadAsync(new FakeSource()).WaitAsync(Bound)).IsSuccess);
+        Assert.True((await controller.PlayAsync().WaitAsync(Bound)).IsSuccess);
+        Assert.True((await controller.SeekAsync(TimeSpan.FromSeconds(0.5)).WaitAsync(Bound)).IsSuccess);
+        await session.SeekEntered.WaitAsync(Bound);
+        var pause = controller.PauseAsync();
+        var unload = controller.UnloadAsync();
+        // Through the same queue, so once it completes the loop has queued both behind the seek.
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off).WaitAsync(Bound)).IsSuccess);
+        session.ReleaseSeek();
+        await session.PauseEntered.WaitAsync(Bound);
+
+        // The dispose runs on this thread up to its first wait, so its first step is done before
+        // the pause is released.
+        var disposing = controller.DisposeAsync().AsTask();
+        session.ReleasePause();
+        await disposing.WaitAsync(Bound);
+
+        Assert.True((await pause.WaitAsync(Bound)).IsSuccess);
+        // The loop took the unload in before the dispose began, so the loop runs it.
+        var unloaded = await unload.WaitAsync(Bound);
+        Assert.True(unloaded.IsSuccess, unloaded.Error?.Message);
+        Assert.Equal(["play", "seek ended", "pause ended", "session disposed"], session.Log);
+    }
+
+    [Fact]
     public async Task ADisposeWhoseFirstStepThrows_StillWaitsForTheLoopAndTheSeek_BeforeTheSessionGoes()
     {
         // The seek registers a callback on its token that throws, so cancelling the seek, the
@@ -181,8 +216,8 @@ public sealed class ControllerDisposeTests
 
     /// <summary>
     /// A session whose open or play, when held, ends only when its token is cancelled, and whose
-    /// warm-up or seek, when held, ignores its token and ends when released. It logs what it did,
-    /// and whether the tokens its open and play were given can be cancelled at all.
+    /// warm-up, seek or pause, when held, ignores its token and ends when released. It logs what it
+    /// did, and whether the tokens its open and play were given can be cancelled at all.
     /// </summary>
     private sealed class HeldSession : IPlaybackSession
     {
@@ -193,6 +228,8 @@ public sealed class ControllerDisposeTests
         private readonly TaskCompletionSource _warmUpReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _seekEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _seekReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _pauseEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _pauseReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _disposeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _never = new();
 
@@ -203,6 +240,8 @@ public sealed class ControllerDisposeTests
         public bool HoldWarmUp { get; init; }
 
         public bool HoldSeek { get; init; }
+
+        public bool HoldPause { get; init; }
 
         /// <summary>When set, a held seek registers a callback on its token that throws <see cref="SeekCallbackFailure"/>.</summary>
         public bool SeekCallbackThrows { get; init; }
@@ -218,6 +257,10 @@ public sealed class ControllerDisposeTests
         public Task DisposeEntered => _disposeEntered.Task;
 
         public void ReleaseSeek() => _seekReleased.TrySetResult();
+
+        public Task PauseEntered => _pauseEntered.Task;
+
+        public void ReleasePause() => _pauseReleased.TrySetResult();
 
         public string[] Log => [.. _log];
 
@@ -262,7 +305,14 @@ public sealed class ControllerDisposeTests
             await HoldUntilCancelledAsync("play cancelled", cancellationToken).ConfigureAwait(false);
         }
 
-        public ValueTask PauseAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
+        {
+            if (!HoldPause)
+                return;
+            _pauseEntered.TrySetResult();
+            await _pauseReleased.Task.ConfigureAwait(false);
+            _log.Enqueue("pause ended");
+        }
 
         public async ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default)
         {
