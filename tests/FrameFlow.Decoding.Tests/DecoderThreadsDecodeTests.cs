@@ -16,6 +16,9 @@ public sealed class DecoderThreadsDecodeTests : IClassFixture<FfmpegBootstrapFix
 {
     private const string H264 = "test-video-h264-yuv420p.mp4";
 
+    // Decoded in software by libdav1d, which runs its own threads.
+    private const string Av1 = "test-video-av1-yuv420p.mkv";
+
     // HEVC with B-frames and keyframes at 0 and 2.667 s, 24 fps. The seek lands mid-GOP.
     private const string Hevc = "test-video-h265-yuv420p.mp4";
     private static readonly TimeSpan SeekTarget = TimeSpan.FromSeconds(2.9);
@@ -26,6 +29,31 @@ public sealed class DecoderThreadsDecodeTests : IClassFixture<FfmpegBootstrapFix
     private readonly FfmpegBootstrapFixture _fixture;
 
     public DecoderThreadsDecodeTests(FfmpegBootstrapFixture fixture) => _fixture = fixture;
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task TheDiagnosticsReportTheThreadsTheDecoderRunsOn()
+    {
+        _ = _fixture;
+        await using var demux = await OpenDemuxAsync(H264);
+        await using var three = OpenSoftware(demux, new VideoDecoderOptions { DecoderThreads = 3 });
+        await using var demuxOne = await OpenDemuxAsync(H264);
+        await using var one = OpenSoftware(demuxOne, new VideoDecoderOptions { DecoderThreads = 1 });
+
+        Assert.Equal(3, three.GetDiagnostics().DecodeThreads);
+        Assert.Equal(1, one.GetDiagnostics().DecodeThreads);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ADecoderThatRunsItsOwnThreadsGetsAndReportsTheCount()
+    {
+        // libdav1d threads itself: FFmpeg runs no threading kind, and the decoder reads the count.
+        _ = _fixture;
+        await using var demux = await OpenDemuxAsync(Av1);
+        await using var decoder = OpenSoftware(demux, new VideoDecoderOptions { DecoderThreads = 3 });
+
+        Assert.Equal((3, 0, 0), decoder.CodecThreads);
+        Assert.Equal(3, decoder.GetDiagnostics().DecodeThreads);
+    }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task ASoftwareContextOpensWithTheRequestedThreads()

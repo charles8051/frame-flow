@@ -99,12 +99,11 @@ public sealed record VideoDecoderDiagnosticsSnapshot(
 {
     /// <summary>
     /// The threads the decoder decodes on: the context's thread count when FFmpeg runs its
-    /// threading, otherwise 1. Zero when no decoder is open (#788).
+    /// threading or the decoder runs its own, otherwise 1. Zero when no decoder is open (#788).
     /// </summary>
     /// <remarks>
-    /// A software decoder sets it from <c>VideoDecoderOptions.DecoderThreads</c>. A hardware
-    /// decoder reports the count FFmpeg opened it with. A decoder that libdav1d threads itself
-    /// reports 1, because FFmpeg runs none of the threads.
+    /// A software decoder sets it from <c>VideoDecoderOptions.DecoderThreads</c>, and so does one
+    /// that runs its own threads, such as libdav1d. A hardware decoder reports 1.
     /// </remarks>
     public int DecodeThreads { get; init; }
 

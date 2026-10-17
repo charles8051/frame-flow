@@ -1167,7 +1167,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private static unsafe int DecodeThreadsOf(CodecContextHandle codecCtx)
     {
         ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)codecCtx.DangerousGetHandle());
-        return ctx.active_thread_type != 0 ? ctx.thread_count : 1;
+
+        // A decoder that runs its own threads (libdav1d) takes the count while FFmpeg runs none.
+        bool ownThreads =
+            ctx.codec != null && (ctx.codec->capabilities & ffmpeg.AV_CODEC_CAP_OTHER_THREADS) != 0;
+        return ctx.active_thread_type != 0 || ownThreads ? Math.Max(ctx.thread_count, 1) : 1;
     }
 
     /// <inheritdoc/>
