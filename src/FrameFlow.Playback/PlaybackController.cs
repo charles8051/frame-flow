@@ -149,6 +149,10 @@ public static class PlaybackController
     /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
     /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
     /// </param>
+    /// <param name="decoderThreads">
+    /// How many threads every item's video decoder uses when it decodes in software: 0 chooses from
+    /// the processor count, up to 8, and 1 decodes on one thread. A hardware decoder ignores it.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     /// Another player, controller or pass holds <paramref name="videoSink"/> or
     /// <paramref name="audioSink"/>. The message names the sink and its holder.
@@ -172,9 +176,12 @@ public static class PlaybackController
         TimeProvider? timeProvider = null,
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
-        IReadOnlyList<string>? excludedCodecs = null
+        IReadOnlyList<string>? excludedCodecs = null,
+        int decoderThreads = 0
     )
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(decoderThreads);
+
         // One source at a time, as a queue of one on the playlist session. Each load makes the
         // loaded source the queue's only item.
         loggerFactory ??= NullLoggerFactory.Instance;
@@ -197,7 +204,8 @@ public static class PlaybackController
                 loadsSource: true,
                 hardwareDevice: hardwareDevice,
                 preferredBackends: preferredBackends,
-                excludedCodecs: excludedCodecs
+                excludedCodecs: excludedCodecs,
+                decoderThreads: decoderThreads
             ),
             initialRepeatMode,
             clock,
@@ -292,6 +300,10 @@ public static class PlaybackController
     /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
     /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
     /// </param>
+    /// <param name="decoderThreads">
+    /// How many threads every item's video decoder uses when it decodes in software: 0 chooses from
+    /// the processor count, up to 8, and 1 decodes on one thread. A hardware decoder ignores it.
+    /// </param>
     /// <param name="prepareNextItem">
     /// Whether the playlist prepares the item its queue would take next while the current one
     /// plays (media-clips decision 8).
@@ -318,10 +330,12 @@ public static class PlaybackController
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
         IReadOnlyList<string>? excludedCodecs = null,
+        int decoderThreads = 0,
         bool prepareNextItem = false,
         string claimant = "a player"
     )
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(decoderThreads);
         ArgumentNullException.ThrowIfNull(coordinator);
         loggerFactory ??= NullLoggerFactory.Instance;
         var factoryLoggers = loggerFactory;
@@ -343,6 +357,7 @@ public static class PlaybackController
                 hardwareDevice: hardwareDevice,
                 preferredBackends: preferredBackends,
                 excludedCodecs: excludedCodecs,
+                decoderThreads: decoderThreads,
                 prepareNextItem: prepareNextItem
             ),
             initialRepeatMode,

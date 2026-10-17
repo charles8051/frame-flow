@@ -273,3 +273,7 @@ FrameFlow.Decoding.HardwareDevice.IsLost.get -> bool
 FrameFlow.Decoding.HardwareDeviceLostEventArgs
 FrameFlow.Decoding.HardwareDeviceLostEventArgs.HardwareDeviceLostEventArgs(int removedReason) -> void
 FrameFlow.Decoding.HardwareDeviceLostEventArgs.RemovedReason.get -> int
+FrameFlow.Decoding.VideoDecoderOptions.DecoderThreads.get -> int
+FrameFlow.Decoding.VideoDecoderOptions.DecoderThreads.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeThreads.get -> int
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeThreads.init -> void

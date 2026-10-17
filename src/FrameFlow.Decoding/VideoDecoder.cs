@@ -85,6 +85,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private CodecContextHandle? _softwareFallbackCtx;
     private nint _softwareFallbackCodec;
 
+    // The threads the open context decodes on (#788). Set at open and again when the decoder falls
+    // back to software; read by GetDiagnostics without taking the codec lock.
+    private int _decodeThreads;
+
     // How the stream is meant to be shown (#542): the container's pixel shape, which wins over a
     // frame's, the codec parameters', which a frame without one falls back to, and the display
     // matrix's rotation. Set once by Open.
@@ -172,6 +176,23 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// <see cref="HardwareBackend"/>, it does not follow a renegotiation to software.
     /// </summary>
     internal HardwareDecodeBackendKind? BoundBackend => BackendOf(_boundBackend);
+
+    /// <summary>
+    /// The open codec context's <c>thread_count</c>, <c>thread_type</c> and
+    /// <c>active_thread_type</c>, for the tests that check a context opened with the threading
+    /// <see cref="DecoderThreading"/> chose (#788).
+    /// </summary>
+    internal unsafe (int Count, int Type, int Active) CodecThreads
+    {
+        get
+        {
+            lock (_codecSync)
+            {
+                ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)_codecCtx.DangerousGetHandle());
+                return (ctx.thread_count, ctx.thread_type, ctx.active_thread_type);
+            }
+        }
+    }
 
     /// <summary>
     /// The backend a raw <c>_boundBackend</c> value names, or null for the software sentinel.
@@ -1137,7 +1158,17 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             HardwareFramesOutstanding: _pool?.Outstanding ?? 0,
             HardwareFrameBudget: _pool?.Budget ?? 0,
             PoolBudgetWaits: Interlocked.Read(ref _poolBudgetWaits)
-        );
+        )
+        {
+            DecodeThreads = Volatile.Read(ref _decodeThreads),
+        };
+
+    /// <summary>The threads an open context decodes on, as the diagnostics report them.</summary>
+    private static unsafe int DecodeThreadsOf(CodecContextHandle codecCtx)
+    {
+        ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)codecCtx.DangerousGetHandle());
+        return ctx.active_thread_type != 0 ? ctx.thread_count : 1;
+    }
 
     /// <inheritdoc/>
     public Task FirstFrameDecoded => _firstFrameDecodedTcs.Task;

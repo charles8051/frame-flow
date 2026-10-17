@@ -235,6 +235,42 @@ public sealed class PlaybackControllerFactoryTests
     }
 
     [Fact]
+    public async Task Create_DecoderThreads_ReachTheItemFactory()
+    {
+        await using var controller = PlaybackController.Create(decoderThreads: 3);
+
+        Assert.Equal(3, SessionFactory(controller).DecoderThreads);
+    }
+
+    [Fact]
+    public async Task Create_NoDecoderThreads_LetsTheDecoderChoose()
+    {
+        await using var controller = PlaybackController.Create();
+
+        Assert.Equal(0, SessionFactory(controller).DecoderThreads);
+    }
+
+    [Fact]
+    public async Task CreatePlaylist_DecoderThreads_ReachTheItemFactory()
+    {
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off),
+            decoderThreads: 1
+        );
+
+        Assert.Equal(1, SessionFactory(controller).DecoderThreads);
+    }
+
+    [Fact]
+    public void NegativeDecoderThreads_AreRefused()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PlaybackController.Create(decoderThreads: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PlaybackController.CreatePlaylist(new PlaylistCoordinator(RepeatMode.Off), decoderThreads: -1)
+        );
+    }
+
+    [Fact]
     public void CreatePlaylist_InvertedHysteresis_ThrowsNamingTheParameter()
     {
         var inverted = new LatenessRecoveryOptions

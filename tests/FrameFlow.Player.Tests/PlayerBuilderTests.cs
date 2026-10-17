@@ -144,6 +144,13 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
+    public void WithDecoderThreads_Negative_Throws()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() => builder.WithDecoderThreads(-1));
+    }
+
+    [Fact]
     public void WithExcludedCodecs_ReturnsSameBuilderForChaining()
     {
         var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
@@ -170,6 +177,7 @@ public sealed class PlayerBuilderTests
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .WithExcludedCodecs("av1")
+            .WithDecoderThreads(2)
             .WithLogger(null);
 
         Assert.Same(builder, same);

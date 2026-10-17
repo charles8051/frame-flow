@@ -16,6 +16,7 @@ namespace FrameFlow.Decoding;
 public sealed class VideoDecoderOptions
 {
     private readonly int _heldHardwareFrames;
+    private readonly int _decoderThreads;
 
     /// <summary>
     /// Capacity of the decoder's internal bounded packet queue, in packets.
@@ -74,6 +75,31 @@ public sealed class VideoDecoderOptions
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
             _heldHardwareFrames = value;
+        }
+    }
+
+    /// <summary>
+    /// How many threads a software decoder uses. 0, the default, chooses from the processor count,
+    /// up to 8. 1 decodes on one thread. Must not be negative.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set it when several decoders run at once and should share the cores, or to 1 for the lowest
+    /// decode delay. The decoder uses frame threading where the codec supports it, which holds up to
+    /// one frame per extra thread in flight: the first frame after an open or a seek waits for that
+    /// many more packets, and each frame in flight holds its picture's memory.
+    /// </para>
+    /// <para>
+    /// A hardware decoder ignores it. So does a codec that decodes on one thread.
+    /// </para>
+    /// </remarks>
+    public int DecoderThreads
+    {
+        get => _decoderThreads;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            _decoderThreads = value;
         }
     }
 

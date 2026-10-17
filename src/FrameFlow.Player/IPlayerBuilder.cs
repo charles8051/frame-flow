@@ -243,6 +243,18 @@ public interface IPlayerBuilder
     IPlayerBuilder WithExcludedCodecs(params string[] codecs);
 
     /// <summary>
+    /// How many threads every playlist item's video decoder uses when it decodes in software. 0,
+    /// the default, chooses from the processor count, up to 8. 1 decodes on one thread.
+    /// </summary>
+    /// <remarks>
+    /// Lower it when several players decode at once and should share the cores. A hardware decoder
+    /// ignores it. More threads hold more frames in flight, so the first frame after a load or a
+    /// seek waits for that many more packets.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="threads"/> is negative.</exception>
+    IPlayerBuilder WithDecoderThreads(int threads);
+
+    /// <summary>
     /// Has the built player prepare the item its queue would take next while the current one
     /// plays: open it, position it at its start and decode up to it, so moving on to it costs a
     /// hand-off rather than an open and a decode walk. Off by default.

@@ -98,6 +98,17 @@ public sealed record VideoDecoderDiagnosticsSnapshot(
 )
 {
     /// <summary>
+    /// The threads the decoder decodes on: the context's thread count when FFmpeg runs its
+    /// threading, otherwise 1. Zero when no decoder is open (#788).
+    /// </summary>
+    /// <remarks>
+    /// A software decoder sets it from <c>VideoDecoderOptions.DecoderThreads</c>. A hardware
+    /// decoder reports the count FFmpeg opened it with. A decoder that libdav1d threads itself
+    /// reports 1, because FFmpeg runs none of the threads.
+    /// </remarks>
+    public int DecodeThreads { get; init; }
+
+    /// <summary>
     /// Zero-valued snapshot used as the seed value for rollups when no
     /// video decoder is active.
     /// </summary>

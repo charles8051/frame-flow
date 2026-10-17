@@ -37,6 +37,9 @@ internal sealed class SubstrateMediaOpener : IItemMediaOpener
 
     public IReadOnlyList<string> ExcludedCodecs { get; init; } = [];
 
+    // The software decoder's thread count; 0 chooses from the processor count (#788).
+    public int DecoderThreads { get; init; }
+
     /// <inheritdoc cref="SubstrateSession.DeviceCache"/>
     public HardwareDeviceCache? DeviceCache { get; init; }
 
@@ -306,14 +309,13 @@ internal sealed class SubstrateMedia : IItemMedia
                     },
                     settings.HardwareCapabilities,
                     loggerFactory,
-                    videoBudget is null && settings.HardwareDevice is null && settings.DeviceCache is null
-                        ? null
-                        : new VideoDecoderOptions
-                        {
-                            HeldHardwareFrames = videoBudget?.Frames ?? 0,
-                            Device = settings.HardwareDevice,
-                            DeviceCache = settings.DeviceCache,
-                        }
+                    new VideoDecoderOptions
+                    {
+                        HeldHardwareFrames = videoBudget?.Frames ?? 0,
+                        Device = settings.HardwareDevice,
+                        DeviceCache = settings.DeviceCache,
+                        DecoderThreads = settings.DecoderThreads,
+                    }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
                 if (videoDecoder?.BoundBackend is { } bound)
