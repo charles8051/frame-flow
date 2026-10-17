@@ -1281,7 +1281,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         {
                             using var holdSlice = CreateHoldProbeSource(holdPaused);
                             using (
-                                var holdCts = CancellationTokenSource.CreateLinkedTokenSource(
+                                var holdCts = LinkedCancellation.Create(
                                     ct,
                                     holdRecheckToken,
                                     holdCap.Token,
@@ -1358,7 +1358,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     using (var starveTimer = starveAfter is { } after
                         ? new CancellationTokenSource(after, _timeProvider)
                         : null)
-                    using (var arrivalCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    using (var arrivalCts = LinkedCancellation.Create(
                         ct,
                         arrivalRecheck,
                         starveTimer?.Token ?? CancellationToken.None))
@@ -1419,9 +1419,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 //
                 // Its own source rather than CancelAfter on the linked one, so the cap is
                 // armed through _timeProvider; CancelAfter always uses the platform queue.
+                //
+                // The loop's waits link their tokens through LinkedCancellation rather than a
+                // linked source, so leaving a cancelled wait never waits for the thread that
+                // cancelled it to finish its callbacks (#785).
                 using (var cap = CreateCapSource(paused))
                 using (
-                    var capCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    var capCts = LinkedCancellation.Create(
                         ct,
                         recheckToken,
                         cap.Token
