@@ -305,12 +305,6 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
-- [The interop presenter converts off the UI thread](presenter-converts-off-the-ui-thread.md) —
-  `CompositionInteropVideoView` makes its decisions and hands slots to the compositor on the UI
-  thread, and runs each frame's conversion into the ring on the thread pool, one at a time per view
-  (#781). A present posted while a conversion runs leaves the frame in the sink. A teardown keeps the
-  converting frame as the one presented last, and its producers wait for the conversion. Adds
-  `frameflow.presenter.convert_duration_ms` and `LastConvertDuration`.
 - [The video pacer as a pure core: time is an input, and every wait is a deadline](video-pacer-as-a-pure-core.md)
   — `ClockSelectVideoSink` is the one part of playback whose decisions are not a pure core: its
   delivery loop decides the frame to present, the late drop, the seek floor, the settle hold, the
@@ -542,3 +536,12 @@ ADR-0086 was numbered and accepted on 2026-10-14, and implemented under #718.
   seeks coalesce; one disposal contract (joined, cancel then await then free, nothing freed early,
   faults returned); an interrupt callback for native reads (#709); and every loop reporting its end.
   Supersedes ADR-0013's bounded disposal timeout and amends ADR-0026 and ADR-0044.
+
+ADR-0087 was numbered and accepted on 2026-10-17, and implemented under #781.
+
+- [The interop presenter converts off the UI thread](ADR-0087-presenter-converts-off-the-ui-thread.md) —
+  `CompositionInteropVideoView` makes its decisions and hands slots to the compositor on the UI
+  thread, and runs each frame's conversion into the ring on the thread pool, one at a time per view
+  (#781). A present posted while a conversion runs leaves the frame in the sink. A teardown keeps the
+  converting frame as the one presented last, and its producers wait for the conversion. Adds
+  `frameflow.presenter.convert_duration_ms` and `LastConvertDuration`.

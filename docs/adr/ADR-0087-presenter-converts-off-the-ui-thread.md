@@ -1,8 +1,8 @@
-# The interop presenter converts off the UI thread
+# ADR-0087: The interop presenter converts off the UI thread
 
 ## Status
 
-Draft, pending number assignment at merge. **Accepted** (2026-10-17) and implemented with #781.
+**Accepted** (2026-10-17) and implemented with #781.
 
 Motivating issue: #781 (`CompositionInteropVideoView` converts every view's frames on the UI thread,
 so a window's frame time grows with its view count, and anything that waits for the next rendered
