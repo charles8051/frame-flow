@@ -1890,8 +1890,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// says the controller is disposing. Then it cancels a seek it started that is still going,
     /// and waits for that too, before it disposes the session. A session operation that ignores
     /// its token holds the dispose; after five seconds the controller logs once that it is
-    /// waiting. What the ticker's stop threw, and what the loop and the seeks ended with, is
-    /// thrown once everything is torn down.
+    /// waiting. What the seek's cancellation and the ticker's stop threw, and what the loop and
+    /// the seeks ended with, is thrown once everything is torn down.
     /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() =>
@@ -1919,8 +1919,17 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         // Cancels the seek the loop started, and no more: cancelling is safe from
                         // any thread. The commands queued behind the seek, its id and its token
                         // source are the loop's until it ends (ADR-0023), and the loop may be
-                        // draining that queue now. They are let go below, once it has ended.
-                        CancelSeek(_activeSeekCancellation);
+                        // draining that queue now. They are let go below, once it has ended. What
+                        // a callback on the seek's token throws is kept for the end, so a throw
+                        // here cannot leave those commands waiting for good.
+                        try
+                        {
+                            CancelSeek(_activeSeekCancellation);
+                        }
+                        catch (Exception ex)
+                        {
+                            failures.Add(ex);
+                        }
                         await StopTickerAsync(failures).ConfigureAwait(false);
                     }
                     finally
@@ -1975,8 +1984,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             _sinkClaims?.Dispose();
         }
 
-        // What the ticker's stops threw and what the loop and the seek runners ended with, once
-        // everything is torn down (ADR-0086, decision 3.4).
+        // What the seek's cancellation and the ticker's stops threw and what the loop and the seek
+        // runners ended with, once everything is torn down (ADR-0086, decision 3.4).
         switch (failures)
         {
             case []:

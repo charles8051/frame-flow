@@ -191,6 +191,37 @@ public sealed class ControllerDisposeTests
         Assert.Equal(["seek ended", "session disposed"], session.Log);
     }
 
+    [Fact]
+    public async Task ADisposeWhoseFirstStepThrows_StillFailsTheCommandsQueuedBehindASeek()
+    {
+        // A pause sent during a seek is queued behind it and cancels it. A second seek replaces the
+        // first, and has a callback on its token that throws, so cancelling it, the dispose's first
+        // step, throws. The queue is the loop's until it ends, so the dispose fails the pause only
+        // after that. One that let the throw skip that step left the pause waiting for good.
+        var session = new HeldSession { HoldSeek = true };
+        var controller = NewController(session);
+        Assert.True((await controller.LoadAsync(new FakeSource()).WaitAsync(Bound)).IsSuccess);
+        Assert.True((await controller.SeekAsync(TimeSpan.FromSeconds(0.25)).WaitAsync(Bound)).IsSuccess);
+        await session.SeekEntered.WaitAsync(Bound);
+        var pause = controller.PauseAsync();
+        session.SeekCallbackThrows = true;
+        // Through the same queue as the pause, so once it completes the pause is queued.
+        Assert.True((await controller.SeekAsync(TimeSpan.FromSeconds(0.5)).WaitAsync(Bound)).IsSuccess);
+        await session.SecondSeekEntered.WaitAsync(Bound);
+
+        var disposing = controller.DisposeAsync().AsTask();
+        session.ReleaseSeek();
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => disposing.WaitAsync(Bound));
+
+        Assert.Contains(
+            HeldSession.SeekCallbackFailure,
+            (thrown is AggregateException aggregate ? aggregate.Flatten().InnerExceptions : [thrown]).Select(e => e.Message)
+        );
+        var paused = await pause.WaitAsync(Bound);
+        Assert.False(paused.IsSuccess);
+        Assert.Equal("PlaybackController is disposing.", paused.Error!.Message);
+    }
+
     private static PlaybackControllerCore NewController(HeldSession session, IMediaSource? reservable = null) =>
         NewController(new OneSessionFactory(session, reservable));
 
@@ -228,6 +259,8 @@ public sealed class ControllerDisposeTests
         private readonly TaskCompletionSource _warmUpReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _seekEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _seekReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondSeekEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _seeksEntered;
         private readonly TaskCompletionSource _pauseEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _pauseReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _disposeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -244,7 +277,7 @@ public sealed class ControllerDisposeTests
         public bool HoldPause { get; init; }
 
         /// <summary>When set, a held seek registers a callback on its token that throws <see cref="SeekCallbackFailure"/>.</summary>
-        public bool SeekCallbackThrows { get; init; }
+        public bool SeekCallbackThrows { get; set; }
 
         public const string SeekCallbackFailure = "The seek's cancellation callback failed.";
 
@@ -253,6 +286,8 @@ public sealed class ControllerDisposeTests
         public bool PlayTokenCanBeCanceled { get; private set; }
 
         public Task SeekEntered => _seekEntered.Task;
+
+        public Task SecondSeekEntered => _secondSeekEntered.Task;
 
         public Task DisposeEntered => _disposeEntered.Task;
 
@@ -321,6 +356,8 @@ public sealed class ControllerDisposeTests
             if (SeekCallbackThrows)
                 cancellationToken.Register(static () => throw new InvalidOperationException(SeekCallbackFailure));
             _seekEntered.TrySetResult();
+            if (Interlocked.Increment(ref _seeksEntered) == 2)
+                _secondSeekEntered.TrySetResult();
             await _seekReleased.Task.ConfigureAwait(false);
             _log.Enqueue("seek ended");
         }
