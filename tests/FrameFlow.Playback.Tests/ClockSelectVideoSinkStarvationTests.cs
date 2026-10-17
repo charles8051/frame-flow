@@ -101,7 +101,7 @@ public sealed partial class ClockSelectVideoSinkTests
 
         // The pause forgets the underrun without reporting it resolved: the controller leaves
         // Rebuffering for Paused by itself. A paused wait is not timed.
-        parked = pacer.ParkGeneration;
+        parked = await pacer.ParkedGenerationAsync();
         pacer.Pause();
         await pacer.WaitForParkAfterAsync(parked);
         Assert.Null(pacer.StarvationWait);
