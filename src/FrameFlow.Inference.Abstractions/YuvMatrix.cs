@@ -7,8 +7,9 @@ namespace FrameFlow.Inference;
 public enum YuvMatrix
 {
     /// <summary>
-    /// ITU-R BT.601. The default, because it is what FrameFlow's CPU path gets from swscale for a
-    /// stream that does not say (#388).
+    /// ITU-R BT.601. The default, because it is what <c>VideoOperators.ToGpu</c> uploads with. A
+    /// stage is not told which matrix a frame was decoded with (#388); the CPU path converts with
+    /// the stream's own matrix, and with BT.709 for a stream that does not say (#796).
     /// </summary>
     Bt601,
 

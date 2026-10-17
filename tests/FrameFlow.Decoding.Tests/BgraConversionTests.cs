@@ -74,11 +74,12 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
     }
 
     /// <summary>
-    /// A limited-range yuv420p frame, the common software case, converts exactly as a plain
-    /// <c>sws_getContext</c> context converts it, as it did before the range was set.
+    /// A limited-range BT.601 yuv420p frame converts exactly as a plain <c>sws_getContext</c>
+    /// context converts it, which is how every frame converted before the range (#792) and the
+    /// matrix (#796) were set.
     /// </summary>
     [RequiresFfmpegFact]
-    public void LimitedRangeYuv420PConvertsAsBefore()
+    public void LimitedRangeBt601Yuv420PConvertsAsBefore()
     {
         Assert.True(fixture.IsBootstrapped);
         var samples = Samples.Create(64, 16, bits: 8);
@@ -100,10 +101,13 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
         try
         {
             var expected = new byte[64 * 4 * 16];
-            var input = new BgraConversionInput((int)AVPixelFormat.AV_PIX_FMT_YUV420P, false, false);
+            var input = new BgraConversionInput((int)AVPixelFormat.AV_PIX_FMT_YUV420P, false, false, BgraConversionInput.Bt601);
             Assert.Equal(16, BgraConversion.Convert(plain, input, frame.DangerousGetHandle(), expected, 64, 64 * 4));
 
-            Assert.Equal(expected, ConvertFrame(samples, AVPixelFormat.AV_PIX_FMT_YUV420P, AVColorRange.AVCOL_RANGE_MPEG));
+            Assert.Equal(
+                expected,
+                ConvertFrame(samples, AVPixelFormat.AV_PIX_FMT_YUV420P, AVColorRange.AVCOL_RANGE_MPEG, AVColorSpace.AVCOL_SPC_BT470BG)
+            );
         }
         finally
         {
@@ -111,10 +115,54 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
         }
     }
 
-    private static byte[] ConvertFrame(Samples samples, AVPixelFormat format, AVColorRange range)
+    /// <summary>
+    /// Each bar of flat colour converts to what the frame's matrix gives it (#796). swscale's
+    /// limited-range converter is up to 3 levels off the exact result on these bars, with any
+    /// matrix. The nearest other matrix is 10 or more levels off, so the wrong one fails.
+    /// </summary>
+    [RequiresFfmpegTheory]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT709, AVColorRange.AVCOL_RANGE_JPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT470BG, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
+    [InlineData(AVColorSpace.AVCOL_SPC_SMPTE170M, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_NV12)]
+    [InlineData(AVColorSpace.AVCOL_SPC_BT2020_NCL, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
+    [InlineData(AVColorSpace.AVCOL_SPC_UNSPECIFIED, AVColorRange.AVCOL_RANGE_MPEG, AVPixelFormat.AV_PIX_FMT_YUV420P)]
+    public void BarsConvertWithTheFramesMatrix(AVColorSpace colorSpace, AVColorRange range, AVPixelFormat format)
+    {
+        Assert.True(fixture.IsBootstrapped);
+        var matrix = YuvReference.For(colorSpace);
+        bool full = range == AVColorRange.AVCOL_RANGE_JPEG;
+        var bars = Samples.Bars(YuvReference.Bars, barWidth: 16, height: 16);
+
+        var bgra = ConvertFrame(bars, format, range, colorSpace);
+
+        for (int bar = 0; bar < YuvReference.Bars.Length; bar++)
+        {
+            var (y, cb, cr) = YuvReference.Bars[bar];
+            int column = bar * 16 + 8;
+            var actual = bgra.AsSpan((8 * bars.Width + column) * 4, 3);
+            YuvReference.AssertNear(YuvReference.Bgr(y, cb, cr, matrix, full), actual, $"bar {bar} as {colorSpace}", Tolerance);
+        }
+
+        // The bars tell the matrices apart at this tolerance.
+        foreach (var other in new[] { YuvReference.Bt601, YuvReference.Bt709, YuvReference.Bt2020 }.Where(m => m != matrix))
+            Assert.True(YuvReference.WorstDifference(matrix, other, full) > 2 * Tolerance, $"The bars do not tell {matrix} from {other}.");
+    }
+
+    // swscale's fixed-point error on the bars, measured: 3 levels for BT.709 and BT.2020, 2 for
+    // BT.601. FFmpeg's own scale filter gives the same pixels.
+    private const int Tolerance = 3;
+
+    private static byte[] ConvertFrame(
+        Samples samples,
+        AVPixelFormat format,
+        AVColorRange range,
+        AVColorSpace colorSpace = AVColorSpace.AVCOL_SPC_UNSPECIFIED
+    )
     {
         using var frame = samples.ToFrame(format, range);
-        var input = BgraConversionInput.For((int)format, (int)range);
+        var input = BgraConversionInput.For((int)format, (int)range, (int)colorSpace);
         nint sws = BgraConversion.CreateContext(samples.Width, samples.Height, input);
         Assert.NotEqual(nint.Zero, sws);
         try
@@ -193,6 +241,37 @@ public sealed unsafe class BgraConversionTests(FfmpegBootstrapFixture fixture)
             }
 
             return new Samples(width, height, bits, y, u, v);
+        }
+
+        /// <summary>
+        /// Vertical bars of flat 8-bit colour, <paramref name="barWidth"/> wide. An even width puts
+        /// every chroma sample inside one bar.
+        /// </summary>
+        public static Samples Bars((int Y, int Cb, int Cr)[] colours, int barWidth, int height)
+        {
+            int width = colours.Length * barWidth;
+            int chromaWidth = width / 2;
+            int chromaHeight = (height + 1) / 2;
+            var y = new ushort[width * height];
+            var u = new ushort[chromaWidth * chromaHeight];
+            var v = new ushort[chromaWidth * chromaHeight];
+            for (int row = 0; row < height; row++)
+            {
+                for (int column = 0; column < width; column++)
+                    y[row * width + column] = (ushort)colours[column / barWidth].Y;
+            }
+
+            for (int row = 0; row < chromaHeight; row++)
+            {
+                for (int column = 0; column < chromaWidth; column++)
+                {
+                    var colour = colours[column * 2 / barWidth];
+                    u[row * chromaWidth + column] = (ushort)colour.Cb;
+                    v[row * chromaWidth + column] = (ushort)colour.Cr;
+                }
+            }
+
+            return new Samples(width, height, 8, y, u, v);
         }
 
         public FrameHandle ToFrame(AVPixelFormat format, AVColorRange range)

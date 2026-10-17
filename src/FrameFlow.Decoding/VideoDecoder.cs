@@ -1360,8 +1360,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 dst.time_base = src.time_base;
                 dst.duration = src.duration;
                 dst.sample_aspect_ratio = src.sample_aspect_ratio;
-                // Nor the range, which the conversion reads (#792).
+                // Nor the range and the matrix, which the conversion reads (#792, #796).
                 dst.color_range = src.color_range;
+                dst.colorspace = src.colorspace;
             }
 
             try
@@ -1401,8 +1402,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             return null;
 
         // Ensure the sws context matches the current frame dimensions and input.
-        // The first frame initialises it; format or range changes (rare) rebuild it.
-        var input = BgraConversionInput.For(srcFormat, accessor.ColorRange);
+        // The first frame initialises it; format, range or matrix changes (rare) rebuild it.
+        var input = BgraConversionInput.For(srcFormat, accessor.ColorRange, accessor.ColorSpace);
         EnsureSwsContext(srcWidth, srcHeight, input);
 
         if (_swsCtx is null || _swsCtx.IsInvalid)

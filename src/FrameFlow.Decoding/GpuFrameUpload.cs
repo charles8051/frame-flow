@@ -26,10 +26,10 @@ namespace FrameFlow.Decoding;
 /// disposes none of its operators. An uploaded frame holds its own reference to the pool.
 /// </para>
 /// <para>
-/// The conversion is BT.601 studio range, swscale's default for an RGB source. That is how the
-/// rest of the library reads NV12 when nothing says otherwise: <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/>
-/// converts back with the same default, and <c>ImageToTensorOptions</c> defaults to BT.601 limited
-/// range. The presenters assume BT.709. Frames carry no colour metadata to choose between them
+/// The conversion is BT.601 studio range, swscale's default for an RGB source, and the uploaded
+/// frame is tagged so. <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/> reads the tag and converts
+/// back with BT.601 (#796), and <c>ImageToTensorOptions</c> defaults to BT.601 limited range. The
+/// presenters assume BT.709. <c>IVideoFrame</c> carries no colour metadata to choose between them
 /// (#388).
 /// </para>
 /// <para>Not thread-safe: one upload at a time, as an operator node calls it.</para>
@@ -90,6 +90,12 @@ internal sealed unsafe class GpuFrameUpload
             Check(FFAvUtil.av_hwframe_get_buffer(_pool!.DangerousGetHandle(), hardware, 0), "av_hwframe_get_buffer");
             Check(FFAvUtil.av_hwframe_transfer_data(hardware, software, 0), "av_hwframe_transfer_data");
             FrameCopyMetrics.Record(FrameCopySite.Upload);
+
+            // Tag the surface with what ConvertToNv12 wrote. A readback converts an untagged frame
+            // with BT.709 (#796), so an untagged upload would not read back as the frame it was.
+            ref AVFrame uploadedFrame = ref Unsafe.AsRef<AVFrame>((void*)hardware);
+            uploadedFrame.colorspace = AVColorSpace.AVCOL_SPC_SMPTE170M;
+            uploadedFrame.color_range = AVColorRange.AVCOL_RANGE_MPEG;
             var uploaded = GpuVideoFrame.FromOwnedAvFrame(
                 hardware, width, height, PixelFormat.Nv12, frame.Pts, frame.Duration, _device.Backend,
                 frame.SampleAspectRatio, frame.Rotation, frame.Timeline);

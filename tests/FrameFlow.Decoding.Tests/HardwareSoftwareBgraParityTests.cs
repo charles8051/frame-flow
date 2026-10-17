@@ -38,6 +38,14 @@ public sealed class HardwareSoftwareBgraParityTests(FfmpegBootstrapFixture fixtu
     public Task FullRangeVp9ConvertsAlikeOnHardwareAndInSoftware() =>
         AssertParityAsync("test-video-vp9-yuv420p-fullrange.webm");
 
+    /// <summary>
+    /// Tagged BT.601, which an untagged frame does not convert with. The transfer off the GPU does
+    /// not carry the tag either: the readback takes the matrix from the hardware frame (#796).
+    /// </summary>
+    [RequiresHardwareDecodeFact((int)AVCodecID.AV_CODEC_ID_VP9)]
+    public Task Bt601Vp9ConvertsAlikeOnHardwareAndInSoftware() =>
+        AssertParityAsync("test-video-vp9-yuv420p-bt601.webm");
+
     [RequiresHardwareDecodeFact((int)AVCodecID.AV_CODEC_ID_HEVC)]
     public Task HevcConvertsAlikeOnHardwareAndInSoftware() => AssertParityAsync("test-video-h265-yuv420p.mp4");
 

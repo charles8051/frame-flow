@@ -143,9 +143,22 @@ with it is ruled out for later models, as the other device-loss codes already we
   them all on a new device from that one event. A player without a lent device drops its own device
   when an item faults, so loading again on the same player is enough.
 
-### 5. A hardware-decoded frame converts to the same BGRA as a software-decoded one
+### 5. Decoded frames convert to BGRA with the stream's matrix and range, alike on hardware and in software
 
-**No compile error. Pixels change.**
+**No compile error. Pixels change, for most video.**
+
+The matrix now comes from the frame (#796). Every frame used to convert to `Bgra32` with BT.601,
+whatever the stream signalled. Most HD streams are BT.709, and converted with BT.601 their saturated
+colours shifted: reds leaned orange and greens leaned yellow, by up to 31 levels in one channel on
+75% colour bars. A frame tagged BT.709 now converts with BT.709, one tagged BT.601 (`bt470bg`,
+`smpte170m`) with BT.601, and BT.2020, SMPTE 240M and FCC with their own coefficients. BT.2020
+constant luminance is not a matrix, and converts approximately, with the BT.2020 non-constant
+luminance coefficients. A frame that
+signals no matrix, or one swscale has no coefficients for (YCgCo, ICtCp and the like), converts with
+BT.709. That is what the D3D11 and D3D12 presenters convert every frame with, so an untagged stream
+now looks the same on the CPU path and the GPU path. The presenters use no size rule, so neither
+does the decoder: an untagged SD stream converts with BT.709 too. JPEG and MJPEG decode tagged
+BT.601 and are unchanged.
 
 A hardware frame reads back as NV12, and the same stream decoded in software is `yuv420p` holding
 the same samples. They used to convert differently (#792). swscale converts `yuv420p` to BGRA with
@@ -161,13 +174,19 @@ software decoder named it a JPEG format (`yuvj420p`, as the H.264 and HEVC decod
 stream on hardware, and a full-range VP9 or AV1 stream in software, converted as limited range:
 blacks lifted and whites dimmed. Every path now converts a frame flagged full range as full range.
 
-**Who hits this.**
-- Golden images, perceptual hashes or model inputs captured from hardware-decoded frames.
-- Golden images of full-range content that is not H.264 or JPEG, from either decoder.
+`VideoOperators.ToGpu` tags what it uploads as BT.601 limited range, which is what it converts to,
+so an uploaded frame reads back as it went in.
 
-**What to write instead.** Nothing to change in code. Recapture references taken from hardware
-frames or from full-range streams. A reference captured from a limited-range software decode is
-unchanged.
+**Who hits this.**
+- Golden images, perceptual hashes or model inputs captured from decoded video that is tagged
+  anything but BT.601, or not tagged at all. That is most video.
+- Golden images captured from hardware-decoded frames.
+- Golden images of full-range content that is not H.264 or JPEG, from either decoder.
+- Code that converted decoded BGRA back to YUV with BT.601 to recover the samples.
+
+**What to write instead.** Nothing to change in code. Recapture references taken from decoded
+video. A reference captured from a limited-range software decode of a BT.601-tagged stream, or of a
+JPEG, is unchanged.
 
 ## `v0.16.0` — since `v0.15.1`
 
