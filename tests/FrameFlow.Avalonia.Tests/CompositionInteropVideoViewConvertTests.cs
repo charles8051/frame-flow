@@ -30,13 +30,11 @@ public sealed class CompositionInteropVideoViewConvertTests
         var frame = new CountedFrame();
         var onUiThread = true;
 
-        var run = view.ConvertForTest(frame, _ =>
+        await view.ConvertForTest(frame, _ =>
         {
             onUiThread = Dispatcher.UIThread.CheckAccess();
             return true;
         });
-        await run;
-        Dispatcher.UIThread.RunJobs();
 
         Assert.False(onUiThread);
         Assert.Equal(0, before.References);
@@ -58,7 +56,6 @@ public sealed class CompositionInteropVideoViewConvertTests
         var frame = new CountedFrame();
 
         await view.ConvertForTest(frame, _ => false);
-        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(0, frame.References);
         Assert.Equal(1, before.References);
@@ -74,7 +71,6 @@ public sealed class CompositionInteropVideoViewConvertTests
         var frame = new CountedFrame();
 
         await view.ConvertForTest(frame, _ => throw new InvalidOperationException("the fill failed"));
-        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(0, frame.References);
         await view.DisposeAsync();
@@ -92,7 +88,7 @@ public sealed class CompositionInteropVideoViewConvertTests
         using var filling = new ManualResetEventSlim();
         var release = new TaskCompletionSource();
 
-        var run = view.ConvertForTest(converting, _ =>
+        var completed = view.ConvertForTest(converting, _ =>
         {
             filling.Set();
             release.Task.Wait();
@@ -108,10 +104,10 @@ public sealed class CompositionInteropVideoViewConvertTests
         Assert.Equal(2, converting.References); // the sink's, and the conversion's own
 
         release.SetResult();
-        await run;
-        Dispatcher.UIThread.RunJobs();
+        await completed;
 
         Assert.Equal(1, converting.References); // the conversion let go of its own; it presents nothing
+        Assert.NotNull(view.LastConvertDuration); // and was timed
         Assert.Same(converting, sink.TakePendingFrame());
         converting.Dispose();
         player.Dispose();

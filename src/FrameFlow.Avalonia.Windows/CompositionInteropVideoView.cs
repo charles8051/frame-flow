@@ -2093,15 +2093,16 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
 
     /// <summary>
     /// Starts a conversion of <paramref name="frame"/> into ring slot 0 with <paramref name="fill"/>,
-    /// as a present does once it has decided, and returns its run. For tests: the headless backend
-    /// has no GPU interop, so no present gets this far, and the completion hands nothing off.
+    /// as a present does once it has decided. Returns a task that completes once the conversion's
+    /// completion has run on the UI thread. For tests: the headless backend has no GPU interop, so no
+    /// present gets this far, and the completion hands nothing off.
     /// </summary>
     internal Task ConvertForTest(IVideoFrame frame, Func<int, bool> fill)
     {
         var job = new ConvertJob(
             frame, 0, PresentSource.Cpu, frame.Width, frame.Height, _ => nint.Zero, fill, frame.Pts, frame.Timeline, _sink, _lifecycle.Binding);
         StartConvert(job);
-        return job.Run;
+        return job.Completed.Task;
     }
 
     private void PostCompletion(ConvertJob job)
@@ -2114,6 +2115,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         {
             // A dispatcher shutting down: nothing hands the slot off, and the view presents no more.
             job.Frame.Dispose();
+            job.Completed.TrySetResult();
         }
     }
 
@@ -2123,6 +2125,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// </summary>
     private void CompleteConvert(ConvertJob job)
     {
+        try
+        {
+            CompleteConvertCore(job);
+        }
+        finally
+        {
+            job.Completed.TrySetResult();
+        }
+    }
+
+    private void CompleteConvertCore(ConvertJob job)
+    {
+        // Every conversion is timed, one a teardown took included.
+        Volatile.Write(ref _lastConvertTicks, job.ElapsedTicks);
+        PresenterTeardownMetrics.RecordConvert(job.ElapsedTicks, SourceTag(job.Source));
+
         // A teardown took the conversion: the ring it filled is going, and its frame was kept as
         // the one presented last before the sink took it back.
         if (!ReferenceEquals(_converting, job))
@@ -2135,8 +2153,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         var kept = false;
         try
         {
-            Volatile.Write(ref _lastConvertTicks, job.ElapsedTicks);
-            PresenterTeardownMetrics.RecordConvert(job.ElapsedTicks, SourceTag(job.Source));
             if (job.Error is { } error)
             {
                 WarnPresentFailure(error);
@@ -2281,6 +2297,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
 
         /// <summary>The conversion's run. Never faults: what the fill threw is <see cref="Error"/>.</summary>
         public Task Run { get; set; } = Task.CompletedTask;
+
+        /// <summary>Completes once the UI thread has run the conversion's completion, whichever way it ended.</summary>
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>Whether the frame was drawn into the slot; false when device loss was observed.</summary>
         public bool Filled { get; private set; }
