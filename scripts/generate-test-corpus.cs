@@ -303,6 +303,17 @@ Gen(
     new(Width: 320, Height: 240, Fps: 24, DurationSec: 1.0)
 );
 
+// B-frames (#784): two between each pair of reference frames, a keyframe every 2 s. The
+// preroll from a keyframe to a run's start skips the non-reference frames, and the pinned LGPL
+// build has no H.264 encoder that writes them, so this is MPEG-2, whose B-frames are never
+// references. test-video-h264-yuv420p.mp4 is the stream without them.
+Gen(
+    "test-video-mpeg2-bframes.mp4",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v mpeg2video -bf 2 -g 48 -q:v 4 -pix_fmt yuv420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 Gen(
     "test-subsecond.mp4",
     "-f lavfi -i testsrc2=size=320x240:rate=30:duration=0.5 -f lavfi -i sine=frequency=440:sample_rate=44100:duration=0.5",

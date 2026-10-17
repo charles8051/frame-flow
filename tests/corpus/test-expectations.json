@@ -214,6 +214,17 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-mpeg2-bframes.mp4",
+    "durationSeconds": 3,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 72,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-subsecond.mp4",
     "durationSeconds": 0.5,
     "durationToleranceMs": 500,

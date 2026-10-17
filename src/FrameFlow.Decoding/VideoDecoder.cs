@@ -247,6 +247,35 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// </remarks>
     internal TimelineId Timeline { get; set; }
 
+    /// <summary>
+    /// Where the run about to start begins. Until a frame at or past it is decoded, the packets
+    /// before it are decoded without their non-reference frames (#784, <see cref="PrerollDiscard"/>).
+    /// </summary>
+    /// <remarks>
+    /// Set between runs, as <see cref="Timeline"/> is. Zero or less is a run with no start to reach.
+    /// </remarks>
+    internal TimeSpan PrerollFloor
+    {
+        set
+        {
+            lock (_codecSync)
+            {
+                _prerollFloor = PrerollDiscard.Arm(value);
+                _prerollStartedAt = 0;
+            }
+        }
+    }
+
+    // #784: the run's start while no frame at or past it has been decoded, and the level the
+    // decoder was given, which the preroll adds to and never lowers. Under _codecSync.
+    private TimeSpan? _prerollFloor;
+    private DecodeDiscardLevel _discardLevel;
+
+    // #784: warm-up timing. Touched only by the single decode worker, under _codecSync.
+    private long _firstSendEndedAt;
+    private bool _firstFrameReceived;
+    private long _prerollStartedAt;
+
     // ADR-0038: when true, hwaccel-active decoders yield GpuVideoFrame
     // (cloned AVFrame*) instead of doing the internal readback path.
     // Stored as int + Volatile so the decode worker reads a consistent
@@ -589,7 +618,17 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 return CodecReturn.EndOfStream;
 
             nint pktArg = _inFlushMode ? nint.Zero : _pendingRetryPacketPtr;
+            if (pktArg != nint.Zero)
+                ApplyPrerollDiscard(pktArg);
+
+            bool firstSend = _firstSendEndedAt == 0 && pktArg != nint.Zero;
+            long sendStartedAt = firstSend ? Stopwatch.GetTimestamp() : 0;
             _lastReturnCode = FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg);
+            if (firstSend)
+            {
+                DecoderWarmupMetrics.Record(DecoderWarmupMetrics.FirstPacket, sendStartedAt);
+                _firstSendEndedAt = Stopwatch.GetTimestamp();
+            }
             CodecReturn result = DecodeDriver.Classify(_lastReturnCode);
 
             // A hardware decoder can bind and then refuse the stream at its first packet (a
@@ -665,6 +704,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 // HardwareBackend onto the frame.
                 TrackHardwareEngagement(onHardware, framePtr);
                 TrackPool(onHardware, framePtr);
+                TrackWarmup(new AvFrameAccessor(framePtr).ComputePresentationTime(_timeBaseNum, _timeBaseDen));
 
                 // Lateness recovery, cheapest rung. Skipping the copy costs a picture and
                 // nothing else: the frame was decoded, so the codec's reference state is
@@ -758,6 +798,30 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             );
 
         _hardwareBackend = next;
+    }
+
+    /// <summary>
+    /// Spends the preroll floor on the first frame at or past it (#784), and times the decoder's
+    /// first frame and the run's preroll.
+    /// </summary>
+    private void TrackWarmup(TimeSpan frameTime)
+    {
+        if (!_firstFrameReceived)
+        {
+            _firstFrameReceived = true;
+            if (_firstSendEndedAt != 0)
+                DecoderWarmupMetrics.Record(DecoderWarmupMetrics.FirstFrame, _firstSendEndedAt);
+        }
+
+        if (_prerollFloor is null)
+            return;
+
+        if (_prerollStartedAt == 0)
+            _prerollStartedAt = Stopwatch.GetTimestamp();
+
+        _prerollFloor = PrerollDiscard.After(_prerollFloor, frameTime);
+        if (_prerollFloor is null)
+            DecoderWarmupMetrics.Record(DecoderWarmupMetrics.Preroll, _prerollStartedAt);
     }
 
     /// <summary>
@@ -985,19 +1049,13 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// </remarks>
     public void SetDiscardLevel(DecodeDiscardLevel level)
     {
-        var discard = level switch
-        {
-            DecodeDiscardLevel.None => AVDiscard.AVDISCARD_NONE,
-            DecodeDiscardLevel.NonReference => AVDiscard.AVDISCARD_NONREF,
-            DecodeDiscardLevel.Bidirectional => AVDiscard.AVDISCARD_BIDIR,
-            DecodeDiscardLevel.KeyframesOnly => AVDiscard.AVDISCARD_NONKEY,
-            _ => throw new ArgumentOutOfRangeException(nameof(level), level, null),
-        };
+        var discard = ToAvDiscard(level);
 
         lock (_codecSync)
         {
             if (_disposed)
                 return;
+            _discardLevel = level;
             unsafe
             {
                 ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>(
@@ -1006,6 +1064,35 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 ctx.skip_frame = discard;
             }
         }
+    }
+
+    private static AVDiscard ToAvDiscard(DecodeDiscardLevel level) =>
+        level switch
+        {
+            DecodeDiscardLevel.None => AVDiscard.AVDISCARD_NONE,
+            DecodeDiscardLevel.NonReference => AVDiscard.AVDISCARD_NONREF,
+            DecodeDiscardLevel.Bidirectional => AVDiscard.AVDISCARD_BIDIR,
+            DecodeDiscardLevel.KeyframesOnly => AVDiscard.AVDISCARD_NONKEY,
+            _ => throw new ArgumentOutOfRangeException(nameof(level), level, null),
+        };
+
+    /// <summary>
+    /// Sets the codec's discard level for the packet about to be sent (#784). Under
+    /// <see cref="_codecSync"/>, so it lands while no decode call is inside the context.
+    /// </summary>
+    private unsafe void ApplyPrerollDiscard(nint packetPtr)
+    {
+        ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)_codecCtx.DangerousGetHandle());
+        long pts = new AvPacketAccessor(packetPtr).Pts;
+        var level = PrerollDiscard.For(
+            _discardLevel,
+            _prerollFloor,
+            pts == FFAvUtil.AvNoPtsValue ? null : ComputePresentationTime(pts),
+            ctx.has_b_frames > 0
+        );
+        var discard = ToAvDiscard(level);
+        if (ctx.skip_frame != discard)
+            ctx.skip_frame = discard;
     }
 
     /// <summary>Signals end-of-stream to flush buffered frames.</summary>
