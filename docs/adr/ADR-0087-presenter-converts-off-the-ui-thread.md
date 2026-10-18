@@ -24,7 +24,7 @@ decode device waited on the UI thread for the decoders' device lock.
   compares the binding it started under.
 - [ADR-0086](ADR-0086-work-in-flight-held-until-it-ends.md) decision 3: nothing is freed before the
   work that uses it has ended. A conversion in flight is such work.
-- [Device loss reaches the device owner](gpu-device-loss-reaches-the-device-owner.md) (#759): a
+- [Device loss reaches the device owner](ADR-0089-gpu-device-loss-reaches-the-device-owner.md) (#759): a
   converter marks itself lost and the next present rebuilds it.
 - #760: the video wall proposal, which would replace N views' presents with one.
 

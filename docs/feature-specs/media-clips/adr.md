@@ -227,7 +227,7 @@ because a frame can decode before the end and present after it.
 
 **Date:** 2026-10-12
 **Status:** Accepted
-**Amends:** the borrowed-device decision (`docs/adr/borrowed-hardware-device.md`), which kept
+**Amends:** the borrowed-device decision (`docs/adr/ADR-0088-borrowed-hardware-device.md`), which kept
 sharing a device opt-in: "a player without one keeps a device per decoder, as before".
 
 ### Context
@@ -251,7 +251,7 @@ found another backend.
   driver reset is therefore replaced at the next item rather than failing every item after it, which
   is what creating a device per item gave for free. *Amended 2026-10-17: only a device the GPU lost
   is dropped, by identity, and the cache never lends a lost device. See the amendment to
-  `docs/adr/gpu-device-loss-reaches-the-device-owner.md`.*
+  `docs/adr/ADR-0089-gpu-device-loss-reaches-the-device-owner.md`.*
 - **The player owns the devices.** The session factory owns the cache and disposes it with the
   controller. Decoders hold their own references, so disposing or dropping never pulls a device from
   under one that is decoding.

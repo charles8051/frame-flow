@@ -173,14 +173,6 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
-- [GPU device loss reaches the device's owner, once](gpu-device-loss-reaches-the-device-owner.md) —
-  a removed or reset GPU device used to show up as one `Decode` failure per player, with nothing
-  saying the device was gone. `HardwareDevice` raises `DeviceLost` once, on the thread pool, the
-  first time a decoder on it reads a loss from `GetDeviceRemovedReason` after a fault, and each
-  player fails with the new `ErrorCategory.DeviceLost`, its `DeviceLostException` carrying the
-  HRESULT. One list of device-loss codes, now with `DXGI_ERROR_DRIVER_INTERNAL_ERROR` (#530), serves
-  the decoder, the presenter and the inference factory. Records what it cannot see: a loss that no
-  decode call reports, and backends other than D3D11VA and D3D12VA.
 - [Stream-backed media sources, via a custom AVIO context](stream-backed-media-sources.md) —
   there is no way to hand FrameFlow bytes. An in-memory clip, an embedded resource or a
   decrypted blob has to be written to a temp file first, which needs a writable filesystem
@@ -545,3 +537,20 @@ ADR-0087 was numbered and accepted on 2026-10-17, and implemented under #781.
   (#781). A present posted while a conversion runs leaves the frame in the sink. A teardown keeps the
   converting frame as the one presented last, and its producers wait for the conversion. Adds
   `frameflow.presenter.convert_duration_ms` and `LastConvertDuration`.
+
+ADR-0088 and ADR-0089 were numbered and accepted on 2026-10-18, once their implementation had landed (#445, #656, #759).
+
+- [A hardware decode device the decoders borrow](ADR-0088-borrowed-hardware-device.md) —
+  every video decoder creates its own device, so it goes when the item ends, while inference needs
+  one that lives for the whole run and crashed the process with a TensorRT-RTX session loaded (#422).
+  `HardwareDevice` is a device decoders borrow instead of creating their own: one reference to the
+  FFmpeg device context, taken by each decoder that borrows it, so the device outlives them. The
+  presenter keeps its own device, as ADR-0064 has it.
+- [GPU device loss reaches the device's owner, once](ADR-0089-gpu-device-loss-reaches-the-device-owner.md) —
+  a removed or reset GPU device used to show up as one `Decode` failure per player, with nothing
+  saying the device was gone. `HardwareDevice` raises `DeviceLost` once, on the thread pool, the
+  first time a decoder on it reads a loss from `GetDeviceRemovedReason` after a fault, and each
+  player fails with the new `ErrorCategory.DeviceLost`, its `DeviceLostException` carrying the
+  HRESULT. One list of device-loss codes, now with `DXGI_ERROR_DRIVER_INTERNAL_ERROR` (#530), serves
+  the decoder, the presenter and the inference factory. Records what it cannot see: a loss that no
+  decode call reports, and backends other than D3D11VA and D3D12VA.

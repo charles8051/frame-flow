@@ -87,7 +87,7 @@ FFmpeg with `av_hwdevice_ctx_alloc`. That changes which teardown releases what. 
 own (`owned-ours-`), the crashing shape exits cleanly three runs of three, with and without the full
 chain, while the same modes on the decoder's own device crash three of three. Freeing a decoder's
 last frame then tears down its frames context but not the device context, which goes last. The
-table is in [the borrowed-device record](../adr/borrowed-hardware-device.md).
+table is in [the borrowed-device record](../adr/ADR-0088-borrowed-hardware-device.md).
 
 ### 5. The shader's parity is the DirectML spike's
 

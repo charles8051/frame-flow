@@ -1,13 +1,13 @@
-# GPU device loss reaches the device's owner, once, and each player's failure names it
+# ADR-0089: GPU device loss reaches the device's owner, once, and each player's failure names it
 
-**Status:** Accepted. Draft, pending number assignment at merge.
+**Status:** Accepted. Numbered ADR-0089 on 2026-10-18.
 
 **Date:** 2026-10-16
 
 **Issues:** #759, #530.
 
 **Related:**
-- [A hardware decode device the decoders borrow](borrowed-hardware-device.md): `HardwareDevice`,
+- [A hardware decode device the decoders borrow](ADR-0088-borrowed-hardware-device.md): `HardwareDevice`,
   the one public type that owns a GPU device several players share. This record gives it an event.
 - [ADR-0064](ADR-0064-zero-copy-converter-device-ownership.md): the presenter owns a device of its
   own and rebuilds it after a loss. Unchanged.

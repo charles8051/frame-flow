@@ -1,6 +1,6 @@
-# A hardware decode device the decoders borrow
+# ADR-0088: A hardware decode device the decoders borrow
 
-**Status:** Accepted. Draft, pending number assignment at merge.
+**Status:** Accepted. Numbered ADR-0088 on 2026-10-18.
 
 **Date:** 2026-09-27
 
@@ -96,4 +96,4 @@ device when an item that decoded on it faults. A device lent here still wins, an
 borrows it as before. See decision 7 of the media-clips record
 (`docs/feature-specs/media-clips/adr.md`). Since 2026-10-17 only a device the GPU lost is dropped,
 and a decoder opened on a lent device that is lost fails with `DeviceLostException`: see the
-amendment to `gpu-device-loss-reaches-the-device-owner.md`.
+amendment to `ADR-0089-gpu-device-loss-reaches-the-device-owner.md`.

@@ -128,7 +128,7 @@ output tensor.
 
 | Layer | Change |
 | --- | --- |
-| `FrameFlow.Decoding` | `HardwareDevice`, which decoders borrow so the device outlives them ([borrowed device](../../adr/borrowed-hardware-device.md), #428); backend device accessors on `GpuVideoFrame`; whatever bounds in-flight leases; the `InternalsVisibleTo` grant to `FrameFlow.Video` finally has the consumer it was written for |
+| `FrameFlow.Decoding` | `HardwareDevice`, which decoders borrow so the device outlives them ([borrowed device](../../adr/ADR-0088-borrowed-hardware-device.md), #428); backend device accessors on `GpuVideoFrame`; whatever bounds in-flight leases; the `InternalsVisibleTo` grant to `FrameFlow.Video` finally has the consumer it was written for |
 | `FrameFlow.Video` | The `ToCpu` and `ToGpu` node factories (#279, #293) |
 | `FrameFlow.Yolo` | The preprocessor splits by memory domain; `Yolov8Detector` stops assuming a CPU tensor |
 | `FrameFlow.Inference.Cuda` | The `OrtValue` device-binding path gets its first caller |
