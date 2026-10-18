@@ -16,6 +16,7 @@ public sealed class HardwareDeviceTests(FfmpegBootstrapFixture fixture)
 {
     private const string H264 = "test-video-h264-yuv420p.mp4";
     private const string Av1 = "test-video-av1-yuv420p.mkv";
+    private const int DeviceReset = unchecked((int)0x887A0007);
     private static readonly Guid IidDevice = new("189819f1-1db6-4b57-be54-1821339b85f7");
     private static readonly Guid IidUnknown = new("00000000-0000-0000-c000-000000000046");
 
@@ -194,17 +195,20 @@ public sealed class HardwareDeviceTests(FfmpegBootstrapFixture fixture)
 
     /// <summary>
     /// The first frame is held while the second decoder opens, so the first device context is
-    /// still allocated and the second cannot land at its address.
+    /// still allocated and the second cannot land at its address. The loss is fed in: no test
+    /// removes a real device.
     /// </summary>
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
-    public async Task ADroppedDevice_IsReplacedForTheNextDecoder()
+    public async Task ALostDevice_IsReplacedForTheNextDecoder()
     {
         using var cache = new HardwareDeviceCache();
         await using var firstDemux = await OpenAsync(H264);
         await using var first = OpenCached(firstDemux, cache);
         using var firstFrame = await FirstFrameAsync(firstDemux, first);
 
-        cache.Drop(HardwareDecodeBackendKind.D3D12Va);
+        nint reference = cache.Borrow(HardwareDecodeBackendKind.D3D12Va, out var cached);
+        FFAvUtil.av_buffer_unref(ref reference);
+        Assert.True(Assert.IsType<HardwareDevice>(cached).ReportRemovedReason(DeviceReset));
 
         await using var secondDemux = await OpenAsync(H264);
         await using var second = OpenCached(secondDemux, cache);

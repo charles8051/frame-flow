@@ -16,6 +16,10 @@ using System.Runtime.CompilerServices;
 // inspect internal state without requiring real FFmpeg binaries.
 [assembly: InternalsVisibleTo("FrameFlow.Decoding.Tests")]
 
+// The playback tests borrow from the player's hardware device cache as a decoder does, and release
+// each reference as the decoder would (#759).
+[assembly: InternalsVisibleTo("FrameFlow.Playback.Tests")]
+
 // Expose interop declarations (FFSwResample, av_opt_set_*, SwrContextHandle) to
 // the audio layer so the swr-backed resampler can call swresample functions
 // directly without leaking them to higher layers (ADR-0005, ADR-0011).

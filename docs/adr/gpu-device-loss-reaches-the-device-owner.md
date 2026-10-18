@@ -137,3 +137,53 @@ loads. A player that reaches `Error` takes a load or a replace directly (#758).
   ignored, the category pre-pass removed, the driver not wrapping, a wrong vtable slot, and the
   event raised on the reporting thread.
 - A real device removal is not tested here. Forcing one is a TDR on the machine running the suite.
+
+## Amendment (2026-10-17)
+
+`IsLost` had no reader in FrameFlow, and the player's cached devices, being internal, had no
+subscriber to their event. Two things followed.
+
+- **A healthy device was dropped on unrelated faults.** The item runtime dropped its cached device
+  for the bound backend on every fault: a corrupt packet, a sink's escalation, the pacer's own
+  fault, even a fault in an item prepared ahead. The next item paid for a new device, which the
+  cache exists to avoid. The drop was by backend, so a late fault from an old item could drop the
+  device a newer item had just been lent.
+- **A lost device kept being lent.** Neither the cache nor a decoder lent a device asked whether it
+  was lost.
+
+Decided:
+
+- **The cache never lends a lost device.** `HardwareDeviceCache.Borrow` replaces a cached device
+  whose `IsLost` is true with a new one and releases the old.
+- **A fault evicts only a lost device, by identity.** On a pump, graph or pacer fault, the item
+  runtime asks the cache to evict the device its own decoder borrowed (`IItemMedia.BoundDevice`),
+  and the cache does so only if that device is lost and is still the one it lends for the backend.
+  A live device stays whatever the fault. This replaces the drop on every fault in decision 5 and
+  in decision 7 of the media-clips record.
+- **A decoder opened on a lost lent device fails fast.** `VideoDecoder.Open` throws
+  `DeviceLostException`, with the device's reason, where it would have borrowed a lent device that
+  is lost, under `Auto` as under `Required`. It used to fall back to software under `Auto`, which
+  is the second limit above; that limit is withdrawn. `DeviceLostException` and `HardwareDevice`
+  documented that every later item opened on a lost device fails, and a caller that reads the loss
+  from a player's failure only hears of it if the open says so. A codec with no configuration for
+  the device's backend still decodes in software: it never touches the device.
+
+Consequences:
+
+- A corrupt file no longer costs the next item a device. A lost D3D11VA or D3D12VA device is
+  released at the fault that revealed it, and replaced at the next borrow in any case.
+- Detection is still only D3D11VA and D3D12VA (the third limit above). On CUDA, VAAPI or Vulkan a
+  device that a driver failure left unusable used to be replaced after the item faulted; it now
+  stays cached until the player is disposed, and every later item on that backend fails the same
+  way. Removing the drop on every fault was chosen over keeping it for those backends: the cost it
+  imposed on every corrupt packet is certain, the failure it guarded against is rare and
+  unmeasured here.
+
+Verification, each shown to fail with its rule removed: a corrupt-packet fault keeps the cached
+device (fails with the drop on every fault put back); a fault on a lost device evicts it (fails with
+no eviction); a late fault from an old item leaves the newer device (fails with the drop on every
+fault, and with eviction by backend rather than identity); the cache does not lend a lost device
+again (fails with the `IsLost` check removed from `Borrow`); a decoder opened on a lost lent device
+fails with `DeviceLostException` under `Auto` and `Required` (fails with the check removed: both
+opened on the device). The devices are FFmpeg device contexts allocated and never opened
+(`HardwareDevice.Unopened`), so the tests run without a GPU, and every loss is fed in.

@@ -1309,9 +1309,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// Reports the fault the core asks for. A pump's or a graph's is the item's: its run is
     /// cancelled at once, so the rest of the run does not wait on it (#713) — a pump parked on a
     /// full decoder queue that a faulted graph no longer drains ends — then the shared device is
-    /// dropped and the fault goes to <see cref="SessionCallbacks.OnWorkerFaulted"/>. A
-    /// lateness-recovery walk's is recoverable: the walk is an optimisation, and playback carries
-    /// on at whatever rung it had reached.
+    /// evicted if the GPU lost it and the fault goes to
+    /// <see cref="SessionCallbacks.OnWorkerFaulted"/>. A lateness-recovery walk's is recoverable:
+    /// the walk is an optimisation, and playback carries on at whatever rung it had reached.
     /// </summary>
     private void ReportFault(RuntimeAction.ReportFault fault)
     {
@@ -1331,27 +1331,34 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// <summary>
     /// Reports a fault in the pump, the graph or the video pacer: a sink that keeps throwing, or a
     /// fault in the pacer's own delivery (#703). The shared hardware device this item decoded on
-    /// is dropped first, a sink's fault included: a fault can mean the device is no longer usable,
-    /// after a driver reset for instance, and the next item then creates a new one rather than
-    /// failing on it too.
+    /// is evicted first if the GPU lost it, so it is released now rather than at the next item's
+    /// borrow. A live device stays cached whatever the fault: a corrupt packet or a sink's fault
+    /// says nothing about the device, and the next item would pay for a new one (#759).
     /// </summary>
     /// <remarks>
-    /// The fault is reported even when dropping the device throws. Whatever called this has
-    /// stopped, a halted pacer included, and only the report ends the item; a drop that threw
+    /// <para>
+    /// The device evicted is the one this item's decoder borrowed, not whichever the cache now
+    /// holds for its backend, so a late fault from a runtime that was prepared ahead or is ending
+    /// never evicts the device a newer item took.
+    /// </para>
+    /// <para>
+    /// The fault is reported even when evicting the device throws. Whatever called this has
+    /// stopped, a halted pacer included, and only the report ends the item; an eviction that threw
     /// before it would leave the item playing a picture that no longer moves.
+    /// </para>
     /// </remarks>
     private void ReportWorkerFault(Exception ex)
     {
         try
         {
-            if (_media?.BoundBackend is { } backend)
-                DeviceCache?.Drop(backend);
+            if (_media?.BoundDevice is { } device)
+                DeviceCache?.EvictIfLost(device);
         }
-        catch (Exception dropFailure)
+        catch (Exception evictFailure)
         {
             _logger.LogWarning(
-                dropFailure,
-                "Dropping the shared decode device after a fault threw; the fault is reported regardless."
+                evictFailure,
+                "Evicting the lost shared decode device after a fault threw; the fault is reported regardless."
             );
         }
         _callbacks.OnWorkerFaulted(ex);

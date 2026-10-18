@@ -201,7 +201,7 @@ internal sealed class SubstrateMedia : IItemMedia
     public Task? FirstFrameDecoded => _videoDecoder?.FirstFrameDecoded;
 
     /// <inheritdoc/>
-    public HardwareDecodeBackendKind? BoundBackend => _videoDecoder?.BoundBackend;
+    public HardwareDevice? BoundDevice => _videoDecoder?.BoundDevice;
 
     // Whether the item has audio to play: a decoder, which is made only for a sink.
     private bool HasAudio => _audioDecoder is not null && _settings.AudioSink is not null;

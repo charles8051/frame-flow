@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Graph;
 using FrameFlow.Media;
@@ -47,8 +48,11 @@ internal interface IItemMedia
     /// </summary>
     Task? FirstFrameDecoded { get; }
 
-    /// <summary>The backend the video decoder bound, or null when it decodes in software or has none.</summary>
-    HardwareDecodeBackendKind? BoundBackend { get; }
+    /// <summary>
+    /// The shared device the video decoder decodes on, lent or cached, or null when it created its
+    /// own, decodes in software or has none.
+    /// </summary>
+    HardwareDevice? BoundDevice { get; }
 
     /// <summary>
     /// Builds the pacer in front of the video sink, if there is one, paced against
