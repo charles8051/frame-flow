@@ -56,6 +56,9 @@ public sealed class H264ColorRoundTripTests(FfmpegBootstrapFixture fixture)
                 decoded,
                 frame => Assert.Equal((PixelFormat.Bgra32, Width, Height), (frame.Format, frame.Width, frame.Height))
             );
+            // Three rows read from every frame, so a frame the bars could not be read from fails here
+            // instead of passing with nothing compared.
+            Assert.All(decoded, frame => Assert.Equal(3, frame.Rows.Count));
             var off = new List<string>();
             for (int frame = 0; frame < decoded.Count; frame++)
             {
