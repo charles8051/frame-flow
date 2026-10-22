@@ -191,12 +191,15 @@ jobs:
           # code shares a workspace with a usable token.
           persist-credentials: false
 
-      # Several runner instances share the self-hosted Windows machine, all as one
-      # account, so they share its TEMP. scripts/fetch-ffmpeg.cs downloads into a fixed
-      # directory there, scripts/package-smoke.cs works in one, and an OpenVINO test
-      # clears its earlier runs' directories, so two jobs at once collide. RUNNER_TEMP
-      # belongs to the instance and is emptied at every job. A hosted runner has one
-      # instance, and it does no harm there.
+      # Several runner instances can share one self-hosted Windows machine.
+      # scripts/fetch-ffmpeg.cs downloads into a fixed directory under TEMP,
+      # scripts/package-smoke.cs works in one, and an OpenVINO test clears its earlier
+      # runs' directories, so two jobs with the same TEMP collide. RUNNER_TEMP belongs
+      # to the instance and is emptied at every job, so this keeps each job's temp files
+      # to itself whatever TEMP the runner host sets. It cannot help a runner that runs
+      # jobs as SYSTEM: for SYSTEM, .NET's Path.GetTempPath() returns
+      # C:\Windows\SystemTemp and ignores TEMP and TMP. A hosted runner has one
+      # instance, and the step does no harm there.
       - name: Use the runner's own temp directory (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

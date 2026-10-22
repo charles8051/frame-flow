@@ -140,8 +140,8 @@ jobs:
         with:
           fetch-depth: 0  # MinVer needs full history.
 
-      # Several runner instances share the self-hosted Windows machine and its TEMP,
-      # and pull request builds run there alongside this job. See build.yml.
+      # Pull request builds can run alongside this job on other runner instances of
+      # the same self-hosted Windows machine. See build.yml.
       - name: Use the runner's own temp directory (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
