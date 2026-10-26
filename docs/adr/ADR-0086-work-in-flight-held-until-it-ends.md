@@ -9,6 +9,15 @@
 > uses it has ended, and nothing is abandoned. What changes is that the next item no longer waits
 > for frees that touch nothing it uses. On a shared GPU those frees grow with the number of players
 > switching at once.
+>
+> **Amended 2026-10-26: the item's faults are the core's (#824).** A pump's or a graph's fault, the
+> pacer's delivery fault and an immediate action that throws are one input to
+> `ItemRuntimeProtocol`, where the pacer's and the action's used to reach the owner past it. The
+> core reports the first, stops the run, and raises no end of stream after it; the shell no longer
+> cancels a faulted run itself. The command in progress goes on as it would have, and the run stops
+> once no action of it is under way. The core also emits the dispose's cut-short of an action under
+> way, and records where a detached runtime was positioned. Decision 2 holds, and now covers these
+> too.
 
 ## Status
 
@@ -426,7 +435,8 @@ not change; it gained one member, the last item under the other owners.
 - The phase is two fields, not decision 2's single list: the phase (New, Opening, Open, Disposing,
   Disposed) and, while open, the run status (Idle, Running, Stopping, Stopped). Warm is a run going
   behind shut gates before the first play. There is no Faulted: a fault is reported, and the item's
-  owner decides.
+  owner decides. (Since #824 the state records that the item has faulted, so the core reports one
+  fault and no end of stream after it; the phase is unchanged.)
 - The core recorded 19 places where its rule differs from `SubstrateSession` after #715. Slice 4
   shipped each of them:
   - *Stopping.* Every stop cancels a running run and waits for its work, so the `TaskPolicy` paths
@@ -457,7 +467,8 @@ acceptable.
 - The #713 cancel is in the shell. When it performs the core's report of a pump's or a graph's
   fault, it cancels that run's scope first, so a pump parked on a full queue ends, and a pump's
   fault cancels the graph the same way. In the core, the cancel would break walk invariants that
-  hold today.
+  hold today. (#824 moved it into the core. The cancel waits until no action of the command in
+  progress is under way, which is what keeps the walk's invariants.)
 - A command's clock inputs are read when the reader steps the command, not on the caller's thread.
   A command whose token is already cancelled when it is called does nothing.
 - An attach is queued with the commands, as `AttachAsync`, which completes once the shared clocks are
@@ -669,3 +680,6 @@ None remain. The draft's three were settled on acceptance:
   addressed it (#743). The decisions are unchanged.
 - **2026-10-17, #780.** The amendment at the top: a switch waits for `ReleaseShared`, and the
   session awaits the rest of the old item's dispose at its own. Decision 3 is unchanged.
+- **2026-10-26, #824.** The second amendment at the top: every fault of the item is a core input,
+  and the core stops the run. Two implementation notes say what they now read as. Decision 2 is
+  unchanged.

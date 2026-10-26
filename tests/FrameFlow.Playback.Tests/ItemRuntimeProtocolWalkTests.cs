@@ -55,6 +55,9 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
 
     private static readonly Exception Boom = new InvalidOperationException("boom");
 
+    // A fault from outside the run's work: the pacer's delivery, or an immediate action that threw.
+    private static readonly Exception ItemBoom = new InvalidOperationException("item boom");
+
     private const string Shared =
         "A detached runtime touches neither the position clock nor the audio sink it shares with the item that is playing";
     private static readonly Exception Cancellation = new OperationCanceledException();
@@ -117,6 +120,8 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         Assert.Contains(walk, n => n.State.Command?.SettleHeld == true);
         Assert.Contains(walk, n => n.State.EndedBeforeStart != ItemWork.None);
         Assert.Contains(walk, n => n.State.DisposeRequested);
+        Assert.Contains(walk, n => n.State.Faulted && n.State.Phase == ItemRuntimePhase.Open);
+        Assert.Contains(walk, n => n.State.StopOwed);
         Assert.Contains(walk, n => n.State.Phase == ItemRuntimePhase.Disposing && n.State.Status == ItemRunStatus.Stopping);
         Assert.Contains(walk, n => n.Model.Gates && n.Model.Clock == ClockModel.Paused); // frozen at the end, not paused
         Assert.Contains(walk, n => n.Model.WallclockAhead && n.State.Command?.Reposition is { Relaunch: false }); // a hold after it
@@ -233,6 +238,12 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
 
         /// <summary>The decoder has signalled its first frame, which it does once.</summary>
         public bool FirstFrame { get; init; }
+
+        /// <summary>The item's fault has been reported to its owner (#824).</summary>
+        public bool Faulted { get; init; }
+
+        /// <summary>Where a detached runtime's clocks were last seated, for its attach.</summary>
+        public TimeSpan DetachedSeat { get; init; }
     }
 
     private sealed record Node(ItemRuntimeState State, Model Model);
@@ -309,6 +320,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
             yield return new Feed(new Input.CallerCancelled(owed.Id));
         yield return new Feed(new Input.Attach());
         yield return new Feed(new Input.Dispose());
+        yield return new Feed(new Input.Faulted(ItemBoom));
 
         // At the end of the stream, between commands.
         if (model.Outstanding is null && model.Clock == ClockModel.Running && model.EndRaised)
@@ -422,13 +434,20 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 m = performed.Outcome == ItemActionOutcome.Ok ? Succeeded(m, awaitedBefore) : Failed(m, awaitedBefore);
                 break;
             case Input.WorkEnded ended:
-                // The end of stream of a live run that played to its end, which nothing has stopped.
+                // The end of stream of a live run that played to its end, which nothing has stopped,
+                // of an item that has not faulted.
                 endOfStreamDue =
                     ended.Ending == ItemWorkEnding.Completed
                     && ended.Work is ItemWork.Graph or ItemWork.EmptyEnd
-                    && m.Live == ended.Run;
+                    && m.Live == ended.Run
+                    && !m.Faulted;
                 m = m with { Working = m.Working & ~ended.Work };
-                faultFed = ended.Ending == ItemWorkEnding.Faulted;
+
+                // A recovery walk's fault is reported each time; the item's, once.
+                faultFed = ended.Ending == ItemWorkEnding.Faulted && (ended.Work == ItemWork.Recovery || !m.Faulted);
+                break;
+            case Input.Faulted:
+                faultFed = !m.Faulted && before.Phase != ItemRuntimePhase.Disposed;
                 break;
             case Input.CallerCancelled cancelled when owed.TryGetValue(cancelled.Command, out var target):
                 owed[cancelled.Command] = target with { Cancelled = true };
@@ -485,7 +504,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 case Action.SeatClocks seat:
                     Ensure(m.Working == ItemWork.None, "Seats the clocks for a reposition only once no work is pending");
                     Ensure(seat.Shared == m.Attached, "Seats the shared clocks exactly when attached");
-                    m = m with { WallclockAhead = m.WallclockAhead && !seat.Shared };
+                    m = m with
+                    {
+                        WallclockAhead = m.WallclockAhead && !seat.Shared,
+                        DetachedSeat = seat.Shared ? m.DetachedSeat : seat.Target,
+                    };
                     break;
                 case Action.SeatBaseline:
                     Ensure(m.Attached, Shared);
@@ -519,8 +542,9 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     Ensure(teardown && m.Attached, "Stops the position clock only in an attached runtime's teardown");
                     m = m with { Clock = ClockModel.Stopped };
                     break;
-                case Action.AttachClocks:
+                case Action.AttachClocks attach:
                     Ensure(attachDue && !attached, "Seats the shared clocks once, at the attach");
+                    Ensure(attach.Origin == m.DetachedSeat, "Seats the shared clocks where the detached runtime was positioned");
                     attached = true;
                     m = m with { Attached = true, WallclockAhead = false };
                     break;
@@ -554,12 +578,31 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 case Action.ReportFault report:
                     faults++;
                     Ensure(
-                        input is Input.WorkEnded { Ending: ItemWorkEnding.Faulted } ended
-                            && ended.Run == report.Run
-                            && ended.Work == report.Work
-                            && ReferenceEquals(ended.Error, report.Error),
-                        "Reports only the fault the work ended with"
+                        input switch
+                        {
+                            Input.WorkEnded { Ending: ItemWorkEnding.Faulted } ended => ended.Run == report.Run
+                                && ended.Work == report.Work
+                                && ReferenceEquals(ended.Error, report.Error),
+                            Input.Faulted faulted => report.Run == before.Run
+                                && report.Work == ItemWork.None
+                                && ReferenceEquals(faulted.Error, report.Error),
+                            _ => false,
+                        },
+                        "Reports only the fault the work ended with, or the item's"
                     );
+                    if (report.Work != ItemWork.Recovery)
+                    {
+                        Ensure(!m.Faulted, "Reports the item's fault once");
+                        Ensure(
+                            m.Awaiting is not null || step.Actions.Any(a => a is Action.CancelRun) || m.Live is null,
+                            "Stops the live run with the item's fault, or once the action under way ends"
+                        );
+                        m = m with { Faulted = true };
+                    }
+                    break;
+                case Action.CutShort cut:
+                    Ensure(m.Awaiting is not null && cut.Command == before.Command?.Id, "Cuts short only the action under way, of the command carrying it");
+                    Ensure(after.DisposeRequested, "Cuts short an action only for a dispose");
                     break;
                 case Action.RaiseEndOfStream end:
                     endsOfStream++;
@@ -569,6 +612,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     );
                     Ensure(end.Run == after.Run && m.Live == end.Run, "Raises the end of stream only of the current run, while it is live");
                     Ensure(!m.EndRaised, "Raises a run's end of stream once");
+                    Ensure(!m.Faulted, "Raises no end of stream once the item's fault is reported (#824)");
                     m = m with { EndRaised = true };
                     break;
                 case Action.CompleteCommand complete:
@@ -694,7 +738,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
             switch (command.Kind)
             {
                 case ItemCommandKind.Play when m.Opened:
-                    Ensure(playing, "A play leaves a run going, the gates open, the clocks running and the audio playing");
+                    Ensure(playing || m.Faulted, "A play leaves a run going, the gates open, the clocks running and the audio playing, unless the item faulted");
                     m = m with { Played = true };
                     break;
                 case ItemCommandKind.Pause:
@@ -706,7 +750,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 case ItemCommandKind.Seek or ItemCommandKind.Rewind when m.Opened:
                     Ensure(
                         command.PlaysOn
-                            ? playing
+                            ? playing || m.Faulted
                             : after.Status == ItemRunStatus.Idle
                                 && !m.Gates
                                 && m.Clock != ClockModel.Running
@@ -715,7 +759,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     );
                     break;
                 case ItemCommandKind.WarmUp when m.Opened && shape.HasVideo && !m.Played:
-                    Ensure(after.Status == ItemRunStatus.Running, "A warm-up leaves a run going");
+                    Ensure(after.Status == ItemRunStatus.Running || m.Faulted, "A warm-up leaves a run going, unless the item faulted");
                     break;
                 case ItemCommandKind.Initialize:
                     Ensure(m.Opened && after.Status == ItemRunStatus.Idle, "An open leaves a runtime that may start a run");
@@ -750,6 +794,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
             "A runtime that may start a run has clean decoders"
         );
         Ensure(after.IsBusy == (m.Awaiting is not null), "Busy exactly while an awaited action is under way");
+        Ensure(!after.StopOwed || (after.Faulted && after.IsBusy), "A stop is owed only while a faulted item's action is under way");
+        Ensure(
+            !(after.Faulted && !model.Faulted && after.Command is null && after.Phase == ItemRuntimePhase.Open) || m.Live is null,
+            "The step that reports the item's fault, at rest, leaves no run live"
+        );
         Ensure(after.AudioActive == (m.Audio != AudioModel.Inactive), "The state knows whether the audio sink is active");
         Ensure(after.Attached == m.Attached, "The state knows whether the runtime is attached");
         Ensure(after.Played == m.Played, "The state knows whether the runtime has played");

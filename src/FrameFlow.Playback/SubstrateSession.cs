@@ -110,10 +110,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         "Reliability", "CA2213", Justification = "Freed by the open that replaces it, or by the teardown's Free(Clock).")]
     private WallClockSource? _ownedClock;
 
-    // Where a detached runtime was positioned, for the attach to seat the shared clocks on. Read
-    // and written by the reader only.
-    private TimeSpan _detachedOrigin;
-
     // What the open opened. Written by the open's action, before its outcome is queued; read by
     // the reader, the run's work and the diagnostics.
     private volatile IItemMedia? _media;
@@ -147,6 +143,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     // The awaited actions: one at a time, and the core waits for each before a dispose begins.
     private readonly WorkScope _actions = new();
+
+    // What the immediate actions of the step just taken threw, stepped as the item's fault before
+    // the next input. The reader's only.
+    private readonly Queue<Exception> _actionFaults = new();
     private volatile string? _actionUnderWay;
 
     // Which command, or the dispose (-1), last began waiting for a run's work: for Step.WaitingForRun.
@@ -553,6 +553,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 try
                 {
                     await StepAsync(arrival).ConfigureAwait(false);
+
+                    // An immediate action that threw is the item's fault, stepped before anything
+                    // queued behind the step, so no end of stream already queued reaches the owner
+                    // ahead of it (#824).
+                    while (_actionFaults.TryDequeue(out var fault))
+                        await StepAsync(new Fed(new Input.Faulted(fault))).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -612,9 +618,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (arrival is Called { Call: var stepped })
             stepped.Stepped = true;
 
-        // A dispose waits for the action under way, and cuts it short.
-        if (next.DisposeRequested && !state.DisposeRequested && next.Command is { } busy && _calls.TryGetValue(busy.Id, out var under))
-            CancelAction(under);
         if (next.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed)
             _disposeBegun.TrySetResult();
 
@@ -645,9 +648,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             attached.Done.TrySetResult();
     }
 
-    // Cuts short a command's action for the dispose. Its token's callbacks run here, on the
-    // reader, and only queue inputs or let the action end; one that throws is logged, and the
-    // others have all run.
+    // Cuts short a command's action, for the dispose or the item's fault. Its token's callbacks run
+    // here, on the reader, and only queue inputs or let the action end; one that throws is logged,
+    // and the others have all run.
     private void CancelAction(Call call)
     {
         try
@@ -656,7 +659,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Cutting short the item runtime's {Command} for its dispose threw.", call);
+            _logger.LogWarning(ex, "Cutting short the item runtime's {Command} threw.", call);
         }
     }
 
@@ -687,7 +690,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     // Where the position clock stands as a command arrives. A runtime prepared ahead leaves the
     // shared clock alone: it stands where the runtime was positioned.
-    private TimeSpan ClockPosition(ItemRuntimeState state) => state.Attached ? _clock.Position : _detachedOrigin;
+    private TimeSpan ClockPosition(ItemRuntimeState state) => state.Attached ? _clock.Position : state.DetachedOrigin;
 
     // Whether the position clock is paused as a command arrives. A detached runtime has not played,
     // so whether a reposition plays on does not depend on it.
@@ -751,10 +754,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         catch (Exception ex)
         {
             // The core takes these to succeed. One that throws, a clock's call among them, leaves
-            // the item where it cannot be trusted to play on, so it is reported as a fault of the
-            // item, which ends it; the command it belongs to goes on.
+            // the item where it cannot be trusted to play on, so the core is told of it as a fault
+            // of the item, which ends it.
             _logger.LogError(ex, "The item runtime's {Action} threw.", action);
-            TryReportWorkerFault(ex);
+            _actionFaults.Enqueue(ex);
         }
         finally
         {
@@ -799,9 +802,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 }
                 else
                 {
-                    // A detached runtime records the target, and the attach seats the shared clocks
-                    // on it (media-clips decision 8). The clock it owns it seats now.
-                    _detachedOrigin = seat.Target;
+                    // A detached runtime leaves the shared clocks alone: the core records the target,
+                    // and the attach seats them on it (media-clips decision 8). The clock it owns it
+                    // seats now.
                     _ownedClock?.SeekBaseline(seat.Target);
                 }
                 break;
@@ -831,9 +834,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 _clock.Resume();
                 _ownedClock?.Resume();
                 break;
-            case RuntimeAction.AttachClocks:
-                _clock.Seek(_detachedOrigin);
-                (_clockSource as ISeekableClock)?.SeekBaseline(_detachedOrigin);
+            case RuntimeAction.AttachClocks attach:
+                _clock.Seek(attach.Origin);
+                (_clockSource as ISeekableClock)?.SeekBaseline(attach.Origin);
+                break;
+            case RuntimeAction.CutShort cut:
+                if (_calls.TryGetValue(cut.Command, out var under))
+                    CancelAction(under);
                 break;
             case RuntimeAction.ReportFault fault:
                 ReportFault(fault);
@@ -1117,9 +1124,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             FormatAnnouncer = FormatAnnouncer,
             SinkFailures = SinkFailures,
             Callbacks = _callbacks,
-            // The pacer's own delivery fault is reported straight away, not through a run's work
-            // (#711): the pacer is no run's.
-            OnPacerFaulted = TryReportWorkerFault,
+            // The pacer's own delivery fault is the item's, not a run's (#711). It is queued for
+            // the core, which stops the run and reports it in order with what the work raises
+            // (#824). The post never blocks the pacer's thread.
+            OnPacerFaulted = ex => Post(new Input.Faulted(ex)),
             OnFlushingDecoders = token => OnFlushingDecoders?.Invoke(token),
             LoggerFactory = _loggerFactory,
         };
@@ -1192,6 +1200,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             ItemWork.Pump => "the demux pump",
             ItemWork.Graph => "the graph",
             ItemWork.Recovery => "the lateness-recovery walk",
+            ItemWork.None => "the item",
             _ => "the end of stream of an item with nothing to play",
         };
 
@@ -1306,10 +1315,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     }
 
     /// <summary>
-    /// Reports the fault the core asks for. A pump's or a graph's is the item's: its run is
-    /// cancelled at once, so the rest of the run does not wait on it (#713) — a pump parked on a
-    /// full decoder queue that a faulted graph no longer drains ends — then the shared device is
-    /// evicted if the GPU lost it and the fault goes to
+    /// Reports the fault the core asks for. A pump's, a graph's, or one from outside the run's work,
+    /// is the item's: the core has cancelled its run already (#713, #824), and the shared device is
+    /// evicted if the GPU lost it before the fault goes to
     /// <see cref="SessionCallbacks.OnWorkerFaulted"/>. A lateness-recovery walk's is recoverable:
     /// the walk is an optimisation, and playback carries on at whatever rung it had reached.
     /// </summary>
@@ -1324,7 +1332,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             return;
         }
 
-        CancelRun(fault.Run);
         ReportWorkerFault(error);
     }
 
@@ -1362,18 +1369,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             );
         }
         _callbacks.OnWorkerFaulted(ex);
-    }
-
-    private void TryReportWorkerFault(Exception ex)
-    {
-        try
-        {
-            ReportWorkerFault(ex);
-        }
-        catch (Exception reportFailure)
-        {
-            _logger.LogError(reportFailure, "Reporting the item's fault threw.");
-        }
     }
 
     /// <summary>

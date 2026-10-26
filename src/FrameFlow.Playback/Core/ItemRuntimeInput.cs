@@ -99,6 +99,12 @@ internal abstract record ItemRuntimeInput
 
     /// <summary>The video decoder decoded its first frame.</summary>
     public sealed record FirstFrameDecoded : ItemRuntimeInput;
+
+    /// <summary>
+    /// The item has faulted outside a run's work: in the pacer's own delivery, or in an immediate
+    /// action the core takes to succeed (#824).
+    /// </summary>
+    public sealed record Faulted(Exception Error) : ItemRuntimeInput;
 }
 
 /// <summary>How an awaited action finished.</summary>
@@ -281,8 +287,14 @@ internal abstract record ItemRuntimeAction
     /// <summary>Stop the position clock.</summary>
     public sealed record StopClock : ItemRuntimeAction;
 
-    /// <summary>Seat the shared clocks where the runtime was positioned while it was detached.</summary>
-    public sealed record AttachClocks : ItemRuntimeAction;
+    /// <summary>Seat the shared clocks on <paramref name="Origin"/>, where the runtime was positioned while it was detached.</summary>
+    public sealed record AttachClocks(TimeSpan Origin) : ItemRuntimeAction;
+
+    /// <summary>
+    /// Cut short the action of <paramref name="Command"/> that is under way, by cancelling the token
+    /// passed to it. Its outcome still comes back.
+    /// </summary>
+    public sealed record CutShort(int Command) : ItemRuntimeAction;
 
     /// <summary>
     /// The dispose has let go of everything the runtime shares with the playlist: its pacer is
@@ -297,7 +309,8 @@ internal abstract record ItemRuntimeAction
 
     /// <summary>
     /// Report the fault of run <paramref name="Run"/>'s <paramref name="Work"/>: a pump's or a
-    /// graph's as a worker fault, a recovery walk's as a recoverable error.
+    /// graph's as a worker fault, a recovery walk's as a recoverable error. A fault from outside the
+    /// run's work, <see cref="ItemRuntimeInput.Faulted"/>, is reported as a worker fault with no work.
     /// </summary>
     public sealed record ReportFault(int Run, ItemWork Work, Exception? Error) : ItemRuntimeAction;
 

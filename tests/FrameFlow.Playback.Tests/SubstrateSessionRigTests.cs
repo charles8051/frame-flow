@@ -630,10 +630,11 @@ public sealed class SubstrateSessionRigTests
     }
 
     [Fact]
-    public async Task AFaultBeforeTheRunsStartHasEnded_EndsTheWorkItKeptFromStarting()
+    public async Task AFaultBeforeTheRunsStartHasEnded_StopsTheRunOnceTheStartHasEnded()
     {
-        // The pump faults as it starts, and the fault stops the run before the graph is started.
-        // The graph the stopped scope will not start has ended, so nothing waits for it.
+        // The pump faults as it starts. The start goes on, so the graph starts, and the core stops
+        // the run once the start's outcome is in (#824): the warm-up rests, and nothing waits on a
+        // graph whose pump has gone.
         await using var rig = ItemRuntimeRig.Create();
         rig.Media.FaultOnStart = ItemWork.Pump;
         rig.Session.OnStartingWork = async work =>
@@ -648,7 +649,9 @@ public sealed class SubstrateSessionRigTests
         await rig.Session.DisposeAsync().AsTask().WaitAsync(Bound);
 
         Assert.Equal([rig.Media.StartFault], rig.WorkerFaults);
-        Assert.Equal(0, rig.Log.Count("Graph started"));
+        Assert.Equal(1, rig.Log.Count("Graph started"));
+        Assert.Equal(1, rig.Log.Count("Graph ended"));
+        Assert.Empty(rig.EndsOfStream);
         Assert.Empty(rig.Log.Violations);
     }
 
@@ -711,6 +714,28 @@ public sealed class SubstrateSessionRigTests
 
         var fault = await rig.WorkerFault.WaitAsync(Bound);
         Assert.Contains("cannot be paused", fault.Message);
+    }
+
+    [Fact]
+    public async Task AClockCallThatThrows_StopsTheRun_AndNoEndOfStreamFollowsTheFault()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        var graph = rig.Media.Latest(ItemWork.Graph);
+        rig.Clock.FailPause = true;
+
+        await rig.Session.PauseAsync().AsTask().WaitAsync(Bound);
+        await rig.WorkerFault.WaitAsync(Bound);
+
+        // The graph had delivered everything before it saw the stop: it ends as having run to its
+        // end. The core stopped the run with the fault, so the owner hears no end after it (#824).
+        graph.Finish();
+        await graph.Ended.WaitAsync(Bound);
+        await rig.Media.Latest(ItemWork.Pump).Ended.WaitAsync(Bound);
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(Bound);
+
+        Assert.True(graph.Token.IsCancellationRequested);
+        Assert.Empty(rig.EndsOfStream);
+        Assert.Single(rig.WorkerFaults);
     }
 
     [Fact]

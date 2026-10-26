@@ -76,11 +76,20 @@ namespace FrameFlow.Playback.Core;
 /// opened, positioned, warmed up and disposed.
 /// </para>
 /// <para>
+/// <b>A fault ends the item.</b> A pump's or a graph's fault, and one from outside the run's work
+/// (the pacer's delivery, or an immediate action that threw), are one input here (#824). The first
+/// is reported, and the run is stopped with it; no later fault is reported, and no end of stream is
+/// raised, so the owner hears the fault and never an end that follows it. The run stops at once, or,
+/// while an action of the command in progress is under way, as soon as none is. The command goes on
+/// as it would have: its caller hears how it went, and the owner hears of the fault. A
+/// lateness-recovery walk's fault is not the item's: it is reported, and the run plays on.
+/// </para>
+/// <para>
 /// <b>Disposal.</b> The dispose opens the gates of an attached runtime, cancels the run and waits
 /// for its work. Then it frees the pacer, deactivates the audio sink of an attached runtime or of
 /// one that activated it, stops the position clock of an attached runtime, and frees the rest in
 /// reverse allocation order. A command waiting for work completes Cancelled; one with an action
-/// under way ends when the action does, and the dispose begins then. A disposing or disposed
+/// under way has it cut short, ends when the action does, and the dispose begins then. A disposing or disposed
 /// runtime refuses every command.
 /// </para>
 /// </remarks>
@@ -94,6 +103,7 @@ internal static class ItemRuntimeProtocol
 
         var stepper = new Stepper(state);
         stepper.Handle(input);
+        stepper.StopIfOwed();
         return (stepper.State, stepper.Build());
     }
 
@@ -156,6 +166,9 @@ internal static class ItemRuntimeProtocol
                     break;
                 case ItemRuntimeInput.FirstFrameDecoded:
                     OnFirstFrame();
+                    break;
+                case ItemRuntimeInput.Faulted faulted:
+                    OnItemFault(State.Run, ItemWork.None, faulted.Error);
                     break;
             }
         }
@@ -354,7 +367,7 @@ internal static class ItemRuntimeProtocol
                 return;
 
             State = State with { Attached = true };
-            Emit(new ItemRuntimeAction.AttachClocks());
+            Emit(new ItemRuntimeAction.AttachClocks(State.DetachedOrigin));
         }
 
         private void OnDispose()
@@ -366,8 +379,9 @@ internal static class ItemRuntimeProtocol
             {
                 if (!command.IsWaiting)
                 {
-                    // The action under way is not abandoned: it ends, then the dispose begins.
+                    // The action under way is cut short, and the dispose begins once it has ended.
                     State = State with { DisposeRequested = true };
+                    Emit(new ItemRuntimeAction.CutShort(command.Id));
                     return;
                 }
 
@@ -778,7 +792,12 @@ internal static class ItemRuntimeProtocol
             var reposition = Command.Reposition!.Value;
             Emit(new ItemRuntimeAction.ResetDecoders());
             Emit(new ItemRuntimeAction.SeatClocks(reposition.Target, Shared: State.Attached));
-            State = State with { Status = ItemRunStatus.Idle, Floor = reposition.Target };
+            State = State with
+            {
+                Status = ItemRunStatus.Idle,
+                Floor = reposition.Target,
+                DetachedOrigin = State.Attached ? State.DetachedOrigin : reposition.Target,
+            };
 
             // Only an item that has played activated the sink, and only one that has played plays on.
             if (State.HasAudio && State.Played)
@@ -857,14 +876,16 @@ internal static class ItemRuntimeProtocol
             State = State with { Pending = State.Pending & ~ended.Work };
 
             if (ended.Ending == ItemWorkEnding.Faulted)
-                Emit(new ItemRuntimeAction.ReportFault(ended.Run, ended.Work, ended.Error));
+                OnWorkFault(ended);
 
             // A run that played to its end, and that nothing has stopped, has ended. One a stop
-            // overtook is not reported: the stop is replacing it.
+            // overtook is not reported: the stop is replacing it. Nor is one of an item that has
+            // faulted: its owner is ending it.
             if (
                 ended.Work is ItemWork.Graph or ItemWork.EmptyEnd
                 && ended.Ending == ItemWorkEnding.Completed
                 && State.Status == ItemRunStatus.Running
+                && !State.Faulted
             )
             {
                 Emit(new ItemRuntimeAction.RaiseEndOfStream(ended.Run));
@@ -891,9 +912,52 @@ internal static class ItemRuntimeProtocol
             State = State with { EndedBeforeStart = State.EndedBeforeStart | ended.Work };
 
             if (ended.Ending == ItemWorkEnding.Faulted)
-                Emit(new ItemRuntimeAction.ReportFault(ended.Run, ended.Work, ended.Error));
-            if (ended.Work is ItemWork.Graph or ItemWork.EmptyEnd && ended.Ending == ItemWorkEnding.Completed)
+                OnWorkFault(ended);
+            if (
+                ended.Work is ItemWork.Graph or ItemWork.EmptyEnd
+                && ended.Ending == ItemWorkEnding.Completed
+                && !State.Faulted
+            )
+            {
                 Emit(new ItemRuntimeAction.RaiseEndOfStream(ended.Run));
+            }
+        }
+
+        // A lateness-recovery walk's fault is recoverable: the walk is an optimisation, and the run
+        // plays on. Any other piece's is the item's.
+        private void OnWorkFault(ItemRuntimeInput.WorkEnded ended)
+        {
+            if (ended.Work == ItemWork.Recovery)
+                Emit(new ItemRuntimeAction.ReportFault(ended.Run, ended.Work, ended.Error));
+            else
+                OnItemFault(ended.Run, ended.Work, ended.Error);
+        }
+
+        // The item has faulted. Its first fault is reported, and no end of stream follows it (#824).
+        // Its run is stopped, so a pump parked on a full queue that a faulted graph no longer
+        // drains ends (#713): at once, or, while an action of the command in progress is under way,
+        // as soon as none is. The command goes on as it would have, and its caller hears how it
+        // went; the owner hears of the fault.
+        private void OnItemFault(int run, ItemWork work, Exception? error)
+        {
+            if (State.Phase == ItemRuntimePhase.Disposed || State.Faulted)
+                return;
+
+            State = State with { Faulted = true, StopOwed = true };
+            Emit(new ItemRuntimeAction.ReportFault(run, work, error));
+        }
+
+        // Stops the run a fault stopped, once no action is under way. A warm-up waiting for a first
+        // frame the stopped run will not decode is over, as when the run ends before one.
+        public void StopIfOwed()
+        {
+            if (!State.StopOwed || State.IsBusy)
+                return;
+
+            State = State with { StopOwed = false };
+            StopRun();
+            if (State.Command is { Stage: ItemCommandStage.WaitingForFirstFrame })
+                Finish();
         }
 
         private void OnFirstFrame()
@@ -1011,6 +1075,7 @@ internal static class ItemRuntimeProtocol
                 Emit(new ItemRuntimeAction.ReleaseSettle());
             Complete(command.Id, result);
             State = State with { Command = null };
+            StopIfOwed();
             if (State.DisposeRequested)
                 BeginDispose();
         }

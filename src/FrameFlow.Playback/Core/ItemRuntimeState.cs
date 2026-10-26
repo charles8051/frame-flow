@@ -326,6 +326,23 @@ internal sealed record ItemRuntimeState
     /// </summary>
     public bool DisposeRequested { get; init; }
 
+    /// <summary>
+    /// The item has faulted, and the fault is reported. Nothing more is: no later fault of the item,
+    /// and no end of stream (#824). The item's owner ends it.
+    /// </summary>
+    public bool Faulted { get; init; }
+
+    /// <summary>
+    /// The item has faulted and its run is not stopped yet: an action of the command in progress is
+    /// under way. The run is stopped as soon as none is.
+    /// </summary>
+    public bool StopOwed { get; init; }
+
+    /// <summary>
+    /// Where a detached runtime was last positioned, for its attach to seat the shared clocks on.
+    /// </summary>
+    public TimeSpan DetachedOrigin { get; init; }
+
     /// <summary>Whether the item has audio to play: an audio decoder, which exists only with a sink.</summary>
     public bool HasAudio => (Resources & ItemResources.AudioDecoder) != 0;
 
