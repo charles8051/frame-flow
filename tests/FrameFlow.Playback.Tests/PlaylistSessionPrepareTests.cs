@@ -108,6 +108,46 @@ public sealed class PlaylistSessionPrepareTests
     }
 
     [Fact]
+    public async Task ARequestAfterAFailedPreparation_PreparesTheItemAgain()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        var b = rig.PlaylistItem("b");
+        rig.Fail("b", ItemOp.Open, new InvalidOperationException("the network is down"));
+
+        Assert.False((await rig.Session.PrepareAsync(b, CancellationToken.None)).IsSuccess);
+        await rig.SettleAsync();
+
+        // The network is back: a retry opens the item again, not the failure kept from before.
+        var retried = await rig.Session.PrepareAsync(b, CancellationToken.None);
+        await rig.SettleAsync();
+
+        Assert.True(retried.IsSuccess, retried.Error?.Message);
+        Assert.Contains("b#2.Open", rig.TakeLog());
+    }
+
+    [Fact]
+    public async Task APrepareCancelledWhileItsOpenIsUnderWay_AbandonsThePreparation()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        var b = rig.PlaylistItem("b");
+        var open = rig.Hold("b", ItemOp.Open);
+        var disposal = rig.Hold("b", ItemOp.Dispose);
+        using var cancel = new CancellationTokenSource();
+
+        var prepare = rig.Session.PrepareAsync(b, cancel.Token);
+        await open.EnteredAsync();
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => prepare);
+
+        // The open is cancelled with it, and the runtime is released.
+        await disposal.EnteredAsync();
+        disposal.Release();
+        await rig.SettleAsync();
+        Assert.DoesNotContain("b#1.WarmUp", rig.TakeLog());
+    }
+
+    [Fact]
     public async Task ALaterRequest_ReplacesThePreparedItem_AndTheEarlierRequestFails()
     {
         await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b", "c");

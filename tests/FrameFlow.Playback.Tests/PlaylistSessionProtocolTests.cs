@@ -1502,6 +1502,171 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Null(after.Prepared);
     }
 
+    // ── A preparation's outcome (#811) ─────────────────────────────────────
+
+    [Fact]
+    public void AFailedPreparation_IsNotPromoted_AndTheItemOpensWithoutWaitingForIt()
+    {
+        var (state, queue, b, _) = PlayingOnA();
+
+        var drive = RunToIdle(
+            state with { Prepared = b, PreparedStatus = PlaylistPreparation.Failed },
+            queue,
+            new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun)
+        );
+
+        Assert.Equal(
+            [
+                typeof(PlaylistSessionAction.DisposeItem),
+                typeof(PlaylistSessionAction.OpenItem),
+                typeof(PlaylistSessionAction.WarmUpItem),
+                typeof(PlaylistSessionAction.PlayItem),
+            ],
+            drive.Awaited.Select(a => a.GetType())
+        );
+        Assert.Contains(drive.Actions, a => a is PlaylistSessionAction.DiscardPrepared);
+        Assert.Null(drive.State.Prepared);
+    }
+
+    [Fact]
+    public void ARequestForAnItemWhosePreparationFailed_PreparesItAgain()
+    {
+        var (state, queue, _, c) = PlayingOnA();
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedStatus = PlaylistPreparation.Failed },
+            queue,
+            new PlaylistSessionInput.PrepareRequested(c, Command)
+        );
+
+        Assert.Equal<PlaylistSessionAction>(
+            [new PlaylistSessionAction.DiscardPrepared(), new PlaylistSessionAction.PrepareItem(c, Command)],
+            step.Actions
+        );
+        Assert.Equal(PlaylistPreparation.Pending, after.PreparedStatus);
+        Assert.True(after.PreparedExplicitly);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ARequestForTheItemBeingPrepared_JoinsIt(bool ready)
+    {
+        var (state, queue, _, c) = PlayingOnA();
+        var status = ready ? PlaylistPreparation.Ready : PlaylistPreparation.Pending;
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedStatus = status },
+            queue,
+            new PlaylistSessionInput.PrepareRequested(c, Command)
+        );
+
+        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(c, Command)], step.Actions);
+        Assert.Equal(status, after.PreparedStatus);
+    }
+
+    [Fact]
+    public void AnAskedForPreparationThatFails_StopsHoldingAgainstTheNextItem()
+    {
+        var (state, queue, b, c) = PlayingOnA(prepareNext: true);
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedExplicitly = true },
+            queue,
+            new PlaylistSessionInput.PreparationSettled(c, PlaylistOutcome.Failed)
+        );
+
+        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(b, null)], step.Actions);
+        Assert.Same(b, after.Prepared);
+        Assert.False(after.PreparedExplicitly);
+    }
+
+    [Fact]
+    public void ANextItemWhosePreparationFails_IsNotPreparedAgainAndAgain()
+    {
+        var (state, queue, b, _) = PlayingOnA(prepareNext: true);
+
+        var (after, _, step) = Step(
+            state with { Prepared = b },
+            queue,
+            new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed)
+        );
+
+        Assert.Empty(step.Actions);
+        Assert.Same(b, after.Prepared);
+        Assert.Equal(PlaylistPreparation.Failed, after.PreparedStatus);
+
+        // Nor when the queue is edited.
+        var (_, _, edited) = Step(after, queue, new PlaylistSessionInput.QueueChanged());
+        Assert.Empty(edited.Actions);
+    }
+
+    [Fact]
+    public void AReadyPreparation_StaysFailedOnceItsRunHasFaulted()
+    {
+        var (state, queue, b, _) = PlayingOnA();
+        var prepared = state with { Prepared = b };
+
+        var (ready, _, _) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok));
+        Assert.Equal(PlaylistPreparation.Ready, ready.PreparedStatus);
+
+        var (faulted, _, _) = Step(ready, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed));
+        var (late, _, _) = Step(faulted, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok));
+        Assert.Equal(PlaylistPreparation.Failed, late.PreparedStatus);
+    }
+
+    [Fact]
+    public void ASettlementOfAnItemNoLongerPrepared_ChangesNothing()
+    {
+        var (state, queue, b, c) = PlayingOnA();
+        var prepared = state with { Prepared = c, PreparedExplicitly = true };
+
+        var (after, _, step) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed));
+
+        Assert.Empty(step.Actions);
+        Assert.Equal(prepared, after);
+    }
+
+    [Fact]
+    public void APrepareCancelledWhileItIsUnderWay_AbandonsIt_AndTheNextItemIsPreparedAgain()
+    {
+        var (state, queue, b, c) = PlayingOnA(prepareNext: true);
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedExplicitly = true },
+            queue,
+            new PlaylistSessionInput.PrepareCancelled(c, Command)
+        );
+
+        Assert.Equal<PlaylistSessionAction>(
+            [
+                new PlaylistSessionAction.DiscardPrepared(),
+                new PlaylistSessionAction.PrepareItem(b, null),
+                new PlaylistSessionAction.CompleteCommand(Command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null)),
+            ],
+            step.Actions
+        );
+        Assert.Same(b, after.Prepared);
+    }
+
+    [Fact]
+    public void APrepareCancelledOnceItIsReady_KeepsIt()
+    {
+        var (state, queue, _, c) = PlayingOnA();
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedExplicitly = true, PreparedStatus = PlaylistPreparation.Ready },
+            queue,
+            new PlaylistSessionInput.PrepareCancelled(c, Command)
+        );
+
+        Assert.Equal<PlaylistSessionAction>(
+            [new PlaylistSessionAction.CompleteCommand(Command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null))],
+            step.Actions
+        );
+        Assert.Same(c, after.Prepared);
+    }
+
     [Fact]
     public void Disposal_DiscardsThePreparedItem()
     {

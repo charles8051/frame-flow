@@ -81,6 +81,20 @@ internal abstract record PlaylistSessionInput
     /// <summary>The queue was edited, so what is prepared may no longer be what comes next.</summary>
     public sealed record QueueChanged : PlaylistSessionInput;
 
+    /// <summary>
+    /// The caller of the prepare <paramref name="Command"/> for <paramref name="Item"/> cancelled
+    /// it after the session took it (#811).
+    /// </summary>
+    public sealed record PrepareCancelled(PlaylistItem Item, int Command) : PlaylistSessionInput;
+
+    // ── Reported by the prepared runtime ────────────────────────────────────
+
+    /// <summary>
+    /// The preparation of <paramref name="Item"/> has settled, Ok or Failed, or the runtime
+    /// prepared for it faulted while it was detached, which is Failed (#811).
+    /// </summary>
+    public sealed record PreparationSettled(PlaylistItem Item, PlaylistOutcome Kind) : PlaylistSessionInput;
+
     // ── Fed back by the shell ───────────────────────────────────────────────
 
     /// <summary>The awaited action has finished.</summary>

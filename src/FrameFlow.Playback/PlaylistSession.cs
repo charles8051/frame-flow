@@ -296,10 +296,13 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     // ── Posting ─────────────────────────────────────────────────────────────
 
+    // A command the reader has taken is cancelled through its item operation's token, or, when
+    // cancelledAfterTaken is given, by posting what it makes, for the protocol to decide.
     private async ValueTask RunCommandAsync(
         Func<int, PlaylistSessionInput> create,
         CancellationToken cancellationToken,
-        bool cancellable = true
+        bool cancellable = true,
+        Func<int, PlaylistSessionInput>? cancelledAfterTaken = null
     )
     {
         // As a wait on a gate would, a command already cancelled has no effect.
@@ -318,10 +321,11 @@ internal sealed class PlaylistSession : IPlaybackSession
             PlaylistCommandResult result;
             using (
                 cancellable
-                    ? cancellationToken.Register(
-                        static c => ((PendingCommand)c!).CancelWhileWaiting(),
-                        command
-                    )
+                    ? cancellationToken.Register(() =>
+                    {
+                        if (!command.CancelWhileWaiting() && cancelledAfterTaken is not null)
+                            Post(cancelledAfterTaken(id));
+                    })
                     : default
             )
             {
@@ -541,6 +545,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             PlaylistSessionInput.Pause p => p.Command,
             PlaylistSessionInput.Seek s => s.Command,
             PlaylistSessionInput.Rewind r => r.Command,
+            PlaylistSessionInput.PrepareRequested p => p.Command,
             _ => null,
         };
 
@@ -843,7 +848,11 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         try
         {
-            await RunCommandAsync(id => new PlaylistSessionInput.PrepareRequested(item, id), cancellationToken)
+            await RunCommandAsync(
+                    id => new PlaylistSessionInput.PrepareRequested(item, id),
+                    cancellationToken,
+                    cancelledAfterTaken: id => new PlaylistSessionInput.PrepareCancelled(item, id)
+                )
                 .ConfigureAwait(false);
             return Result.Ok();
         }
@@ -938,6 +947,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         try
         {
             prepared.Settle(outcome, this);
+
+            // The protocol decides what the outcome means for the item (#811). A cancellation is
+            // its own doing: it discarded the preparation.
+            if (outcome.Kind != PlaylistOutcome.Cancelled)
+                Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, outcome.Kind));
 
             // A runtime that failed is not used, so it is released now rather than when the item
             // is next taken, or another is prepared.
@@ -1096,6 +1110,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 // faulting worker, which its disposal waits for.
                 if (prepared.HoldFault(ex))
                 {
+                    Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, PlaylistOutcome.Failed));
                     _ = Task.Run(() => ReleaseFaultedAsync(prepared));
                     return;
                 }
@@ -1266,20 +1281,21 @@ internal sealed class PlaylistSession : IPlaybackSession
         public bool TryClaim() => Interlocked.CompareExchange(ref _state, Claimed, Waiting) == Waiting;
 
         /// <summary>
-        /// Cancels a command the reader has not taken. A command the reader has taken is cancelled
-        /// through its item operation's token.
+        /// Cancels a command the reader has not taken, and says whether it did. A command the
+        /// reader has taken is cancelled through its item operation's token, or by an input.
         /// </summary>
-        public void CancelWhileWaiting()
+        public bool CancelWhileWaiting()
         {
-            if (Interlocked.CompareExchange(ref _state, Finished, Waiting) == Waiting)
-            {
-                _completion.TrySetResult(
-                    new PlaylistCommandResult(
-                        PlaylistOutcome.Cancelled,
-                        new OperationCanceledException(token)
-                    )
-                );
-            }
+            if (Interlocked.CompareExchange(ref _state, Finished, Waiting) != Waiting)
+                return false;
+
+            _completion.TrySetResult(
+                new PlaylistCommandResult(
+                    PlaylistOutcome.Cancelled,
+                    new OperationCanceledException(token)
+                )
+            );
+            return true;
         }
 
         public void Complete(PlaylistCommandResult result)

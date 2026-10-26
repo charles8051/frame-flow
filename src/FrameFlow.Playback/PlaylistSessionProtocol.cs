@@ -178,6 +178,12 @@ internal static class PlaylistSessionProtocol
                 case PlaylistSessionInput.QueueChanged:
                     OnQueueChanged();
                     break;
+                case PlaylistSessionInput.PrepareCancelled c:
+                    OnPrepareCancelled(c.Item, c.Command);
+                    break;
+                case PlaylistSessionInput.PreparationSettled s:
+                    OnPreparationSettled(s.Item, s.Kind);
+                    break;
                 default:
                     // An outcome or continue with nothing under way means nothing.
                     Done();
@@ -968,7 +974,18 @@ internal static class PlaylistSessionProtocol
             State = State with { Generation = State.Generation + 1 };
 
             // The item was prepared ahead: its runtime is open, positioned and warm, and takes over
-            // instead of a new one opening (media-clips decision 8).
+            // instead of a new one opening (media-clips decision 8). One whose preparation failed is
+            // not waited for: the item is opened as it would have been without one (#811).
+            if (
+                State.Prepared is { } failed
+                && ReferenceEquals(failed, pending.Item)
+                && State.PreparedStatus == PlaylistPreparation.Failed
+            )
+            {
+                DiscardPrepared();
+                Emit(new PlaylistSessionAction.Log(PlaylistSessionLog.PreparedFellBack, Source: failed.Source.DisplayName));
+            }
+
             if (State.Prepared is { } prepared && ReferenceEquals(prepared, pending.Item))
             {
                 State = State with { Prepared = null, PreparedExplicitly = false };
@@ -1315,8 +1332,60 @@ internal static class PlaylistSessionProtocol
                 return;
             }
 
-            State = State with { Prepared = item, PreparedExplicitly = true };
+            // A request for the item being prepared joins it, and one for an item whose preparation
+            // failed prepares it again (#811). Any other preparation gives way.
+            var joins = ReferenceEquals(State.Prepared, item) && State.PreparedStatus != PlaylistPreparation.Failed;
+            var status = joins ? State.PreparedStatus : PlaylistPreparation.Pending;
+            if (!joins)
+                DiscardPrepared();
+
+            State = State with { Prepared = item, PreparedExplicitly = true, PreparedStatus = status };
             Emit(new PlaylistSessionAction.PrepareItem(item, command));
+            Done();
+        }
+
+        // The caller gave up on its prepare after the session took it. A preparation it asked for
+        // that is still under way is abandoned, and the session prepares the next item again in its
+        // place (#811); one that is ready is kept.
+        private void OnPrepareCancelled(PlaylistItem item, int command)
+        {
+            if (
+                !Stopping
+                && ReferenceEquals(State.Prepared, item)
+                && State.PreparedExplicitly
+                && State.PreparedStatus == PlaylistPreparation.Pending
+            )
+            {
+                DiscardPrepared();
+                PrepareAhead();
+            }
+
+            Complete(command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null));
+        }
+
+        // How the preparation of item settled, as the shell reports it. A report about an item no
+        // longer prepared is stale. A preparation that failed is not used, and not retried until it
+        // is asked for again: it no longer holds against the next item, but the next item, if it is
+        // this one, stays failed rather than being prepared over and over (#811).
+        private void OnPreparationSettled(PlaylistItem item, PlaylistOutcome kind)
+        {
+            if (!ReferenceEquals(State.Prepared, item))
+            {
+                Done();
+                return;
+            }
+
+            if (kind == PlaylistOutcome.Ok)
+            {
+                // A fault while it was detached may have been reported first: it stays failed.
+                if (State.PreparedStatus == PlaylistPreparation.Pending)
+                    State = State with { PreparedStatus = PlaylistPreparation.Ready };
+            }
+            else
+            {
+                State = State with { PreparedStatus = PlaylistPreparation.Failed, PreparedExplicitly = false };
+                PrepareAhead();
+            }
             Done();
         }
 
@@ -1360,7 +1429,12 @@ internal static class PlaylistSessionProtocol
                 return;
             }
 
-            State = State with { Prepared = next, PreparedExplicitly = false };
+            State = State with
+            {
+                Prepared = next,
+                PreparedExplicitly = false,
+                PreparedStatus = PlaylistPreparation.Pending,
+            };
             Emit(new PlaylistSessionAction.PrepareItem(next, Command: null));
         }
 
