@@ -161,6 +161,32 @@ internal readonly record struct PlaybackDecision(
 internal readonly record struct PlaybackInputs(bool HasSession = true);
 
 /// <summary>
+/// Which session, and which run of it, raised an internal trigger, or which is current when the
+/// dispatch loop handles it.
+/// </summary>
+/// <param name="Generation">The generation the session was published under.</param>
+/// <param name="Run">
+/// The session's run number, as <see cref="IPlaybackSession.RunNumber"/> reports it.
+/// </param>
+internal readonly record struct TriggerOrigin(int Generation, int Run);
+
+/// <summary>Whether an internal trigger still applies when the dispatch loop handles it.</summary>
+internal enum TriggerFreshness
+{
+    /// <summary>Raised by the current run of the current session.</summary>
+    Current,
+
+    /// <summary>Raised by a session the controller has disposed since.</summary>
+    StaleSession,
+
+    /// <summary>
+    /// An end-of-stream raised by a run a seek or rewind has replaced since, on the current
+    /// session.
+    /// </summary>
+    StaleRun,
+}
+
+/// <summary>
 /// The primary playback state machine expressed as a pure Mealy core:
 /// <c>δ : (state, trigger, inputs) → (state', action[])</c>. This is the "sibling pattern
 /// one layer up" ADR-0055 names — the 522-LOC transition table at the centre of the repo's
@@ -422,6 +448,33 @@ internal static class PlaybackProtocol
                 PlaybackAction.Of(PlaybackActionKind.StartTicker),
                 PlaybackAction.Of(PlaybackActionKind.PlaySession)
             );
+    }
+
+    /// <summary>
+    /// Whether an internal trigger raised by <paramref name="raisedBy"/> still applies once the
+    /// dispatch loop handles it under <paramref name="current"/>.
+    /// </summary>
+    /// <remarks>
+    /// A trigger from another session generation is stale. A seek does not replace the session,
+    /// so the generation cannot tell an end-of-stream raised before a seek from one raised after
+    /// it (#195). <see cref="PlaybackTrigger.LastFrameRendered"/> is also compared by run: one
+    /// from a run the seek has replaced is stale. Other triggers report on the session, not the
+    /// run, and are compared by generation only.
+    /// </remarks>
+    public static TriggerFreshness Freshness(
+        PlaybackTrigger trigger,
+        TriggerOrigin raisedBy,
+        TriggerOrigin current
+    )
+    {
+        if (raisedBy.Generation != current.Generation)
+        {
+            return TriggerFreshness.StaleSession;
+        }
+
+        return trigger == PlaybackTrigger.LastFrameRendered && raisedBy.Run != current.Run
+            ? TriggerFreshness.StaleRun
+            : TriggerFreshness.Current;
     }
 
     /// <summary>

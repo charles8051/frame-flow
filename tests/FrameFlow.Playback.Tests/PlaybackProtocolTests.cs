@@ -821,4 +821,77 @@ public class PlaybackProtocolTests
         Assert.Equal(a.NextState, b.NextState);
         Assert.Equal(a.Actions.Select(x => x.Kind), b.Actions.Select(x => x.Kind));
     }
+
+    // ── Trigger freshness (#195) ────────────────────────────────────────────
+
+    [Fact]
+    public void Freshness_EndOfStreamFromARunASeekReplaced_IsStale()
+    {
+        // A seek keeps the session and starts a new run. An end-of-stream the old run raised
+        // must not end playback at the position the seek moved to.
+        var freshness = PlaybackProtocol.Freshness(
+            PlaybackTrigger.LastFrameRendered,
+            raisedBy: new TriggerOrigin(Generation: 1, Run: 1),
+            current: new TriggerOrigin(Generation: 1, Run: 2)
+        );
+
+        Assert.Equal(TriggerFreshness.StaleRun, freshness);
+    }
+
+    [Fact]
+    public void Freshness_EndOfStreamFromTheCurrentRun_IsCurrent()
+    {
+        var freshness = PlaybackProtocol.Freshness(
+            PlaybackTrigger.LastFrameRendered,
+            raisedBy: new TriggerOrigin(Generation: 1, Run: 2),
+            current: new TriggerOrigin(Generation: 1, Run: 2)
+        );
+
+        Assert.Equal(TriggerFreshness.Current, freshness);
+    }
+
+    [Fact]
+    public void Freshness_TriggerFromAnotherSession_IsStaleSession()
+    {
+        foreach (
+            var trigger in new[]
+            {
+                PlaybackTrigger.LastFrameRendered,
+                PlaybackTrigger.FatalError,
+                PlaybackTrigger.BufferUnderrun,
+            }
+        )
+        {
+            var freshness = PlaybackProtocol.Freshness(
+                trigger,
+                raisedBy: new TriggerOrigin(Generation: 1, Run: 2),
+                current: new TriggerOrigin(Generation: 2, Run: 2)
+            );
+
+            Assert.Equal(TriggerFreshness.StaleSession, freshness);
+        }
+    }
+
+    [Fact]
+    public void Freshness_OtherTriggersFromAnEarlierRun_AreCurrent()
+    {
+        // A fault or buffering report is about the session, which the seek kept.
+        foreach (
+            var trigger in new[]
+            {
+                PlaybackTrigger.FatalError,
+                PlaybackTrigger.BufferUnderrun,
+                PlaybackTrigger.BufferReady,
+            }
+        )
+        {
+            var freshness = PlaybackProtocol.Freshness(
+                trigger,
+                raisedBy: new TriggerOrigin(Generation: 1, Run: 1),
+                current: new TriggerOrigin(Generation: 1, Run: 2)
+            );
+
+            Assert.Equal(TriggerFreshness.Current, freshness);
+        }
+    }
 }

@@ -195,6 +195,12 @@ internal sealed partial class PlaybackControllerCore
 
     [LoggerMessage(
         Level = LogLevel.Debug,
+        Message = "Dropping internal trigger {Trigger} from run {Run}; a seek or rewind has started run {CurrentRun}"
+    )]
+    private partial void LogStaleRunTrigger(string trigger, int run, int currentRun);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
         Message = "Current item change wake-up not queued — channel full or closed; the update applies before the next dispatched command"
     )]
     private partial void LogCurrentItemChangeWakeDropped();
