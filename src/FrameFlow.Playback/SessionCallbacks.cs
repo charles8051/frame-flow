@@ -26,7 +26,11 @@ namespace FrameFlow.Playback;
 /// rather than performing synchronous state-machine work.
 /// </para>
 /// </remarks>
-/// <param name="OnEndOfStream">Invoked when the pipeline reaches end-of-stream.</param>
+/// <param name="OnEndOfStream">
+/// Invoked when the pipeline reaches end-of-stream, while the run that ended is still the
+/// session's current one. The receiver reads <see cref="IPlaybackSession.RunNumber"/> inside the
+/// callback to learn which run ended (#195).
+/// </param>
 /// <param name="OnWorkerFaulted">Invoked when a pipeline worker faults with an unrecoverable error.</param>
 /// <param name="OnBufferReady">Invoked when the buffer reaches the ready threshold.</param>
 /// <param name="OnBufferUnderrun">Invoked when the buffer underruns during playback.</param>

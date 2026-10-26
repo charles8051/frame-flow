@@ -64,7 +64,11 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// The controller reads it when the session reports end-of-stream, and again when it handles
-    /// the report, and drops the report if the two differ (#195). An item runtime must report it.
+    /// the report, and drops the report if the two differ (#195). A session that reports a run
+    /// therefore invokes <see cref="SessionCallbacks.OnEndOfStream"/> while the run that ended is
+    /// the current one, before a seek or rewind can advance this number. It must not defer the
+    /// callback past that point. <see cref="SubstrateSession"/> raises it in step order, before it
+    /// steps anything else. An item runtime must report it.
     /// A session that never reports a stale end-of-stream itself keeps the default: a playlist
     /// session drops its items' stale ones, and its own end-of-stream must stand, since the seek
     /// queued behind it may have no item left to reposition.
