@@ -1540,7 +1540,7 @@ public sealed class PlaylistSessionProtocolTests
         );
 
         Assert.Equal<PlaylistSessionAction>(
-            [new PlaylistSessionAction.DiscardPrepared(), new PlaylistSessionAction.PrepareItem(c, Command)],
+            [new PlaylistSessionAction.DiscardPrepared(), new PlaylistSessionAction.PrepareItem(c, Command, 1)],
             step.Actions
         );
         Assert.Equal(PlaylistPreparation.Pending, after.PreparedStatus);
@@ -1561,7 +1561,7 @@ public sealed class PlaylistSessionProtocolTests
             new PlaylistSessionInput.PrepareRequested(c, Command)
         );
 
-        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(c, Command)], step.Actions);
+        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(c, Command, 0)], step.Actions);
         Assert.Equal(status, after.PreparedStatus);
     }
 
@@ -1573,10 +1573,10 @@ public sealed class PlaylistSessionProtocolTests
         var (after, _, step) = Step(
             state with { Prepared = c, PreparedExplicitly = true },
             queue,
-            new PlaylistSessionInput.PreparationSettled(c, PlaylistOutcome.Failed)
+            new PlaylistSessionInput.PreparationSettled(c, PlaylistOutcome.Failed, 0)
         );
 
-        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(b, null)], step.Actions);
+        Assert.Equal<PlaylistSessionAction>([new PlaylistSessionAction.PrepareItem(b, null, 1)], step.Actions);
         Assert.Same(b, after.Prepared);
         Assert.False(after.PreparedExplicitly);
     }
@@ -1589,7 +1589,7 @@ public sealed class PlaylistSessionProtocolTests
         var (after, _, step) = Step(
             state with { Prepared = b },
             queue,
-            new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed)
+            new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed, 0)
         );
 
         Assert.Empty(step.Actions);
@@ -1607,11 +1607,11 @@ public sealed class PlaylistSessionProtocolTests
         var (state, queue, b, _) = PlayingOnA();
         var prepared = state with { Prepared = b };
 
-        var (ready, _, _) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok));
+        var (ready, _, _) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok, 0));
         Assert.Equal(PlaylistPreparation.Ready, ready.PreparedStatus);
 
-        var (faulted, _, _) = Step(ready, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed));
-        var (late, _, _) = Step(faulted, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok));
+        var (faulted, _, _) = Step(ready, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed, 0));
+        var (late, _, _) = Step(faulted, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Ok, 0));
         Assert.Equal(PlaylistPreparation.Failed, late.PreparedStatus);
     }
 
@@ -1621,10 +1621,59 @@ public sealed class PlaylistSessionProtocolTests
         var (state, queue, b, c) = PlayingOnA();
         var prepared = state with { Prepared = c, PreparedExplicitly = true };
 
-        var (after, _, step) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed));
+        var (after, _, step) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(b, PlaylistOutcome.Failed, 0));
 
         Assert.Empty(step.Actions);
         Assert.Equal(prepared, after);
+    }
+
+    [Fact]
+    public void ASettlementOfAPreparationSinceReplaced_ChangesNothing()
+    {
+        var (state, queue, _, c) = PlayingOnA();
+
+        // c's first preparation was replaced by a second of the same item, and the first fails late.
+        var prepared = state with { Prepared = c, PreparedExplicitly = true, PreparedId = 2 };
+        var (after, _, step) = Step(prepared, queue, new PlaylistSessionInput.PreparationSettled(c, PlaylistOutcome.Failed, 1));
+
+        Assert.Empty(step.Actions);
+        Assert.Equal(prepared, after);
+    }
+
+    [Fact]
+    public void APrepareCancelledWhileAnotherCallerWaitsOnTheSamePreparation_KeepsIt()
+    {
+        var (state, queue, _, c) = PlayingOnA(prepareNext: true);
+        const int Other = Command + 1;
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedExplicitly = true, PreparedWaiters = [Command, Other] },
+            queue,
+            new PlaylistSessionInput.PrepareCancelled(c, Command)
+        );
+
+        Assert.Equal<PlaylistSessionAction>(
+            [new PlaylistSessionAction.CompleteCommand(Command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null))],
+            step.Actions
+        );
+        Assert.Same(c, after.Prepared);
+        Assert.True(after.PreparedExplicitly);
+        Assert.Equal([Other], after.PreparedWaiters);
+    }
+
+    [Fact]
+    public void ACancellationOfACommandThatNoLongerWaits_KeepsTheNewerPreparation()
+    {
+        var (state, queue, _, c) = PlayingOnA(prepareNext: true);
+
+        var newer = state with { Prepared = c, PreparedExplicitly = true, PreparedId = 2, PreparedWaiters = [Command + 1] };
+        var (after, _, step) = Step(newer, queue, new PlaylistSessionInput.PrepareCancelled(c, Command));
+
+        Assert.Equal<PlaylistSessionAction>(
+            [new PlaylistSessionAction.CompleteCommand(Command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null))],
+            step.Actions
+        );
+        Assert.Equal(newer, after);
     }
 
     [Fact]
@@ -1633,15 +1682,14 @@ public sealed class PlaylistSessionProtocolTests
         var (state, queue, b, c) = PlayingOnA(prepareNext: true);
 
         var (after, _, step) = Step(
-            state with { Prepared = c, PreparedExplicitly = true },
+            state with { Prepared = c, PreparedExplicitly = true, PreparedWaiters = [Command] },
             queue,
             new PlaylistSessionInput.PrepareCancelled(c, Command)
         );
 
         Assert.Equal<PlaylistSessionAction>(
             [
-                new PlaylistSessionAction.DiscardPrepared(),
-                new PlaylistSessionAction.PrepareItem(b, null),
+                new PlaylistSessionAction.PrepareItem(b, null, 1),
                 new PlaylistSessionAction.CompleteCommand(Command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null)),
             ],
             step.Actions

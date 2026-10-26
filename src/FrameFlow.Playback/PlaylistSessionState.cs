@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Immutable;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback;
@@ -143,6 +144,18 @@ internal sealed record PlaylistSessionState
     /// Where the preparation of <see cref="Prepared"/> stands, as the shell last reported it (#811).
     /// </summary>
     public PlaylistPreparation PreparedStatus { get; init; }
+
+    /// <summary>
+    /// The number of the preparation of <see cref="Prepared"/>. Each new preparation takes the next,
+    /// so a report from one the session has since replaced, even of the same item, is told apart.
+    /// </summary>
+    public int PreparedId { get; init; }
+
+    /// <summary>
+    /// The prepare commands waiting on the preparation while it is under way. The caller's
+    /// cancellation abandons the preparation only once none is left.
+    /// </summary>
+    public ImmutableHashSet<int> PreparedWaiters { get; init; } = ImmutableHashSet<int>.Empty;
 
     /// <summary>Whether the session prepares the item the queue would take next.</summary>
     public bool PrepareNext { get; init; }

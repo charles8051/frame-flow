@@ -182,7 +182,7 @@ internal static class PlaylistSessionProtocol
                     OnPrepareCancelled(c.Item, c.Command);
                     break;
                 case PlaylistSessionInput.PreparationSettled s:
-                    OnPreparationSettled(s.Item, s.Kind);
+                    OnPreparationSettled(s.Item, s.Kind, s.Preparation);
                     break;
                 default:
                     // An outcome or continue with nothing under way means nothing.
@@ -1335,45 +1335,66 @@ internal static class PlaylistSessionProtocol
             // A request for the item being prepared joins it, and one for an item whose preparation
             // failed prepares it again (#811). Any other preparation gives way.
             var joins = ReferenceEquals(State.Prepared, item) && State.PreparedStatus != PlaylistPreparation.Failed;
-            var status = joins ? State.PreparedStatus : PlaylistPreparation.Pending;
             if (!joins)
+            {
                 DiscardPrepared();
+                State = State with
+                {
+                    PreparedStatus = PlaylistPreparation.Pending,
+                    PreparedId = State.PreparedId + 1,
+                };
+            }
 
-            State = State with { Prepared = item, PreparedExplicitly = true, PreparedStatus = status };
-            Emit(new PlaylistSessionAction.PrepareItem(item, command));
+            State = State with
+            {
+                Prepared = item,
+                PreparedExplicitly = true,
+                PreparedWaiters =
+                    State.PreparedStatus == PlaylistPreparation.Pending ? State.PreparedWaiters.Add(command) : State.PreparedWaiters,
+            };
+            Emit(new PlaylistSessionAction.PrepareItem(item, command, State.PreparedId));
             Done();
         }
 
-        // The caller gave up on its prepare after the session took it. A preparation it asked for
-        // that is still under way is abandoned, and the session prepares the next item again in its
-        // place (#811); one that is ready is kept.
+        // The caller gave up on its prepare after the session took it. Once no caller waits on a
+        // preparation still under way, it no longer holds against the next item: the session
+        // prepares the next item in its place, which keeps it if it is that item (#811). One that is
+        // ready is kept, and a cancellation of a command that no longer waits on the current
+        // preparation changes nothing.
         private void OnPrepareCancelled(PlaylistItem item, int command)
         {
             if (
                 !Stopping
                 && ReferenceEquals(State.Prepared, item)
-                && State.PreparedExplicitly
                 && State.PreparedStatus == PlaylistPreparation.Pending
+                && State.PreparedWaiters.Contains(command)
             )
             {
-                DiscardPrepared();
-                PrepareAhead();
+                State = State with { PreparedWaiters = State.PreparedWaiters.Remove(command) };
+                if (State.PreparedWaiters.IsEmpty && State.PreparedExplicitly)
+                {
+                    State = State with { PreparedExplicitly = false };
+                    PrepareAhead();
+                }
             }
 
             Complete(command, new PlaylistCommandResult(PlaylistOutcome.Cancelled, null));
         }
 
         // How the preparation of item settled, as the shell reports it. A report about an item no
-        // longer prepared is stale. A preparation that failed is not used, and not retried until it
+        // longer prepared, or about a preparation of it the session has since replaced, is stale. A preparation that failed is not used, and not retried until it
         // is asked for again: it no longer holds against the next item, but the next item, if it is
         // this one, stays failed rather than being prepared over and over (#811).
-        private void OnPreparationSettled(PlaylistItem item, PlaylistOutcome kind)
+        private void OnPreparationSettled(PlaylistItem item, PlaylistOutcome kind, int preparation)
         {
-            if (!ReferenceEquals(State.Prepared, item))
+            if (!ReferenceEquals(State.Prepared, item) || preparation != State.PreparedId)
             {
                 Done();
                 return;
             }
+
+            // Its callers have their answer from the shell.
+            State = State with { PreparedWaiters = ImmutableHashSet<int>.Empty };
 
             if (kind == PlaylistOutcome.Ok)
             {
@@ -1434,15 +1455,22 @@ internal static class PlaylistSessionProtocol
                 Prepared = next,
                 PreparedExplicitly = false,
                 PreparedStatus = PlaylistPreparation.Pending,
+                PreparedId = State.PreparedId + 1,
+                PreparedWaiters = ImmutableHashSet<int>.Empty,
             };
-            Emit(new PlaylistSessionAction.PrepareItem(next, Command: null));
+            Emit(new PlaylistSessionAction.PrepareItem(next, Command: null, State.PreparedId));
         }
 
         private void DiscardPrepared()
         {
             if (State.Prepared is null)
                 return;
-            State = State with { Prepared = null, PreparedExplicitly = false };
+            State = State with
+            {
+                Prepared = null,
+                PreparedExplicitly = false,
+                PreparedWaiters = ImmutableHashSet<int>.Empty,
+            };
             Emit(new PlaylistSessionAction.DiscardPrepared());
         }
 

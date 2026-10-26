@@ -90,10 +90,11 @@ internal abstract record PlaylistSessionInput
     // ── Reported by the prepared runtime ────────────────────────────────────
 
     /// <summary>
-    /// The preparation of <paramref name="Item"/> has settled, Ok or Failed, or the runtime
-    /// prepared for it faulted while it was detached, which is Failed (#811).
+    /// Preparation <paramref name="Preparation"/> of <paramref name="Item"/> has settled, Ok or
+    /// Failed, or the runtime prepared for it faulted while it was detached, which is Failed (#811).
     /// </summary>
-    public sealed record PreparationSettled(PlaylistItem Item, PlaylistOutcome Kind) : PlaylistSessionInput;
+    public sealed record PreparationSettled(PlaylistItem Item, PlaylistOutcome Kind, int Preparation)
+        : PlaylistSessionInput;
 
     // ── Fed back by the shell ───────────────────────────────────────────────
 
@@ -214,9 +215,11 @@ internal abstract record PlaylistSessionAction
 
     /// <summary>
     /// Prepare a runtime for <paramref name="Item"/> in the background, detached, replacing any
-    /// other prepared runtime. A <paramref name="Command"/> completes when it is ready.
+    /// other prepared runtime. A <paramref name="Command"/> completes when it is ready. The
+    /// <paramref name="Preparation"/> it is part of is joined if it is the one under way, and
+    /// started otherwise.
     /// </summary>
-    public sealed record PrepareItem(PlaylistItem Item, int? Command) : PlaylistSessionAction;
+    public sealed record PrepareItem(PlaylistItem Item, int? Command, int Preparation) : PlaylistSessionAction;
 
     /// <summary>Dispose the prepared runtime, if there is one, in the background.</summary>
     public sealed record DiscardPrepared : PlaylistSessionAction;

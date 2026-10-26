@@ -573,7 +573,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 break;
 
             case PlaylistSessionAction.PrepareItem prepare:
-                Prepare(prepare.Item, prepare.Command);
+                Prepare(prepare.Item, prepare.Command, prepare.Preparation);
                 break;
 
             case PlaylistSessionAction.DiscardPrepared:
@@ -898,11 +898,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
     }
 
-    // Starts preparing item in the background, detached, replacing any other prepared runtime. A
-    // request for the item already being prepared joins it.
-    private void Prepare(PlaylistItem item, int? command)
+    // Starts preparation number id of item in the background, detached, replacing any other
+    // prepared runtime. A request for the preparation under way joins it.
+    private void Prepare(PlaylistItem item, int? command, int id)
     {
-        if (_prepared is { } existing && ReferenceEquals(existing.Item, item))
+        if (_prepared is { } existing && existing.Id == id)
         {
             if (command is { } joining)
                 existing.Await(joining, this);
@@ -910,10 +910,10 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
 
         DiscardPrepared();
-        var prepared = new PreparedRuntime(item);
+        var prepared = new PreparedRuntime(item, id);
         prepared.Runtime = _itemFactory.CreatePreparedItem(_clock, CreatePreparedCallbacks(prepared));
-        if (command is { } id)
-            prepared.Await(id, this);
+        if (command is { } waiting)
+            prepared.Await(waiting, this);
         _ = Task.Run(() => PrepareRuntimeAsync(prepared));
         _prepared = prepared;
     }
@@ -951,7 +951,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             // The protocol decides what the outcome means for the item (#811). A cancellation is
             // its own doing: it discarded the preparation.
             if (outcome.Kind != PlaylistOutcome.Cancelled)
-                Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, outcome.Kind));
+                Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, outcome.Kind, prepared.Id));
 
             // A runtime that failed is not used, so it is released now rather than when the item
             // is next taken, or another is prepared.
@@ -1110,7 +1110,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 // faulting worker, which its disposal waits for.
                 if (prepared.HoldFault(ex))
                 {
-                    Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, PlaylistOutcome.Failed));
+                    Deliver(new PlaylistSessionInput.PreparationSettled(prepared.Item, PlaylistOutcome.Failed, prepared.Id));
                     _ = Task.Run(() => ReleaseFaultedAsync(prepared));
                     return;
                 }
@@ -1147,13 +1147,16 @@ internal sealed class PlaylistSession : IPlaybackSession
     }
 
     /// <summary>A runtime prepared ahead for one item, and the commands waiting on it.</summary>
-    private sealed class PreparedRuntime(PlaylistItem item)
+    private sealed class PreparedRuntime(PlaylistItem item, int id)
     {
         private readonly Lock _gate = new();
         private readonly List<int> _waiting = [];
         private PlaylistSessionInput.Outcome? _settled;
 
         public PlaylistItem Item { get; } = item;
+
+        // The protocol's number for this preparation, which its reports carry.
+        public int Id { get; } = id;
 
         public IPlaylistItemRuntime Runtime { get; set; } = null!;
 
