@@ -546,7 +546,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private void PostInternalAsync(
         PlaybackTrigger trigger,
         int sessionGeneration,
-        Exception? error = null
+        Exception? error = null,
+        int run = 0
     )
     {
         if (_dispose.HasBegun)
@@ -559,6 +560,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         {
             Error = error,
             SessionGeneration = sessionGeneration,
+            Run = run,
         };
         if (!_commandChannel.Writer.TryWrite(cmd))
         {
@@ -854,7 +856,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private SessionCallbacks CreateSessionCallbacks(int sessionGeneration) =>
         new(
             OnEndOfStream: () =>
-                PostInternalAsync(PlaybackTrigger.LastFrameRendered, sessionGeneration),
+                PostInternalAsync(
+                    PlaybackTrigger.LastFrameRendered,
+                    sessionGeneration,
+                    run: RunOf(sessionGeneration)
+                ),
             OnWorkerFaulted: ex =>
                 PostInternalAsync(PlaybackTrigger.FatalError, sessionGeneration, ex),
             OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady, sessionGeneration),
@@ -867,6 +873,18 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             OnItemFailed: (item, failure, error) =>
                 PostRecoverableError(error, sessionGeneration, item, failure)
         );
+
+    /// <summary>
+    /// The current run of the session published under <paramref name="sessionGeneration"/>, read
+    /// when that session raises end-of-stream. The session raises it while the run is current, so
+    /// this is the run that ended. Zero when another session is published; the dispatch loop
+    /// drops that trigger by its generation.
+    /// </summary>
+    private int RunOf(int sessionGeneration)
+    {
+        var binding = Volatile.Read(ref _sessionBinding);
+        return binding.Generation == sessionGeneration ? binding.Session?.RunNumber ?? 0 : 0;
+    }
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
     //
@@ -1566,13 +1584,29 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         // alone cannot tell: replay from Ended unloads and reloads inside one
                         // command, so a fault or end-of-stream the old session posted during
                         // its teardown is dispatched while the new session is loaded.
-                        if (itc.SessionGeneration != _sessionBinding.Generation)
+                        // An end-of-stream from a run a seek has replaced is dropped too, or it
+                        // ends playback at the position the seek moved to (#195).
+                        var current = new TriggerOrigin(
+                            _sessionBinding.Generation,
+                            _sessionBinding.Session?.RunNumber ?? 0
+                        );
+                        var freshness = PlaybackProtocol.Freshness(
+                            itc.Trigger,
+                            new TriggerOrigin(itc.SessionGeneration, itc.Run),
+                            current
+                        );
+                        if (freshness == TriggerFreshness.StaleSession)
                         {
                             LogStaleSessionTrigger(
                                 itc.Trigger.ToString(),
                                 itc.SessionGeneration,
-                                _sessionBinding.Generation
+                                current.Generation
                             );
+                            break;
+                        }
+                        if (freshness == TriggerFreshness.StaleRun)
+                        {
+                            LogStaleRunTrigger(itc.Trigger.ToString(), itc.Run, current.Run);
                             break;
                         }
 
@@ -1605,8 +1639,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                             // Not permitted from this state — e.g. LastFrameRendered after
                             // the user unloaded, or while paused under RepeatMode.One. Drop it.
                             // (An end-of-stream that reaches Paused otherwise ends playback.
-                            // Nothing yet tells one raised before a later seek from a current
-                            // one; see the playlist ADR draft's decision 8.)
+                            // One raised before a later seek was dropped above, by its run.)
                             LogStaleInternalTrigger(itc.Trigger.ToString(), _state.ToString());
                         }
                         break;

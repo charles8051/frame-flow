@@ -13,14 +13,6 @@ namespace FrameFlow.Playback;
 internal interface IPlaylistItemRuntime : IPlaybackSession
 {
     /// <summary>
-    /// The number of the item's current run. It advances each time a seek or a rewind stops the
-    /// run in progress, once that run's work has ended and before the next run starts. A seek
-    /// cancelled while it waits for that work does not advance it. See
-    /// <see cref="SubstrateSession.RunNumber"/>.
-    /// </summary>
-    int RunNumber { get; }
-
-    /// <summary>
     /// The timeline the current run presents under, named before the run starts. A new run number
     /// has a new timeline. See <see cref="SubstrateSession.Timeline"/>.
     /// </summary>

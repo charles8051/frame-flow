@@ -57,6 +57,21 @@ internal interface IPlaybackSession : IAsyncDisposable
     bool CanSeekFromEnded => true;
 
     /// <summary>
+    /// The number of the session's current run. It advances each time a seek or a rewind stops the
+    /// run in progress, once that run's work has ended and before the next run starts. A seek
+    /// cancelled while it waits for that work does not advance it. See
+    /// <see cref="SubstrateSession.RunNumber"/>.
+    /// </summary>
+    /// <remarks>
+    /// The controller reads it when the session reports end-of-stream, and again when it handles
+    /// the report, and drops the report if the two differ (#195). An item runtime must report it.
+    /// A session that never reports a stale end-of-stream itself keeps the default: a playlist
+    /// session drops its items' stale ones, and its own end-of-stream must stand, since the seek
+    /// queued behind it may have no item left to reposition.
+    /// </remarks>
+    int RunNumber => 0;
+
+    /// <summary>
     /// What this session is presenting: whether it expects its current item to repeat, and which
     /// item has started. The controller reads it on every position tick, for the loop-stall
     /// watchdog.

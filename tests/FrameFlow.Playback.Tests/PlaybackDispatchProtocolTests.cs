@@ -763,6 +763,48 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(PlaybackState.Playing, controller.State);
     }
 
+    [Fact]
+    public async Task EndOfStream_FromARunASeekReplaced_DoesNotEndPlayback()
+    {
+        // A seek keeps the session and starts a new run. An end-of-stream the old run raised,
+        // dispatched once the new run has started, must not end playback (#195).
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        session.RunNumber = 1;
+
+        // Hold the dispatch loop inside Play so the end-of-stream waits in the channel.
+        session.PlayBlocker = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var play = controller.PlayAsync();
+        await session.PlayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        session.RaiseEndOfStream();
+        session.RunNumber = 2;
+
+        session.PlayBlocker.SetResult();
+        Assert.True((await play).IsSuccess);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(PlaybackState.Playing, controller.State);
+    }
+
+    [Fact]
+    public async Task EndOfStream_FromTheRunASeekStarted_EndsPlayback()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        session.RunNumber = 2;
+
+        session.RaiseEndOfStream();
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(PlaybackState.Ended, controller.State);
+    }
+
     // Loads, plays and ends the fake session, and returns the callbacks it was created with.
     private static async Task<SessionCallbacks> PlayToEndedAsync(
         PlaybackControllerCore controller,
@@ -1222,6 +1264,9 @@ public sealed class PlaybackDispatchProtocolTests
         public bool Disposed;
         public Exception? InitializeThrows;
         public Exception? WarmUpThrows;
+
+        /// <summary>The run the session reports. A test advances it to stand for a seek.</summary>
+        public int RunNumber { get; set; }
 
         /// <summary>What this session reports it is presenting. Settable for the stall tests.</summary>
         public SessionPresentation Presentation { get; set; } = SessionPresentation.Empty;

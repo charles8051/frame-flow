@@ -87,6 +87,12 @@ internal sealed record InternalTriggerCommand(PlaybackTrigger Trigger) : IPlayer
     /// </summary>
     public int SessionGeneration { get; init; }
 
+    /// <summary>
+    /// The session's run number when it raised the trigger. An end-of-stream from a run a seek
+    /// has replaced since is dropped.
+    /// </summary>
+    public int Run { get; init; }
+
     public TaskCompletionSource<Result> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     public CancellationToken CancellationToken { get; init; }
