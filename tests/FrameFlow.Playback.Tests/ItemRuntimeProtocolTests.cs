@@ -595,20 +595,24 @@ public sealed class ItemRuntimeProtocolTests
     }
 
     [Fact]
-    public void AFaultDuringASeek_IsReportedOnce_AndTheSeekGoesOn()
+    public void AFaultDuringASeek_IsReportedOnce_AndTheSeekHoldsWithoutARun()
     {
         var t = ItemRuntimeTranscript.Playing();
+        var starts = t.Count<Action.StartRun>();
         var seek = t.Seek(At3);
         t.Ok();
 
         t.Ends(ItemWork.Pump, ItemWorkEnding.Faulted, Boom);
         Assert.Equal([new Action.ReportFault(0, ItemWork.Pump, Boom)], t.Actions);
 
+        // The seek goes on to its end, but a faulted item starts no run to play on from it.
         t.Ends(ItemWork.Graph);
         t.OkUntilIdle();
 
         Assert.Single(t.All.OfType<Action.ReportFault>());
         Assert.Equal([ItemCommandResult.Ok], t.ResultsOf(seek));
+        Assert.Equal(starts, t.Count<Action.StartRun>());
+        Assert.Equal(ItemRunStatus.Idle, t.State.Status);
     }
 
     // ── The item's fault (#824) ──────────────────────────────────────────────

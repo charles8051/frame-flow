@@ -560,7 +560,7 @@ internal static class ItemRuntimeProtocol
                     RepositionCommit();
                     break;
                 case ItemCommandStage.RepositionActivatingAudio:
-                    if (Command.Reposition!.Value.Relaunch)
+                    if (Relaunches)
                         RepositionLaunch();
                     else
                         Await(ItemCommandStage.RepositionPausingAgain, new ItemRuntimeAction.PauseAudio());
@@ -802,11 +802,15 @@ internal static class ItemRuntimeProtocol
             // Only an item that has played activated the sink, and only one that has played plays on.
             if (State.HasAudio && State.Played)
                 Await(ItemCommandStage.RepositionActivatingAudio, new ItemRuntimeAction.ActivateAudio());
-            else if (reposition.Relaunch)
+            else if (Relaunches)
                 RepositionLaunch();
             else
                 RepositionDone();
         }
+
+        // A reposition that would play on starts no run once the item has faulted: it holds, and
+        // the owner ends the item. A run started here would decode into the pacer that failed.
+        private bool Relaunches => Command.Reposition!.Value.Relaunch && !State.Faulted;
 
         private void RepositionLaunch() =>
             AwaitStartRun(

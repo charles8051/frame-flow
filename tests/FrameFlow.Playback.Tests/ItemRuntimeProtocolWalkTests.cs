@@ -661,6 +661,10 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     Ensure(start.Run == after.Run, "Starts the run the state numbers");
                     Ensure(start.Work == ItemRuntimeProtocol.WorkOf(after), "Starts the work the item has");
                     Ensure(start.End is null || start.End > start.Floor, "A run stops at the item's end only when it starts before it");
+                    Ensure(
+                        !(m.Faulted && after.Command?.Stage == ItemCommandStage.RepositionStartingRun),
+                        "A faulted item's reposition starts no run"
+                    );
 
                     // The shell starts the work now: a piece of it may end before the outcome.
                     m = m with
