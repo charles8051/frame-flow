@@ -595,20 +595,110 @@ public sealed class ItemRuntimeProtocolTests
     }
 
     [Fact]
-    public void AFaultDuringASeek_IsReportedOnce_AndTheSeekGoesOn()
+    public void AFaultDuringASeek_IsReportedOnce_AndTheSeekHoldsWithoutARun()
     {
         var t = ItemRuntimeTranscript.Playing();
+        var starts = t.Count<Action.StartRun>();
         var seek = t.Seek(At3);
         t.Ok();
 
         t.Ends(ItemWork.Pump, ItemWorkEnding.Faulted, Boom);
         Assert.Equal([new Action.ReportFault(0, ItemWork.Pump, Boom)], t.Actions);
 
+        // The seek goes on to its end, but a faulted item starts no run to play on from it.
         t.Ends(ItemWork.Graph);
         t.OkUntilIdle();
 
         Assert.Single(t.All.OfType<Action.ReportFault>());
         Assert.Equal([ItemCommandResult.Ok], t.ResultsOf(seek));
+        Assert.Equal(starts, t.Count<Action.StartRun>());
+        Assert.Equal(ItemRunStatus.Idle, t.State.Status);
+    }
+
+    // ── The item's fault (#824) ──────────────────────────────────────────────
+
+    [Fact]
+    public void APumpsFault_StopsTheRun_AndNoEndOfStreamFollowsIt()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+
+        t.Ends(ItemWork.Pump, ItemWorkEnding.Faulted, Boom);
+        Assert.Equal([new Action.ReportFault(0, ItemWork.Pump, Boom), new Action.CancelRun(0)], t.Actions);
+        Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
+
+        // The graph had everything it needed: it completes, and the owner hears no end after the fault.
+        t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
+        Assert.Empty(t.Actions);
+        Assert.Equal(ItemRunStatus.Stopped, t.State.Status);
+    }
+
+    [Fact]
+    public void AFaultFromOutsideTheRun_StopsTheRun_AndIsReportedOnce()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+
+        t.Send(new Input.Faulted(Boom));
+        Assert.Equal([new Action.ReportFault(0, ItemWork.None, Boom), new Action.CancelRun(0)], t.Actions);
+
+        t.Send(new Input.Faulted(Boom));
+        t.Ends(ItemWork.Pump, ItemWorkEnding.Faulted, Boom);
+        t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
+        Assert.Single(t.All.OfType<Action.ReportFault>());
+        Assert.Empty(t.All.OfType<Action.RaiseEndOfStream>());
+        Assert.Equal(ItemRunStatus.Stopped, t.State.Status);
+    }
+
+    [Fact]
+    public void AFaultWhileAnActionIsUnderWay_StopsTheRunOnceTheCommandRests()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        var pause = t.Pause();
+        Assert.Equal(new Action.PauseAudio(), t.Last.Awaited);
+
+        t.Send(new Input.Faulted(Boom));
+        Assert.Equal([new Action.ReportFault(0, ItemWork.None, Boom)], t.Actions);
+        Assert.Equal(ItemRunStatus.Running, t.State.Status); // the pause's audio call is still out
+
+        // The pause goes on as it would have, and its caller hears how it went.
+        t.Ok();
+        Assert.Equal(
+            [
+                new Action.CloseGates(),
+                new Action.PauseClocks(),
+                new Action.CompleteCommand(pause, ItemCommandResult.Ok),
+                new Action.CancelRun(0),
+            ],
+            t.Actions
+        );
+        Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
+        Assert.False(t.State.StopOwed);
+    }
+
+    [Fact]
+    public void AnEndOfStreamWhileTheStopIsOwed_IsNotRaised()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        t.Pause();
+        t.Send(new Input.Faulted(Boom));
+
+        // The run is still going while the pause's audio call is out, and its graph completes.
+        t.Ends(ItemWork.Pump, ItemWorkEnding.Completed);
+        t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
+
+        Assert.Empty(t.All.OfType<Action.RaiseEndOfStream>());
+    }
+
+    [Fact]
+    public void AnEndOfStreamQueuedAfterTheFault_IsNotRaised()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        t.Ends(ItemWork.Pump, ItemWorkEnding.Completed);
+
+        t.Send(new Input.Faulted(Boom));
+        t.Ends(ItemWork.Graph, ItemWorkEnding.Completed);
+
+        Assert.Empty(t.All.OfType<Action.RaiseEndOfStream>());
+        Assert.Single(t.All.OfType<Action.ReportFault>());
     }
 
     [Fact]
@@ -681,7 +771,7 @@ public sealed class ItemRuntimeProtocolTests
     public void AFaultBeforeItsStartsOutcome_IsReportedOnce_AndThePieceIsNotPending()
     {
         var t = ItemRuntimeTranscript.Playing();
-        t.Seek(At3);
+        var seek = t.Seek(At3);
         t.Ok();
         t.Ends(ItemWork.Pump);
         t.Ends(ItemWork.Graph);
@@ -695,8 +785,15 @@ public sealed class ItemRuntimeProtocolTests
         t.Send(new Input.WorkEnded(1, ItemWork.Pump, ItemWorkEnding.Faulted, Boom)); // once only
         Assert.Empty(t.Actions);
 
+        // The start went through, and the seek goes on to its end; the run is stopped then.
         t.Ok();
         Assert.Equal(ItemWork.Graph, t.State.Pending);
+        Assert.True(t.State.StopOwed);
+        t.OkUntilIdle();
+        Assert.Equal([ItemCommandResult.Ok], t.ResultsOf(seek));
+        Assert.Equal(1, t.Count<Action.CancelRun>() - 1); // the seek's own stop, and this one
+        Assert.Contains(new Action.CancelRun(1), t.All);
+        Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
         Assert.Single(t.All.OfType<Action.ReportFault>());
     }
 
@@ -867,7 +964,11 @@ public sealed class ItemRuntimeProtocolTests
         t.Ends(ItemWork.Pump, ItemWorkEnding.Faulted, Boom);
 
         Assert.Equal(
-            [new Action.ReportFault(0, ItemWork.Pump, Boom), new Action.CompleteCommand(warm, ItemCommandResult.Ok)],
+            [
+                new Action.ReportFault(0, ItemWork.Pump, Boom),
+                new Action.CompleteCommand(warm, ItemCommandResult.Ok),
+                new Action.CancelRun(0),
+            ],
             t.Actions
         );
     }
@@ -952,7 +1053,7 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Contains(new Action.SeatClocks(start, Shared: false), t.All);
 
         t.Attach();
-        Assert.Equal([new Action.AttachClocks()], t.Actions);
+        Assert.Equal([new Action.AttachClocks(start)], t.Actions);
         t.Attach();
         Assert.Empty(t.Actions);
     }
@@ -1243,7 +1344,7 @@ public sealed class ItemRuntimeProtocolTests
         var seek = t.Seek(At3);
 
         t.Dispose();
-        Assert.Empty(t.Actions);
+        Assert.Equal([new Action.CutShort(seek)], t.Actions);
         Assert.True(t.State.DisposeRequested);
 
         t.Ok(); // the audio pause ends, and the gates and the stop follow it
