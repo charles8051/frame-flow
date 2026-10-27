@@ -1,9 +1,26 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Immutable;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback;
+
+/// <summary>Where the preparation of the item prepared ahead stands (#811).</summary>
+internal enum PlaylistPreparation
+{
+    /// <summary>Asked for, and not yet settled.</summary>
+    Pending,
+
+    /// <summary>Opened and warmed up, ready to be made the current item.</summary>
+    Ready,
+
+    /// <summary>
+    /// It failed, or its run faulted while it was detached. It is not made the current item, and it
+    /// is prepared again only when it is asked for again.
+    /// </summary>
+    Failed,
+}
 
 /// <summary>What the controller last asked of a playlist session, or that its queue has ended.</summary>
 internal enum PlaylistRunState
@@ -122,6 +139,23 @@ internal sealed record PlaylistSessionState
     /// or replaced, and the session does not prepare the next item in its place.
     /// </summary>
     public bool PreparedExplicitly { get; init; }
+
+    /// <summary>
+    /// Where the preparation of <see cref="Prepared"/> stands, as the shell last reported it (#811).
+    /// </summary>
+    public PlaylistPreparation PreparedStatus { get; init; }
+
+    /// <summary>
+    /// The number of the preparation of <see cref="Prepared"/>. Each new preparation takes the next,
+    /// so a report from one the session has since replaced, even of the same item, is told apart.
+    /// </summary>
+    public int PreparedId { get; init; }
+
+    /// <summary>
+    /// The prepare commands waiting on the preparation while it is under way. The caller's
+    /// cancellation abandons the preparation only once none is left.
+    /// </summary>
+    public ImmutableHashSet<int> PreparedWaiters { get; init; } = ImmutableHashSet<int>.Empty;
 
     /// <summary>Whether the session prepares the item the queue would take next.</summary>
     public bool PrepareNext { get; init; }
