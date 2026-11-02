@@ -588,16 +588,16 @@ jobs:
           # Deliberately longer than the published set, and it is the same ~200MB of
           # FrameFlow.MotionClip every time. The size gate holds it back precisely
           # because nuget.org will not take it, so unlike packages/ there is nowhere
-          # else to fetch it from: delete this and the build is gone. Ninety days is
-          # the repository default, restated here so a later retention edit has to
-          # decide about this one separately rather than inherit an answer meant for
-          # packages that are recoverable.
+          # else to fetch it from: delete this and the build is gone. Thirty days keeps
+          # a release's held-back build recoverable for a month without letting ~200MB
+          # per release accumulate for a quarter. It stays separate from the packages
+          # upload so a later retention edit decides about this one on its own.
           #
           # This is also the upload whose failure costs the most, for the same reason.
           # It is continue-on-error like the others, so the run goes green and the
           # action's error annotation is the only notice: re-run this job before the
           # runner workspace goes, because nothing else has a copy.
-          retention-days: 90
+          retention-days: 30
 
   # Self-contained FrameFlow.MotionClip for consumers who want a portable
   # .exe — no .NET SDK / runtime / `dotnet tool install` required on the
