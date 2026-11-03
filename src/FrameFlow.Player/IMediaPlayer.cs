@@ -76,9 +76,12 @@ namespace FrameFlow.Player;
 /// <see cref="PlaybackState.Ended"/> once no next or queued item is left. It also ends there, leaving
 /// those items in place, when more than eight items fail in a row, however they fail. An item that
 /// ends or is skipped without failing breaks the run, and so does a fault after an item has played
-/// for five seconds, or for half its length if that is shorter. From that end, <see cref="IMediaTransport.PlayAsync"/> tries again if any playlist item
-/// opened, and is refused as above if none could be started: replace the playlist, or add, jump to
-/// or enqueue an item first. The player's very first item is treated as a single source's: if it
+/// for five seconds, or for half its length if that is shorter. From that end,
+/// <see cref="IMediaTransport.PlayAsync"/> tries again if the run ended on a fault. If it ended on a
+/// failed start, because every playlist item failed to start or more than eight items failed in a
+/// row, <see cref="IMediaTransport.PlayAsync"/> is refused as above, which includes any items of a
+/// long playlist not yet tried: replace the playlist, or add, jump to or enqueue an item first. The
+/// player's very first item is treated as a single source's: if it
 /// cannot be opened the load fails, and if it faults before the first
 /// <see cref="IMediaTransport.PlayAsync"/> the player enters <see cref="PlaybackState.Error"/>.
 /// <see cref="ReplaceAsync(IEnumerable{IMediaSource}, CancellationToken)"/> recovers it from there.

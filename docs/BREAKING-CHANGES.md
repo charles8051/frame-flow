@@ -26,10 +26,10 @@ up, and no `Error` follows it.
   sources, and items that fault on every pass under `RepeatMode.All` or `RepeatMode.One`.
 - **`WaitForEndAsync` returns success at that end.** It reads `Ended`, as it does after a last item
   faults under `RepeatMode.Off`. Watch `ItemFailed` to see the failures.
-- **`PlayAsync` from that end is refused if no playlist item could be started.** It returns a failed
+- **`PlayAsync` from that end is refused if the run ended on a failed start.** It returns a failed
   `Result` with `ErrorCategory.InvalidOperation`, and the player stays in `Ended`. It used to reload,
-  fail and enter `Error`. If an item faulted rather than failing to open, `PlayAsync` starts a new
-  pass.
+  fail and enter `Error`. This includes any items of a long playlist not yet tried when the count ran
+  out; `JumpToAsync` still reaches those. If the run ended on a fault, `PlayAsync` starts a new pass.
 - **`ReplaceAsync` also resets the count of failures.** Failures from before a replace used to count
   after it.
 - **A jump recorded before the player handles the end of its queue is now taken** (#809). That includes

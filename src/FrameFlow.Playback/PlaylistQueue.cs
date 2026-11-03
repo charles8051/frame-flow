@@ -125,9 +125,9 @@ internal sealed record PlaylistQueue
     public bool FailuresExhausted => ConsecutiveFailures > PlaylistFailureGuard.MaxConsecutiveFailures;
 
     /// <summary>
-    /// Whether a new session could only start with an item that has already failed to start: every
-    /// playlist item has, since an item last made progress, and no jump, next item or queued item is
-    /// waiting.
+    /// Whether a replay is refused: every playlist item has failed to start since an item last made
+    /// progress, or is marked as if it had because the count ran out on a failed start, and no jump,
+    /// next item or queued item is waiting.
     /// </summary>
     public bool NothingLeftThatCanStart =>
         PendingJump is null
@@ -361,10 +361,10 @@ internal sealed record PlaylistQueue
 
     /// <summary>
     /// Takes the item a replay from <c>Ended</c> will start with, before the controller unloads.
-    /// The result is <see langword="false"/> when the player holds nothing to take, or nothing that
-    /// has not already failed to start. A new session that cannot open any item fails its load, which
-    /// would put the player in <c>Error</c>, so that replay is refused (#810). Any other replay is a
-    /// new pass, whose items get a fresh attempt.
+    /// The result is <see langword="false"/> when the player holds nothing to take, or when a run of
+    /// failed starts has marked the whole playlist. A new session that cannot open any item fails its
+    /// load, which would put the player in <c>Error</c>, so that replay is refused (#810). Any other
+    /// replay is a new pass, whose items get a fresh attempt.
     /// </summary>
     public (PlaylistQueue Queue, bool Reserved) ReserveStart()
     {

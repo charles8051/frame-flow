@@ -948,8 +948,9 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   does not end a pass, because an item looping under `RepeatMode.All` that faults once plays on after
   its rebuild, so test 11 changes only in its outcome: nine reports and `Ended`. `Replace` now resets
   the count. Play from
-  that end is refused when no playlist item could be started, on decision 4's reasoning that a refusal
-  can be relaxed later, and otherwise starts a new pass. `IPlaybackSession.HasStartWaiting` lets the
+  that end is refused when the run ended on a failed start, including any items of a long playlist not
+  yet tried, on decision 4's reasoning that a refusal can be relaxed later, and otherwise starts a new
+  pass. `IPlaybackSession.HasStartWaiting` lets the
   controller take a jump recorded before it handled the session's end, in command order, instead of
   entering `Ended` (#809). A first item that faults before the first Play is still fatal.
 
