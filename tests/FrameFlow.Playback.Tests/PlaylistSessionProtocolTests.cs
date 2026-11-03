@@ -862,16 +862,10 @@ public sealed class PlaylistSessionProtocolTests
         var boom = new InvalidOperationException("boom");
         (s, _, step) = Step(s, q, new PlaylistSessionInput.Outcome(PlaylistOutcome.Failed, CurrentRun, Error: boom));
 
-        // The controller is handed the fatal error, so the Play itself completes.
-        Assert.Collection(
-            step.Actions,
-            a => AssertItemFailed(a, "a", PlaylistItemFailure.CouldNotStart, boom),
-            a => Assert.Same(boom, Assert.IsType<PlaylistSessionAction.ReportFatal>(a).Error.InnerException),
-            a => Assert.Equal(new PlaylistSessionAction.CompleteCommand(Command, PlaylistCommandResult.Ok), a)
-        );
-        Assert.True(step.Done);
-        Assert.Null(step.Awaited);
-        Assert.True(s.GaveUp);
+        // The advance disposes the item first, and then the queue ends, so the Play itself completes.
+        Assert.Equal(new PlaylistSessionAction.DisposeItem(), step.Awaited);
+        Assert.False(s.GaveUp);
+        AssertItemFailed(step.Actions[0], "a", PlaylistItemFailure.CouldNotStart, boom);
     }
 
     [Fact]
@@ -988,7 +982,7 @@ public sealed class PlaylistSessionProtocolTests
                 break;
             case LoadFailure.AtTheFailureLimit:
                 Assert.Equal(PlaylistOutcome.Failed, result.Kind);
-                Assert.Contains("gave up", result.Error?.Message);
+                Assert.Equal("No playlist item could be opened.", result.Error?.Message);
                 Assert.Same(boom, result.Error?.InnerException);
                 break;
         }
@@ -1273,7 +1267,7 @@ public sealed class PlaylistSessionProtocolTests
         var queue = PlaylistQueue.Create([clip, b], RepeatMode.Off);
         (queue, _) = queue.TakeStart();
         (queue, _) = queue.ReportCurrent(clip, Info);
-        (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
         var sixtySeconds = new MediaInfo("a", TimeSpan.FromSeconds(60), [], []);
         var state = PlayingWith(clip) with
         {
@@ -1343,7 +1337,7 @@ public sealed class PlaylistSessionProtocolTests
         var queue = PlaylistQueue.Create([clip, b], RepeatMode.Off);
         (queue, _) = queue.TakeStart();
         (queue, _) = queue.ReportCurrent(clip, Info);
-        (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
         var sixtySeconds = new MediaInfo("a", TimeSpan.FromSeconds(60), [], []);
         var state = PlayingWith(clip) with
         {
@@ -1840,7 +1834,7 @@ public sealed class PlaylistSessionProtocolTests
     private static PlaylistQueue AtTheFailureLimit(PlaylistQueue queue)
     {
         for (var i = 0; i < PlaylistFailureGuard.MaxConsecutiveFailures; i++)
-            (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
         return queue;
     }
 

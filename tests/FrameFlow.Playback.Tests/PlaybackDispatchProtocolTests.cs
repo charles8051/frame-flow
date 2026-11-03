@@ -293,6 +293,99 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(1, session.PlayCalls);
     }
 
+    // #809. Both reports are posted before the loop handles the first, so a handler of the failure
+    // that ended the queue runs while the end still waits behind it. A replace there records a jump.
+    private static IDisposable ReplaceOnFailure(IPlaybackController controller, FakeSession session) =>
+        controller.ErrorOccurred.Subscribe(new Relay<PlaybackError>(_ => session.HasStartWaiting = true));
+
+    private static readonly PlaybackError ItemFailure = new(ErrorCategory.System, "item failed");
+
+    [Fact]
+    public async Task AnItemRecordedByTheHandlerOfTheFailureThatEndedTheQueue_PlaysInsteadOfEnding()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var states = new List<PlaybackState>();
+        var playingAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t =>
+            {
+                states.Add(t.Current);
+                if (t.Current == PlaybackState.Playing)
+                    playingAgain.TrySetResult();
+            })
+        );
+        using var replace = ReplaceOnFailure(controller, session);
+
+        session.RaiseRecoverableError(ItemFailure);
+        session.RaiseEndOfStream();
+        await playingAgain.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.DoesNotContain(PlaybackState.Ended, states);
+        Assert.DoesNotContain(PlaybackState.Error, states);
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.Equal(2, session.PlayCalls);
+    }
+
+    [Fact]
+    public async Task AnItemRecordedWhilePaused_IsLeftPaused_InsteadOfEnding()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        await controller.PauseAsync();
+        var initialized = session.InitializeCalls;
+
+        var states = new List<PlaybackState>();
+        var pausedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t =>
+            {
+                states.Add(t.Current);
+                if (t.Current == PlaybackState.Paused)
+                    pausedAgain.TrySetResult();
+            })
+        );
+        using var replace = ReplaceOnFailure(controller, session);
+
+        session.RaiseRecoverableError(ItemFailure);
+        session.RaiseEndOfStream();
+        await pausedAgain.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.DoesNotContain(PlaybackState.Ended, states);
+        Assert.Equal(PlaybackState.Paused, controller.State);
+        Assert.Equal(initialized + 1, session.InitializeCalls);
+        Assert.Equal(1, session.PlayCalls);
+    }
+
+    [Fact]
+    public async Task AnEndWithNothingWaiting_Ends_AfterTheFailureIsReported()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t =>
+            {
+                if (t.Current == PlaybackState.Ended)
+                    ended.TrySetResult();
+            })
+        );
+
+        session.RaiseRecoverableError(ItemFailure);
+        session.RaiseEndOfStream();
+        await ended.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(1, session.InitializeCalls);
+    }
+
     [Fact]
     public async Task LastFrameRendered_RepeatOff_ReachesEnded()
     {
@@ -1317,6 +1410,9 @@ public sealed class PlaybackDispatchProtocolTests
         public bool ReplayAvailable { get; set; } = true;
 
         public bool TryBeginReplay() => ReplayAvailable;
+
+        /// <summary>Stands for a jump recorded after this session reported its end.</summary>
+        public bool HasStartWaiting { get; set; }
 
         public bool CanSeekFromEnded { get; set; } = true;
 

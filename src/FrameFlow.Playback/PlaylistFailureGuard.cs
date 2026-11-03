@@ -4,10 +4,11 @@
 namespace FrameFlow.Playback;
 
 /// <summary>
-/// The rule that decides when a <see cref="PlaylistSession"/> stops skipping failed items and
-/// gives up. <see cref="PlaylistQueue.ItemFailed"/> and <see cref="PlaylistQueue.ItemEnded"/>
-/// apply it to the queue's count of items that fail in a row without making progress. More than
-/// <see cref="MaxConsecutiveFailures"/> of them and the playlist gives up.
+/// The rule that decides when a <see cref="PlaylistSession"/> stops skipping failed items and ends
+/// the queue. <see cref="PlaylistQueue.ItemFailed"/> and <see cref="PlaylistQueue.ItemEnded"/> apply
+/// it to the queue's record of items that fail without making progress. The queue ends once every
+/// playlist item has failed to start, or once more than <see cref="MaxConsecutiveFailures"/> items
+/// have failed in a row, whichever comes first. Both end the same way, in <c>Ended</c> (#810).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,20 +23,26 @@ namespace FrameFlow.Playback;
 /// network stream, needs the full threshold.
 /// </para>
 /// <para>
-/// <b>What resets the count.</b> An item that ends without failing, whether it reached its
+/// <b>What resets the record.</b> An item that ends without failing, whether it reached its
 /// end or was skipped, and an item that made progress before it faulted. A successful
 /// start does not reset it: an item that starts and then faults on every pass would
 /// otherwise never be counted.
 /// </para>
 /// <para>
-/// A skip resets the count so that a rotation advanced by skips survives a bad item in it,
+/// A skip resets the record so that a rotation advanced by skips survives a bad item in it,
 /// even though no item there reaches its end. Progress resets it so that a source with no
 /// end is not given up on because of faults hours apart.
+/// </para>
+/// <para>
+/// <b>Why a fault does not end a pass.</b> An item that faulted did open, and a fault can pass: an
+/// item looping under <see cref="RepeatMode.All"/> that faults once plays on after its rebuild. So
+/// faults rotate until the count stops them. The count also bounds a long playlist of dead sources
+/// and a handler that keeps adding items that fail.
 /// </para>
 /// </remarks>
 internal static class PlaylistFailureGuard
 {
-    /// <summary>Failures tolerated in a row. The next one gives up.</summary>
+    /// <summary>Failures tolerated in a row. The next one ends the queue.</summary>
     internal const int MaxConsecutiveFailures = 8;
 
     /// <summary>

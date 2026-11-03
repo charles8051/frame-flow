@@ -26,7 +26,7 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
     private const string ShortClip = "test-subsecond.mp4";
     private const string LongClip = "test-video-h264-yuv420p.mp4";
 
-    // The session gives up after this many failures in a row without progress.
+    // The queue ends after this many failures in a row without progress.
     private const int FailuresBeforeGivingUp = 9;
 
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
@@ -54,21 +54,18 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task AFaultOnEveryPass_IsReportedEachPass_ThenThePlayerGivesUp()
+    public async Task AFaultOnEveryPass_IsReportedEachPass_ThenThePlaybackEnds()
     {
         // Under One the item is rebuilt after each fault, so a source that always faults is a run
-        // of failures, and the failure guard ends it in Error.
+        // of failures, and the failure guard ends it in Ended, as a fault under Off does.
         var faults = new FaultInjector(breaks: _ => true);
         await using var run = Run(LongClip, RepeatMode.One, faults);
 
         await run.PlayAsync();
-        // The controller projects Error before it raises the error that put it there.
-        await run.GaveUp.WaitAsync(Bound);
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
-        Assert.Equal(PlaybackState.Error, run.Controller.State);
-        Assert.Equal(FailuresBeforeGivingUp + 1, run.Errors.Count);
+        Assert.Equal(FailuresBeforeGivingUp, run.Errors.Count);
         Assert.All(run.Errors, e => Assert.True(InjectedFault.Caused(e), $"Unexpected error: {e}"));
-        Assert.Contains("gave up", run.Errors[^1].Message);
     }
 
     [RequiresFfmpegAndCorpusFact]

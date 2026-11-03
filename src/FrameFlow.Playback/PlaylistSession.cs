@@ -55,8 +55,8 @@ namespace FrameFlow.Playback;
 /// such failure is reported to the controller through
 /// <see cref="SessionCallbacks.OnRecoverableError"/>, which raises it on
 /// <c>ErrorOccurred</c> without changing state. <see cref="PlaylistFailureGuard"/>
-/// bubbles a fatal error when items keep failing in a row, rather than looping
-/// over a queue that cannot play.
+/// ends the queue when items keep failing, rather than looping over a queue that
+/// cannot play.
 /// </para>
 /// </remarks>
 internal sealed class PlaylistSession : IPlaybackSession
@@ -162,6 +162,9 @@ internal sealed class PlaylistSession : IPlaybackSession
     // A replay from Ended loads a new PlaylistSession. The item it starts with is taken here,
     // before the controller unloads this one, so an edit in between cannot leave it nothing.
     public bool TryBeginReplay() => _coordinator.ReserveStart() is not null;
+
+    /// <inheritdoc />
+    public bool HasStartWaiting => _coordinator.HasPendingJump;
 
     // Read by the controller at Ended. The advance that ended the queue kept the item before it
     // reported the end-of-stream, and nothing replaces it while this session is Ended.

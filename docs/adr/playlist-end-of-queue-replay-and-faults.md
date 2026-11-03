@@ -942,6 +942,18 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   controller loop a playlist that had ended. The draft had recorded that as an open question; the
   controller now never loops a session that runs its own repeat mode.
 
+- **Amendment (2026-11-03), decision 7 and consequences.** A run of failed items now ends in `Ended`
+  instead of `Error`, and the fatal hand-off decision 7 describes for it is gone (#810). The pass of
+  failed starts and the count of eight still both end a run, and now reach the same outcome. A fault
+  does not end a pass, because an item looping under `RepeatMode.All` that faults once plays on after
+  its rebuild, so test 11 changes only in its outcome: nine reports and `Ended`. `Replace` now resets
+  the count. Play from
+  that end is refused when the run ended on a failed start, including any items of a long playlist not
+  yet tried, on decision 4's reasoning that a refusal can be relaxed later, and otherwise starts a new
+  pass. `IPlaybackSession.HasStartWaiting` lets the
+  controller take a jump recorded before it handled the session's end, in command order, instead of
+  entering `Ended` (#809). A first item that faults before the first Play is still fatal.
+
 - **Amendment (2026-10-12).** The rule that a same-source replay rewinds in place only while playing,
   and only an item that has played, is superseded by decision 5 of the media-clips record
   (`docs/feature-specs/media-clips/adr.md`). Its reason, that rewinding an unstarted item left its

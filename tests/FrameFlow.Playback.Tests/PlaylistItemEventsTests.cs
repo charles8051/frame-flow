@@ -138,29 +138,28 @@ public sealed class PlaylistItemEventsTests
     }
 
     [Fact]
-    public void TheGiveUpFailure_IsReportedBeforeTheFatal()
+    public void TheFailureThatEndsTheQueue_IsReportedBeforeTheEnd()
     {
-        // Row 1b. The last failure of a losing run still raises ItemFailed; the fatal follows it.
-        // The record says "raises both once" with exceptions, and this is the one that is easy to
-        // get backwards.
+        // Row 1b. The last failure of a losing run still raises ItemFailed; the end follows it, so a
+        // handler of that failure runs while the controller has yet to handle the end (#809).
         var (state, queue, items) = Playing("a", "b", current: 0);
-        // Bank failures up to the guard's ceiling so the one this test drives is the one that gives
-        // up. Built through the queue's own operation rather than by writing the counter, so the
-        // ceiling stays whatever PlaylistFailureGuard says it is.
+        // Bank failures up to the guard's ceiling so the one this test drives is the one that ends
+        // the queue. Built through the queue's own operation rather than by writing the counter, so
+        // the ceiling stays whatever PlaylistFailureGuard says it is.
         for (var i = 0; i < PlaylistFailureGuard.MaxConsecutiveFailures; i++)
-            (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
         var step = RunToIdle(state, queue, new PlaylistSessionInput.Fault(Generation, Boom, TimeSpan.FromSeconds(1)));
 
         var kinds = step
             .Actions.Where(a =>
-                a is PlaylistSessionAction.ReportItemFailed or PlaylistSessionAction.ReportFatal
+                a is PlaylistSessionAction.ReportItemFailed or PlaylistSessionAction.ReportEndOfStream
             )
             .Select(a => a.GetType())
             .ToArray();
 
         Assert.Equal(
-            [typeof(PlaylistSessionAction.ReportItemFailed), typeof(PlaylistSessionAction.ReportFatal)],
+            [typeof(PlaylistSessionAction.ReportItemFailed), typeof(PlaylistSessionAction.ReportEndOfStream)],
             kinds
         );
         Assert.Same(items[0], step.Actions.OfType<PlaylistSessionAction.ReportItemFailed>().Single().Item);

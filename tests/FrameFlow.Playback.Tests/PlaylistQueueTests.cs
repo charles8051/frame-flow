@@ -140,7 +140,7 @@ public sealed class PlaylistQueueTests
 
         queue = queue.WithRepeatMode(RepeatMode.All).LatchAdvance(PlaylistAdvance.Skip).ItemEnded();
         (queue, _) = queue.ConsumeLatchedAdvance();
-        (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
         Assert.Equal(revision, queue.Revision);
     }
@@ -552,8 +552,8 @@ public sealed class PlaylistQueueTests
         Assert.Equal([queue.Playlist[0]], queue.FailedSinceStart);
 
         var length = TimeSpan.FromSeconds(20);
-        var (early, _) = queue.ItemFailed(TimeSpan.Zero, length);
-        var (late, _) = queue.ItemFailed(PlaylistFailureGuard.ProgressNeeded(length), length);
+        var early = queue.ItemFailed(TimeSpan.Zero, length);
+        var late = queue.ItemFailed(PlaylistFailureGuard.ProgressNeeded(length), length);
 
         Assert.Equal(queue.FailedSinceStart, early.FailedSinceStart);
         Assert.Empty(late.FailedSinceStart);
@@ -939,6 +939,179 @@ public sealed class PlaylistQueueTests
         Assert.Equal("e |", Advance(ref queue, 2));
     }
 
+    // One rule for a run of failed items (#810). Each step fails the current item as the session
+    // does, ItemFailed and then DecideNext, and the result is the items taken, then "|" at the end.
+    private static string FailEveryItem(ref PlaylistQueue queue, PlaylistAdvance how)
+    {
+        var taken = new List<string>();
+        for (var i = 0; i < 40; i++)
+        {
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+            var (next, decision) = queue.DecideNext(how);
+            queue = next;
+            if (decision.Kind == PlaylistQueue.NextKind.End)
+            {
+                taken.Add("|");
+                break;
+            }
+            taken.Add(decision.Item!.Source.DisplayName);
+        }
+        return string.Join(" ", taken);
+    }
+
+    [Theory]
+    [InlineData(RepeatMode.Off)]
+    [InlineData(RepeatMode.All)]
+    [InlineData(RepeatMode.One)]
+    public void APassOfFailedStarts_EndsTheQueue(RepeatMode repeat)
+    {
+        var queue = Queue(repeat, "a", "b", "c");
+        _ = Take(ref queue);
+
+        Assert.Equal("b c |", FailEveryItem(ref queue, PlaylistAdvance.FailedStart));
+    }
+
+    [Fact]
+    public void UnderOff_FaultingItems_RunOffTheEnd()
+    {
+        var queue = Queue(RepeatMode.Off, "a", "b", "c");
+        _ = Take(ref queue);
+
+        Assert.Equal("b c |", FailEveryItem(ref queue, PlaylistAdvance.Fault));
+    }
+
+    [Fact]
+    public void UnderAll_AFaultingOnlyItem_IsTriedAgain_UntilTheCountEndsTheQueue()
+    {
+        // An item that faults once and then plays must survive, so one fault cannot end the pass.
+        var queue = Queue(RepeatMode.All, "a");
+        _ = Take(ref queue);
+
+        var again = string.Join(" ", Enumerable.Repeat("a", PlaylistFailureGuard.MaxConsecutiveFailures));
+        Assert.Equal(again + " |", FailEveryItem(ref queue, PlaylistAdvance.Fault));
+    }
+
+    [Fact]
+    public void UnderOne_AFaultingItem_IsReplayed_UntilTheCountEndsTheQueue()
+    {
+        var queue = Queue(RepeatMode.One, "a", "b", "c");
+        _ = Take(ref queue);
+
+        var replays = string.Join(" ", Enumerable.Repeat("a", PlaylistFailureGuard.MaxConsecutiveFailures));
+        Assert.Equal(replays + " |", FailEveryItem(ref queue, PlaylistAdvance.Fault));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APlaylistLongerThanTheCount_EndsAsAShortOneDoes(bool faulted)
+    {
+        var how = faulted ? PlaylistAdvance.Fault : PlaylistAdvance.FailedStart;
+        var names = Enumerable.Range(0, 20).Select(i => $"i{i}").ToArray();
+        var queue = Queue(RepeatMode.All, names);
+        _ = Take(ref queue);
+
+        var taken = FailEveryItem(ref queue, how).Split(' ');
+
+        Assert.Equal("|", taken[^1]);
+        Assert.Equal(PlaylistFailureGuard.MaxConsecutiveFailures + 1, taken.Length);
+    }
+
+    [Fact]
+    public void AnAddedItemsFailures_CannotKeepTheQueueGoingPastTheCount()
+    {
+        var queue = Queue(RepeatMode.Off, "a");
+        _ = Take(ref queue);
+
+        for (var i = 0; i < PlaylistFailureGuard.MaxConsecutiveFailures; i++)
+        {
+            queue = queue.Enqueue(new PlaylistItem(new FakeSource($"q{i}")));
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+            (queue, var decision) = queue.DecideNext(PlaylistAdvance.FailedStart);
+            Assert.Equal(PlaylistQueue.NextKind.Advance, decision.Kind);
+        }
+
+        queue = queue.Enqueue(new PlaylistItem(new FakeSource("last")));
+        queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        var (_, final) = queue.DecideNext(PlaylistAdvance.FailedStart);
+
+        Assert.Equal(PlaylistQueue.NextKind.End, final.Kind);
+    }
+
+    [Fact]
+    public void Replace_StartsTheCountAgain()
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        _ = Take(ref queue);
+        for (var i = 0; i < 5; i++)
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+
+        queue = queue.Replace([new PlaylistItem(new FakeSource("b"))]);
+
+        Assert.Equal(0, queue.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public void Replay_IsRefused_WhenNoPlaylistItemCouldStart_AndLeavesTheQueueAlone()
+    {
+        var queue = Queue(RepeatMode.All, "a", "b");
+        _ = Take(ref queue);
+        FailEveryItem(ref queue, PlaylistAdvance.FailedStart);
+
+        var (after, reserved) = queue.ReserveStart();
+
+        Assert.False(reserved);
+        Assert.Equal(queue, after);
+    }
+
+    [Fact]
+    public void Replay_IsRefused_ForALongPlaylistThatRanOutOfTolerance()
+    {
+        var queue = Queue(RepeatMode.All, Enumerable.Range(0, 20).Select(i => $"i{i}").ToArray());
+        _ = Take(ref queue);
+        FailEveryItem(ref queue, PlaylistAdvance.FailedStart);
+
+        Assert.False(queue.ReserveStart().Reserved);
+    }
+
+    [Fact]
+    public void Replay_OfItemsThatFaulted_IsANewPass()
+    {
+        // An item that faulted did open, so Play can try it again, and has the whole tolerance.
+        var queue = Queue(RepeatMode.All, "a", "b");
+        _ = Take(ref queue);
+        FailEveryItem(ref queue, PlaylistAdvance.Fault);
+
+        (queue, var reserved) = queue.ReserveStart();
+
+        Assert.True(reserved);
+        Assert.Equal(0, queue.ConsecutiveFailures);
+    }
+
+    [Theory]
+    [InlineData("jump")]
+    [InlineData("next")]
+    [InlineData("queued")]
+    [InlineData("add")]
+    public void Replay_IsAccepted_OnceSomethingUntriedIsWaiting(string how)
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        _ = Take(ref queue);
+        FailEveryItem(ref queue, PlaylistAdvance.FailedStart);
+        Assert.False(queue.ReserveStart().Reserved);
+
+        var fresh = new PlaylistItem(new FakeSource("fresh"));
+        queue = how switch
+        {
+            "next" => queue.SetNext(fresh),
+            "queued" => queue.Enqueue(fresh),
+            "add" => queue.Add(fresh),
+            _ => queue.Add(fresh).RequestJump(fresh).Queue,
+        };
+
+        Assert.True(queue.ReserveStart().Reserved);
+    }
+
     [Fact]
     public void Row17_TheFailureCount_IsPartOfTheValue()
     {
@@ -946,12 +1119,12 @@ public sealed class PlaylistQueueTests
 
         for (var i = 0; i < PlaylistFailureGuard.MaxConsecutiveFailures; i++)
         {
-            (queue, var giveUp) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
-            Assert.False(giveUp);
+            queue = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+            Assert.False(queue.FailuresExhausted);
         }
 
         Assert.Equal(PlaylistFailureGuard.MaxConsecutiveFailures, queue.ConsecutiveFailures);
-        Assert.True(queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero).GiveUp);
+        Assert.True(queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero).FailuresExhausted);
     }
 
     [Fact]

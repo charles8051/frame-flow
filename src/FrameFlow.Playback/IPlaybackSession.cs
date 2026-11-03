@@ -50,6 +50,13 @@ internal interface IPlaybackSession : IAsyncDisposable
     bool TryBeginReplay() => true;
 
     /// <summary>
+    /// Whether an item is waiting to start although this session has reported its end: a jump
+    /// recorded after the session ended, before the controller handled that end. The controller
+    /// starts it instead of ending (#809).
+    /// </summary>
+    bool HasStartWaiting => false;
+
+    /// <summary>
     /// Whether this session, at <c>Ended</c>, still holds media a seek can reposition. The
     /// controller refuses a seek from <c>Ended</c> when it does not. A single source always
     /// does.

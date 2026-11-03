@@ -94,11 +94,12 @@ internal sealed record PlaylistQueue
     /// <summary>
     /// The items that have failed to start since an item last made progress, as
     /// <see cref="ItemEnded"/> and <see cref="ItemFailed"/> define it. A full set ends a pass of
-    /// failed starts. See <see cref="DecideNext"/>.
+    /// failed starts, and refuses a replay. See <see cref="DecideNext"/> and <see cref="ReserveStart"/>.
     /// </summary>
     /// <remarks>
     /// Reporting an item does not clear it. An item an advance opens while paused is reported
-    /// before the Play that starts it, and that Play can still fail.
+    /// before the Play that starts it, and that Play can still fail. An item that faulted is not
+    /// in it: that item did open, so the rotation and a replay can try it again.
     /// </remarks>
     public ImmutableHashSet<PlaylistItem> FailedSinceStart { get; private init; } =
         ImmutableHashSet.Create<PlaylistItem>(ReferenceEqualityComparer.Instance);
@@ -117,6 +118,23 @@ internal sealed record PlaylistQueue
 
     /// <summary>Whether a jump is waiting to be taken.</summary>
     public bool HasPendingJump => PendingJump is not null;
+
+    /// <summary>
+    /// Whether more items have failed in a row than <see cref="PlaylistFailureGuard"/> tolerates.
+    /// </summary>
+    public bool FailuresExhausted => ConsecutiveFailures > PlaylistFailureGuard.MaxConsecutiveFailures;
+
+    /// <summary>
+    /// Whether a replay is refused: every playlist item has failed to start since an item last made
+    /// progress, or is marked as if it had because the count ran out on a failed start, and no jump,
+    /// next item or queued item is waiting.
+    /// </summary>
+    public bool NothingLeftThatCanStart =>
+        PendingJump is null
+        && Next.IsEmpty
+        && Queued.IsEmpty
+        && !Playlist.IsEmpty
+        && Playlist.All(FailedSinceStart.Contains);
 
     /// <summary>
     /// Whether the current item is expected to repeat at its end, which is when the loop-stall
@@ -332,6 +350,7 @@ internal sealed record PlaylistQueue
             ReservedStart = null,
             // A new playlist is a new pass: its items get a fresh attempt.
             FailedSinceStart = FailedSinceStart.Clear(),
+            ConsecutiveFailures = 0,
             Playlist = [.. items],
             PendingJump = items[0],
             Revision = cleared.Revision + 1,
@@ -342,14 +361,29 @@ internal sealed record PlaylistQueue
 
     /// <summary>
     /// Takes the item a replay from <c>Ended</c> will start with, before the controller unloads.
-    /// The result is <see langword="false"/> when the player holds nothing to take.
+    /// The result is <see langword="false"/> when the player holds nothing to take, or when a run of
+    /// failed starts has marked the whole playlist. A new session that cannot open any item fails its
+    /// load, which would put the player in <c>Error</c>, so that replay is refused (#810). Any other
+    /// replay is a new pass, whose items get a fresh attempt.
     /// </summary>
     public (PlaylistQueue Queue, bool Reserved) ReserveStart()
     {
         if (ReservedStart is not null)
             return (this, true);
+        if (NothingLeftThatCanStart)
+            return (this, false);
         var (queue, item) = TakeFirst();
-        return item is null ? (this, false) : (queue with { ReservedStart = item }, true);
+        return item is null
+            ? (this, false)
+            : (
+                queue with
+                {
+                    ReservedStart = item,
+                    ConsecutiveFailures = 0,
+                    FailedSinceStart = FailedSinceStart.Clear(),
+                },
+                true
+            );
     }
 
     /// <summary>
@@ -377,7 +411,8 @@ internal sealed record PlaylistQueue
     /// A failed start records the current item as failed. When every playlist item has failed to
     /// start since an item last made progress, the advance takes only next and queued items and then
     /// ends, under every repeat mode, rather than reopening an item that has already failed (#758).
-    /// A pending jump is still taken.
+    /// A pending jump is still taken. Once <see cref="FailuresExhausted"/> holds, a failed item's
+    /// advance ends at once and leaves them all where they are (#810).
     /// </remarks>
     /// <remarks>
     /// The decision is <see cref="NextKind.Replay"/> whenever the item taken plays the <i>same
@@ -389,6 +424,18 @@ internal sealed record PlaylistQueue
     /// </remarks>
     public (PlaylistQueue Queue, NextDecision Decision) DecideNext(PlaylistAdvance reason)
     {
+        var failed = reason is PlaylistAdvance.FailedStart or PlaylistAdvance.Fault;
+
+        // Running out of tolerance ends the queue as trying every item does, and a replay of a
+        // playlist that would not start is refused the same way, however long the playlist is.
+        if (failed && FailuresExhausted)
+        {
+            var ended = reason == PlaylistAdvance.FailedStart
+                ? this with { FailedSinceStart = FailedSinceStart.Union(Playlist) }
+                : this;
+            return (ended, new NextDecision(NextKind.End, null, Wrapped: false));
+        }
+
         if (PendingJump is { } jump)
         {
             var (queue, decision) = (this with { PendingJump = null }).Take(
@@ -404,8 +451,8 @@ internal sealed record PlaylistQueue
         if (Repeat == RepeatMode.One && !movesOn && Current is { } current)
             return (this, new NextDecision(NextKind.Replay, current, Wrapped: false));
 
-        if (reason == PlaylistAdvance.FailedStart && Current is { } failed)
-            return (this with { FailedSinceStart = FailedSinceStart.Add(failed) }).DecideAfterFailedStart();
+        if (reason == PlaylistAdvance.FailedStart && Current is { } unopened)
+            return (this with { FailedSinceStart = FailedSinceStart.Add(unopened) }).DecideAfterFailedStart();
 
         return DecideOnward(movesOn);
     }
@@ -498,7 +545,7 @@ internal sealed record PlaylistQueue
         };
 
     /// <summary>
-    /// Records a failed item. The result is <see langword="true"/> when the playlist should give up.
+    /// Records a failed item, which <see cref="DecideNext"/> then acts on.
     /// <see cref="PlaylistFailureGuard"/> describes the rule.
     /// </summary>
     /// <param name="playedFor">
@@ -508,20 +555,13 @@ internal sealed record PlaylistQueue
     /// <param name="itemLength">
     /// The item's duration, or <see cref="TimeSpan.Zero"/> when it is not known.
     /// </param>
-    public (PlaylistQueue Queue, bool GiveUp) ItemFailed(TimeSpan playedFor, TimeSpan itemLength)
+    public PlaylistQueue ItemFailed(TimeSpan playedFor, TimeSpan itemLength)
     {
         // An item that played far enough made progress, as one that ended does.
         if (playedFor >= PlaylistFailureGuard.ProgressNeeded(itemLength))
-            return (ItemEnded(), false);
+            return ItemEnded();
 
-        var count = ConsecutiveFailures + 1;
-        return (
-            this with
-            {
-                ConsecutiveFailures = count,
-            },
-            count > PlaylistFailureGuard.MaxConsecutiveFailures
-        );
+        return this with { ConsecutiveFailures = ConsecutiveFailures + 1 };
     }
 
     // ── Reads ───────────────────────────────────────────────────────────────

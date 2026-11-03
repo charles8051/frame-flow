@@ -8,8 +8,8 @@ namespace FrameFlow.Integration.Tests;
 /// <summary>
 /// Faults inside playlist items, over real corpus media through
 /// <see cref="PlaybackController.CreatePlaylist"/> (#180). An item that fails is reported on
-/// <see cref="IPlaybackController.ErrorOccurred"/> and the playlist moves on. The player enters
-/// <see cref="PlaybackState.Error"/> only when items keep failing.
+/// <see cref="IPlaybackController.ErrorOccurred"/> and the playlist moves on. The player ends in
+/// <see cref="PlaybackState.Ended"/> when items keep failing (#810).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,7 +27,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Clip = "test-video-h264-yuv420p.mp4";
 
-    // PlaylistSession gives up on the failure after this many in a row.
+    // The queue ends on the failure after this many in a row.
     private const int FailuresBeforeGivingUp = 9;
 
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
@@ -112,7 +112,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     [InlineData(RepeatMode.One, false)]
     [InlineData(RepeatMode.All, true)]
     [InlineData(RepeatMode.One, true)]
-    public async Task ItemThatFaultsOnEveryPass_IsReportedEachTime_ThenPutsThePlayerInError(
+    public async Task ItemThatFaultsOnEveryPass_IsReportedEachTime_ThenThePlaylistEnds(
         RepeatMode repeat,
         bool asSingleSource
     )
@@ -126,15 +126,33 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         );
 
         await run.PlayAsync();
-        // Wait for the give-up error, not the state: the controller projects Error before it
-        // raises the error that put it there.
-        await run.GaveUp.WaitAsync(Bound);
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
-        Assert.Equal(PlaybackState.Error, run.Controller.State);
         var errors = run.Errors;
-        Assert.Equal(FailuresBeforeGivingUp + 1, errors.Count);
+        Assert.Equal(FailuresBeforeGivingUp, errors.Count);
         Assert.All(errors, e => Assert.True(InjectedFault.Caused(e), $"Unexpected error: {e}"));
-        Assert.Contains("gave up", errors[^1].Message);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AReplaceFromTheHandlerOfTheFailureThatEndsTheQueue_PlaysTheNewPlaylist()
+    {
+        // #809. The session has ended the queue by the time the handler runs. The first chain is the
+        // item that faults; the replacement's is left alone.
+        var replacement = ClipSource();
+        var faults = new FaultInjector(breaks: chain => chain == 0);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+
+        var replaced = run.Transitioned(replacement);
+        using var replace = run.Controller.ErrorOccurred.Subscribe(
+            new ActionObserver<PlaybackError>(_ => run.Coordinator.Replace([replacement]))
+        );
+
+        await run.PlayAsync();
+        await replaced.WaitAsync(Bound);
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
+
+        Assert.True(InjectedFault.Caused(Assert.Single(run.Errors)));
+        Assert.Same(replacement, run.Transitions[^1].Item.Source);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -174,10 +192,10 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         );
 
         await run.PlayAsync();
-        // Either enough faults were reported, or the player gave up first.
-        await Task.WhenAny(enough.Task, run.Settled(PlaybackState.Error)).WaitAsync(Bound);
+        // Either enough faults were reported, or the queue ended first.
+        await Task.WhenAny(enough.Task, run.Settled(PlaybackState.Ended)).WaitAsync(Bound);
 
-        Assert.NotEqual(PlaybackState.Error, run.Controller.State);
+        Assert.NotEqual(PlaybackState.Ended, run.Controller.State);
         Assert.True(run.Errors.Count >= target, $"Only {run.Errors.Count} faults were reported.");
         Assert.All(run.Errors, e => Assert.True(InjectedFault.Caused(e), $"Unexpected error: {e}"));
     }

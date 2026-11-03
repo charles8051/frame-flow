@@ -20,8 +20,8 @@ public sealed class PlaylistFailureGuardTests
 
     private bool ItemFailed(TimeSpan playedFor, TimeSpan itemLength)
     {
-        (_queue, var giveUp) = _queue.ItemFailed(playedFor, itemLength);
-        return giveUp;
+        _queue = _queue.ItemFailed(playedFor, itemLength);
+        return _queue.FailuresExhausted;
     }
 
     private void ItemEnded() => _queue = _queue.ItemEnded();
