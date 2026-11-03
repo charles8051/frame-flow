@@ -157,7 +157,7 @@ public sealed class VideoSinkFailureTests
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task ASinkThatAlwaysThrows_PutsARepeatingPlayerInError_OnceTheItemKeepsFailing()
+    public async Task ASinkThatAlwaysThrows_EndsARepeatingPlayer_OnceTheItemKeepsFailing()
     {
         var sink = new ThrowingVideoSink(_ => true);
         await using var player = await BuildAsync(Corpus(LongerClip), sink, RepeatMode.One);
@@ -169,15 +169,14 @@ public sealed class VideoSinkFailureTests
         var result = await ended.WaitAsync(Bound);
 
         // The item plays again after each fault, and faults again at its first frame, until the
-        // playlist gives up.
-        Assert.False(result.IsSuccess);
-        Assert.Equal(PlaybackState.Error, player.State);
+        // count ends the queue.
+        Assert.True(result.IsSuccess);
+        Assert.Equal(PlaybackState.Ended, player.State);
         Assert.Equal(PlaylistFailureGuard.MaxConsecutiveFailures + 1, Volatile.Read(ref failed));
         Assert.Equal(
             SinkFailureRun.MaxConsecutiveFailures + PlaylistFailureGuard.MaxConsecutiveFailures + 1,
             sink.Calls
         );
-        Assert.Same(sink.Thrown[^1], Innermost(result.Error!.Inner));
     }
 
     [RequiresFfmpegAndCorpusFact]

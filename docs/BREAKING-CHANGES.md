@@ -13,7 +13,39 @@ errors, which announce themselves. A few are not, and those are called out.
 
 ## Unreleased — since `v0.18.0`
 
-### 1. A decoder opened on a lost lent device fails with `DeviceLostException`, under `Auto` too
+### 1. A run of failed items ends in `Ended`, and no longer in `Error`
+
+**A change in behaviour, not a compile error.**
+
+A playlist whose items fail without making progress now ends in `Ended`, however many items it holds
+and however they fail (#810). It used to end in `Ended` or `Error` depending on its length and on
+whether its items failed to open or faulted. The last `ErrorOccurred` no longer says the player gave
+up, and no `Error` follows it.
+
+- **More than eight failures in a row ends in `Ended`.** That is what ends a long playlist of dead
+  sources, and items that fault on every pass under `RepeatMode.All` or `RepeatMode.One`.
+- **`WaitForEndAsync` returns success at that end.** It reads `Ended`, as it does after a last item
+  faults under `RepeatMode.Off`. Watch `ItemFailed` to see the failures.
+- **`PlayAsync` from that end is refused if no playlist item could be started.** It returns a failed
+  `Result` with `ErrorCategory.InvalidOperation`, and the player stays in `Ended`. It used to reload,
+  fail and enter `Error`. If an item faulted rather than failing to open, `PlayAsync` starts a new
+  pass.
+- **`ReplaceAsync` also resets the count of failures.** Failures from before a replace used to count
+  after it.
+- **A jump recorded before the player handles the end of its queue is now taken** (#809). That includes
+  a `ReplaceAsync` from an `ItemFailed` handler, which used to return `Ok` and leave the player in
+  `Error`.
+
+**Who hits this.**
+- Code that waits for `Error`, or looks for "gave up" in an error message, after a run of failures.
+- Code that takes a successful `WaitForEndAsync` to mean every item played.
+
+**What to write instead.**
+- Treat `Ended` after `ItemFailed` as the playlist having no playable item left. This replaces the
+  narrower advice in `v0.17.0`, entry 1.
+- To try again after `PlayAsync` is refused, call `ReplaceAsync`, or add, enqueue or jump to an item.
+
+### 2. A decoder opened on a lost lent device fails with `DeviceLostException`, under `Auto` too
 
 **A change in behaviour, not a compile error.**
 
@@ -41,7 +73,7 @@ A codec with no hardware configuration for the device's backend still decodes in
 opened on it. Under `Auto` it did not, and a caller who read the loss from a player's failure
 never learned of it while the player went on decoding on the CPU.
 
-### 2. The H.264 encoder converts with BT.709 and tags the stream, and older recordings stay untagged
+### 3. The H.264 encoder converts with BT.709 and tags the stream, and older recordings stay untagged
 
 **No compile error. New recordings hold different samples, and older ones need retagging.**
 

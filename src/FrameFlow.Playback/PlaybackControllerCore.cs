@@ -1398,6 +1398,38 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         return true;
     }
 
+    /// <summary>
+    /// Starts an item recorded after the session reported its end, rather than entering
+    /// <c>Ended</c> with it waiting. A session reports its end as it decides it, and a handler of the
+    /// failure that ended it runs on this loop before the end is handled here, so a replace from
+    /// that handler is one this reaches (#809). The item plays if the player was playing, and is
+    /// left paused if it was paused, as a jump on a live session is.
+    /// </summary>
+    private async Task<bool> TryStartWaitingItemInsteadOfEndingAsync(PlaybackTrigger trigger)
+    {
+        if (
+            trigger != PlaybackTrigger.LastFrameRendered
+            || !CanFirePlayback(trigger)
+            || _loadedSource is not { } source
+            || _session is not { HasStartWaiting: true } session
+            || !session.TryBeginReplay()
+        )
+        {
+            return false;
+        }
+
+        var wasPaused = _state == InternalPlaybackState.Paused;
+        await RunPlaybackAsync(PlaybackTrigger.Unload);
+
+        var loadResult = await LoadSourceAsync(source).ConfigureAwait(false);
+        if (loadResult.IsSuccess && !wasPaused)
+        {
+            await RunPlaybackAsync(PlaybackTrigger.Play);
+        }
+
+        return true;
+    }
+
     private async Task CompletePendingSeekDrainCommandsAsync(long operationId)
     {
         while (_pendingSeekDrainCommands.Count > 0)
@@ -1625,6 +1657,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                                 itc.Error
                             );
                             await RunPlaybackAsync(PlaybackTrigger.FatalError, error: error);
+                        }
+                        else if (await TryStartWaitingItemInsteadOfEndingAsync(itc.Trigger))
+                        {
+                            // Nothing more: the end of the session led to the item, not to Ended.
                         }
                         else if (CanFirePlayback(itc.Trigger))
                         {

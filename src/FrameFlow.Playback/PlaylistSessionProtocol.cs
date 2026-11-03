@@ -41,10 +41,10 @@ namespace FrameFlow.Playback;
 /// </para>
 /// <para>
 /// <b>Failures.</b> An item that cannot be opened, warmed or started, or faults while it plays, is
-/// reported and skipped. <see cref="PlaylistFailureGuard"/> decides when the session gives up and
-/// hands the controller a fatal error instead. A fault before the first Play is the first item
-/// failing to start, and goes to the controller as a single source's would. Once the session has given
-/// up, a command completes as a no-op, as it does during disposal.
+/// reported and skipped. <see cref="PlaylistFailureGuard"/> decides when the queue ends instead. A
+/// fault before the first Play is the first item failing to start, and goes to the controller as a
+/// single source's would. Once the session has given up, a command completes as a no-op, as it does
+/// during disposal.
 /// </para>
 /// <para>
 /// <b>Disposal.</b> While <see cref="PlaylistStepContext.Disposing"/> is set, a command completes as
@@ -482,17 +482,10 @@ internal static class PlaylistSessionProtocol
             // played for its reading less its start, out of what lies between its start and its
             // end, or the end of the source.
             var start = State.Item!.Item.Start;
-            var (queue, giveUp) = Queue.ItemFailed(
+            Queue = Queue.ItemFailed(
                 Remaining(playedFor, start),
                 Remaining(EndOf(State.Item), start)
             );
-            Queue = queue;
-            if (giveUp)
-            {
-                GiveUp(error);
-                Done();
-                return;
-            }
 
             AdvancePass(command: null, ItemEnding.Fault);
         }
@@ -699,13 +692,7 @@ internal static class PlaylistSessionProtocol
                 )
             );
 
-            var (queue, giveUp) = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
-            Queue = queue;
-            if (giveUp)
-            {
-                Complete(work.Command, PlaylistCommandResult.Failed(GiveUpException(failure.Error)));
-                return;
-            }
+            Queue = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
             var (next, decision) = Queue.DecideNext(PlaylistAdvance.FailedStart);
             Queue = next;
@@ -782,14 +769,7 @@ internal static class PlaylistSessionProtocol
                 )
             );
 
-            var (queue, giveUp) = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
-            Queue = queue;
-            if (giveUp)
-            {
-                GiveUp(error);
-                Complete(command, PlaylistCommandResult.Ok);
-                return;
-            }
+            Queue = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
             AdvancePass(command, ItemEnding.FailedStart);
         }
@@ -1197,14 +1177,7 @@ internal static class PlaylistSessionProtocol
                 Previous = work.Item,
             };
 
-            var (queue, giveUp) = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
-            Queue = queue;
-            if (giveUp)
-            {
-                GiveUp(work.Failure.Error);
-                EndAdvance(failedAdvance);
-                return;
-            }
+            Queue = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
             // The queue moved past the failed item when it was taken, so this takes the one after
             // it, under every repeat mode.
@@ -1490,20 +1463,6 @@ internal static class PlaylistSessionProtocol
             if (State.Item is { } item)
                 State = State with { Item = item with { KnownRun = outcome.Run, KnownTimeline = outcome.Timeline } };
         }
-
-        private void GiveUp(Exception? last)
-        {
-            DiscardPrepared();
-            State = State with { GaveUp = true };
-            Emit(new PlaylistSessionAction.ReportFatal(GiveUpException(last)));
-        }
-
-        private InvalidOperationException GiveUpException(Exception? last) =>
-            new(
-                $"Playlist advance gave up after {Queue.ConsecutiveFailures} "
-                    + "consecutive item failures.",
-                last
-            );
 
         /// <summary>
         /// Where an item stops: its end when it has one before the end of the source, otherwise the

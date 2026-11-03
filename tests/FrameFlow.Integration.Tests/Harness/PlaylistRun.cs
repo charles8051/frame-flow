@@ -21,9 +21,6 @@ internal sealed class PlaylistRun : IAsyncDisposable
     private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
     private readonly List<int> _loops = [];
     private readonly List<(int Count, TaskCompletionSource Signal)> _loopWaiters = [];
-    private readonly TaskCompletionSource _gaveUp = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
     private readonly IDisposable[] _subscriptions;
     private readonly IMediaSource _firstItem;
 
@@ -45,8 +42,6 @@ internal sealed class PlaylistRun : IAsyncDisposable
                 {
                     lock (_gate)
                         _errors.Add(e);
-                    if (e.Message.Contains("gave up", StringComparison.Ordinal))
-                        _gaveUp.TrySetResult();
                 })
             ),
             coordinator.SourceTransitioned.Subscribe(
@@ -104,9 +99,6 @@ internal sealed class PlaylistRun : IAsyncDisposable
     public PlaylistCoordinator Coordinator { get; }
 
     public PresentCountingVideoSink Sink { get; }
-
-    /// <summary>Completes when the playlist's give-up error is raised.</summary>
-    public Task GaveUp => _gaveUp.Task;
 
     public IReadOnlyList<PlaybackError> Errors
     {

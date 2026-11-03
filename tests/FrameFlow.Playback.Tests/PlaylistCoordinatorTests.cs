@@ -213,12 +213,12 @@ public sealed class PlaylistCoordinatorTests
         var coord = new PlaylistCoordinator([S("a")], RepeatMode.All);
 
         for (var i = 0; i < 4; i++)
-            Assert.False(coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero));
+            coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
         // A new session reads the same count.
         for (var i = 0; i < 4; i++)
-            Assert.False(coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero));
+            coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
 
-        Assert.True(coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero));
+        Assert.Equal(8, coord.ConsecutiveFailures);
     }
 
     // ── The load a controller of one source makes (the one-player-type record) ──────────────

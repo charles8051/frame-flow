@@ -301,10 +301,8 @@ internal sealed class PlaylistCoordinator
     /// <summary>Records an item that ended without failing, which resets the failure count.</summary>
     internal void ItemEnded() => Apply(q => q.ItemEnded());
 
-    /// <summary>
-    /// Records a failed item. Returns <see langword="true"/> when the playlist should give up.
-    /// </summary>
-    internal bool ItemFailed(TimeSpan playedFor, TimeSpan itemLength) =>
+    /// <summary>Records a failed item.</summary>
+    internal void ItemFailed(TimeSpan playedFor, TimeSpan itemLength) =>
         Apply(q => q.ItemFailed(playedFor, itemLength));
 
     /// <summary>

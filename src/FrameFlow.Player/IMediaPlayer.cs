@@ -73,14 +73,15 @@ namespace FrameFlow.Player;
 /// continues. An item that cannot be started is passed over under every repeat mode, until
 /// every playlist item has failed to start since an item last ended, was skipped, or played long
 /// enough to break a run of failures; the player then ends in
-/// <see cref="PlaybackState.Ended"/> once no next or queued item is left. The
-/// player's very first item is treated as a single source's: if it cannot be opened the load
-/// fails, and if it faults before the first <see cref="IMediaTransport.PlayAsync"/> the player
-/// enters <see cref="PlaybackState.Error"/>. The player gives up and enters <see cref="PlaybackState.Error"/>
-/// when more than eight items fail in a row, and <see cref="ReplaceAsync(IEnumerable{IMediaSource}, CancellationToken)"/>
-/// recovers it from there. An item that ends or is skipped without
-/// failing breaks the run, and so does a fault after an item has played for five
-/// seconds, or for half its length if that is shorter.
+/// <see cref="PlaybackState.Ended"/> once no next or queued item is left. It also ends there, leaving
+/// those items in place, when more than eight items fail in a row, however they fail. An item that
+/// ends or is skipped without failing breaks the run, and so does a fault after an item has played
+/// for five seconds, or for half its length if that is shorter. From that end, <see cref="IMediaTransport.PlayAsync"/> tries again if any playlist item
+/// opened, and is refused as above if none could be started: replace the playlist, or add, jump to
+/// or enqueue an item first. The player's very first item is treated as a single source's: if it
+/// cannot be opened the load fails, and if it faults before the first
+/// <see cref="IMediaTransport.PlayAsync"/> the player enters <see cref="PlaybackState.Error"/>.
+/// <see cref="ReplaceAsync(IEnumerable{IMediaSource}, CancellationToken)"/> recovers it from there.
 /// </para>
 /// </remarks>
 public interface IMediaPlayer : IMediaTransport
@@ -316,10 +317,11 @@ public interface IMediaPlayer : IMediaTransport
     /// It does not fire for every failure, and does not always mean the player carries on. The
     /// first item is treated as a single source's, so a failure before anything has played fails
     /// the load or enters <see cref="PlaybackState.Error"/> instead, raising nothing here. Nothing
-    /// fires while the player is disposing. And the failure that exhausts the consecutive-failure
-    /// guard is raised here and then followed by <see cref="PlaybackState.Error"/>, so a consumer
-    /// that retries or re-queues on this event should watch the state too. A replace recovers the
-    /// player from <see cref="PlaybackState.Error"/>.
+    /// fires while the player is disposing. And the failure that ends the queue is raised here and
+    /// then followed by <see cref="PlaybackState.Ended"/>. A replace from a handler of this event
+    /// moves the player to the new playlist instead. A handler that hands the replace to another
+    /// thread may reach a player that has already ended, where the new playlist waits for
+    /// <see cref="IMediaTransport.PlayAsync"/>.
     /// </para>
     /// </remarks>
     IObservable<PlaylistItemFailed> ItemFailed { get; }

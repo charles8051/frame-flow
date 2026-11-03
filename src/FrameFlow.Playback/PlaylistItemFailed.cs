@@ -24,17 +24,15 @@ namespace FrameFlow.Playback;
 /// </para>
 /// <para>
 /// <b>It does not always mean the player carries on.</b> It usually does: the item is skipped and
-/// the next one plays. The exception is the failure that exhausts the consecutive-failure guard.
-/// That one is raised here and is then followed by the player entering
-/// <c>PlaybackState.Error</c>, so a consumer that retries or re-queues on this event should watch
-/// the state as well rather than assume recovery. <c>IMediaPlayer.ReplaceAsync</c> leaves
-/// <c>PlaybackState.Error</c> and opens the new playlist.
+/// the next one plays. The exception is the failure that ends the queue, which is raised here and is
+/// then followed by <c>PlaybackState.Ended</c>. <c>IMediaPlayer.ReplaceAsync</c> from a handler of
+/// this event moves the player to the new playlist instead.
 /// </para>
 /// <para>
 /// An item that fails to start is passed over until every playlist item has failed to start since
 /// an item last ended, was skipped, or played long enough to break a run of failures. The player
 /// then takes any next or queued items, and otherwise ends in <c>PlaybackState.Ended</c>, under
-/// every repeat mode.
+/// every repeat mode. It also ends there when more than eight items fail in a row, however they fail.
 /// </para>
 /// <para>
 /// It does not fire for every failure. The first item of a player is treated as a single source's,
