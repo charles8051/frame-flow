@@ -1,3 +1,4 @@
+using FrameFlow.Graph;
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
@@ -10,10 +11,12 @@ namespace FrameFlow.Integration.Tests;
 /// its only item failed, the player ends (#758).
 /// </summary>
 /// <remarks>
-/// No device is removed. A sink that throws <see cref="DeviceLostException"/> stands in for one
-/// on a lost device, and stops throwing when the test replaces the device. These tests wait on
-/// real playback, which is why they are in this suite (ADR-0072 rule 6). Each wait completes on a
-/// signal; the bound only stops a failing run.
+/// No device is removed. A graph node between the decoder and the pacer throws
+/// <see cref="DeviceLostException"/> as the decoder does on a lost device, and stops throwing when
+/// the test replaces the device. A sink cannot stand in: a sink's failure is reported as
+/// <see cref="ErrorCategory.Sink"/>, whatever it threw (#836). These tests wait on real playback,
+/// which is why they are in this suite (ADR-0072 rule 6). Each wait completes on a signal; the
+/// bound only stops a failing run.
 /// </remarks>
 [Trait("Category", "Integration")]
 public sealed class DeviceLossRecoveryTests : IClassFixture<FfmpegBootstrapFixture>
@@ -32,20 +35,20 @@ public sealed class DeviceLossRecoveryTests : IClassFixture<FfmpegBootstrapFixtu
     {
         var path = IntegrationTestEnvironment.GetCorpusFile(Clip);
         Assert.NotNull(path);
-        var sink = new LostDeviceSink();
-        var (controller, _) = IntegrationTestHelper.CreateController(sink);
+        var device = new LostDeviceNode();
+        var sink = new PresentedSink();
+        var controller = PlaybackController.Create(
+            videoSink: sink,
+            audioSink: new HarnessAudioSink(),
+            hardwareDecodeMode: HardwareDecodeMode.Disabled,
+            configureVideo: device.Configure
+        );
         await using (controller)
         {
             var fatal = new TaskCompletionSource<PlaybackError>(TaskCreationOptions.RunContinuationsAsynchronously);
             var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var errors = controller.ErrorOccurred.Subscribe(
-                new ActionObserver<PlaybackError>(error =>
-                {
-                    // The sink's per-frame failures are reported too; the fault is the one that
-                    // says the sink threw on every call in a row.
-                    if (error.Message.Contains("in a row", StringComparison.Ordinal))
-                        fatal.TrySetResult(error);
-                })
+                new ActionObserver<PlaybackError>(error => fatal.TrySetResult(error))
             );
             using var states = controller.PlaybackStateChanged.Subscribe(
                 new ActionObserver<StateTransition<PlaybackState>>(transition =>
@@ -55,8 +58,10 @@ public sealed class DeviceLossRecoveryTests : IClassFixture<FfmpegBootstrapFixtu
                 })
             );
 
-            sink.Lose(DeviceReset);
+            // Lost after the load: the load's warm-up runs frames through the node, and a loss
+            // there fails the load instead.
             Assert.True((await controller.LoadAsync(MediaSource.FromFile(path))).IsSuccess);
+            device.Lose(DeviceReset);
             Assert.True((await controller.PlayAsync()).IsSuccess);
 
             var error = await fatal.Task.WaitAsync(Bound);
@@ -67,42 +72,67 @@ public sealed class DeviceLossRecoveryTests : IClassFixture<FfmpegBootstrapFixtu
 
             // The caller replaces the device and loads the same media again. A controller that
             // has ended unloads before it loads.
-            sink.Replace();
+            device.Replace();
             Assert.True((await controller.UnloadAsync()).IsSuccess);
             var load = await controller.LoadAsync(MediaSource.FromFile(path));
             Assert.True(load.IsSuccess, $"The load after the loss failed: {load.Error}");
+            var presented = sink.NextPresented();
             Assert.True((await controller.PlayAsync()).IsSuccess);
 
-            await sink.Presented.WaitAsync(Bound);
+            await presented.WaitAsync(Bound);
             Assert.Equal(PlaybackState.Playing, controller.State);
         }
     }
 
-    /// <summary>A sink that throws as a presenter on a lost device would, until it is replaced.</summary>
-    private sealed class LostDeviceSink : IVideoSink
+    /// <summary>
+    /// A node that throws as the decoder does on a lost device (#759), until the device is replaced.
+    /// </summary>
+    private sealed class LostDeviceNode
     {
-        private readonly TaskCompletionSource _presented = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _removedReason;
-
-        /// <summary>Completes on the first frame presented after <see cref="Replace"/>.</summary>
-        public Task Presented => _presented.Task;
-
-        public int? MaxHeldFrames => 0;
-
-        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
         public void Lose(int removedReason) => Volatile.Write(ref _removedReason, removedReason);
 
         public void Replace() => Volatile.Write(ref _removedReason, 0);
 
+        public GraphChain<IVideoFrame> Configure(GraphChain<IVideoFrame> chain) =>
+            chain.Then(
+                new OperatorNode<IVideoFrame, IVideoFrame>(
+                    "lost-device",
+                    (frame, _) =>
+                    {
+                        int reason = Volatile.Read(ref _removedReason);
+                        if (reason == 0)
+                            return ValueTask.FromResult<IVideoFrame?>(frame);
+
+                        frame.Dispose();
+                        throw new DeviceLostException("The device was lost.", reason);
+                    }
+                )
+            );
+    }
+
+    /// <summary>A sink that says when it is given a frame.</summary>
+    private sealed class PresentedSink : IVideoSink
+    {
+        private TaskCompletionSource? _presented;
+
+        /// <summary>Completes on the first frame presented after this call.</summary>
+        public Task NextPresented()
+        {
+            var next = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _presented, next);
+            return next.Task;
+        }
+
+        public int? MaxHeldFrames => 0;
+
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
+
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             frame.Dispose();
-            int reason = Volatile.Read(ref _removedReason);
-            if (reason != 0)
-                throw new DeviceLostException("The device was lost.", reason);
-
-            _presented.TrySetResult();
+            Volatile.Read(ref _presented)?.TrySetResult();
             return ValueTask.CompletedTask;
         }
 
