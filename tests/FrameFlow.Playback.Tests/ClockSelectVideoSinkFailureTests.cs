@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FrameFlow.Playback.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -37,7 +38,7 @@ public sealed partial class ClockSelectVideoSinkTests
         await pacer.DisposeAsync();
 
         Assert.Same(sink.Thrown[0], error.Inner);
-        Assert.Equal(ErrorCategory.System, error.Category);
+        Assert.Equal(ErrorCategory.Sink, error.Category);
         Assert.Contains(nameof(ScriptedSink), error.Message, StringComparison.Ordinal);
         Assert.Equal(1, failures.Reports);
         Assert.Null(failures.Fault);
@@ -78,12 +79,42 @@ public sealed partial class ClockSelectVideoSinkTests
         Assert.Equal(MaxSinkFailures + 1, sink.Calls);
         Assert.Equal(1, failures.Reports);
         Assert.Equal(1, failures.Faults);
-        var wrapped = Assert.IsType<InvalidOperationException>(fault);
+        var wrapped = Assert.IsType<SinkFailedException>(fault);
         Assert.Same(sink.Thrown[^1], wrapped.InnerException);
+        Assert.Equal(ErrorCategory.Sink, wrapped.Category);
         Assert.Contains(nameof(ScriptedSink), wrapped.Message, StringComparison.Ordinal);
         Assert.All(frames, f => Assert.Equal(0, f.References));
         // Left in the ring when delivery stopped, and released by the teardown.
         Assert.Equal(0, waiting.References);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ASinksOwnDeviceLossOrDiskError_IsReportedAsTheSinks_NotTheDecodersOrTheSources(bool deviceLoss)
+    {
+        // A sink that renders on a device of its own, or writes frames to a full disk (#836).
+        Exception Failure() =>
+            deviceLoss
+                ? new COMException("The GPU device instance has been suspended.", unchecked((int)0x887A0005))
+                : new IOException("There is not enough space on the disk.");
+        var sink = new ScriptedSink { FailPresent = _ => true, Failure = Failure };
+        var failures = new SinkFailureRecorder();
+        var pacer = NewPacer(sink, failures);
+
+        for (int call = 1; call <= MaxSinkFailures + 1; call++)
+        {
+            await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
+            await sink.WaitForCallsAsync(call);
+        }
+        var fault = await failures.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        var report = await failures.WaitForReportAsync(1);
+        await pacer.DisposeAsync();
+
+        Assert.Equal(ErrorCategory.Sink, report.Category);
+        var wrapped = Assert.IsType<SinkFailedException>(fault);
+        Assert.Equal(ErrorCategory.Sink, wrapped.Category);
+        Assert.Same(sink.Thrown[^1], wrapped.InnerException);
     }
 
     [Fact]

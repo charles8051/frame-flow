@@ -45,7 +45,35 @@ up, and no `Error` follows it.
   narrower advice in `v0.17.0`, entry 1.
 - To try again after `PlayAsync` is refused, call `ReplaceAsync`, or add, enqueue or jump to an item.
 
-### 2. A decoder opened on a lost lent device fails with `DeviceLostException`, under `Auto` too
+### 2. `ErrorCategory` gains `Sink`, and a decoder that cannot open reports `Decode`
+
+**A change in behaviour, and a new enum member.**
+
+Playback now keeps the category of a failure where the failing part is known, instead of guessing it
+from the exceptions inside it (#836, #837).
+
+- **A video sink that throws reports `ErrorCategory.Sink`.** That holds for each failure reported on
+  `ErrorOccurred` and for the item's failure once the sink throws on too many calls in a row. It
+  used to report what the sink threw: `DeviceLost` for a `COMException` from the sink's own removed
+  device, `Io` for a full disk, and `System` otherwise. The item's failure is now an internal
+  `InvalidOperationException` subclass, and what the sink threw is its inner exception.
+- **A decoder that cannot open reports `ErrorCategory.Decode`.** A codec with no decoder, a failed
+  `avcodec_open2` and a failed `avcodec_parameters_to_context` throw `MediaException` with the new
+  `MediaFailureStage.DecoderOpen`, where they threw a plain `InvalidOperationException`. A load
+  reported these as `System`, and `PrepareAsync` as `InvalidOperation`.
+- **`HardwareDecodeUnavailableException` reports `Decode`.** A load reported it as `System`, and
+  `PrepareAsync` as `Source`.
+- **`PrepareAsync` classifies a failure as a load does.** A failure it does not recognise is `System`,
+  where it was `Source`. A refusal, such as a prepare after the playlist has ended, is still
+  `InvalidOperation`.
+
+**Who hits this.**
+- Code that switches over `ErrorCategory` without a default arm. Add `Sink`.
+- Code that disposes a shared `HardwareDevice` on `DeviceLost`. A sink's own device loss no longer
+  triggers it, which is the point of the change.
+- Code that treats `Io` as "the source's file is missing" now sees `Sink` for a sink's disk error.
+
+### 3. A decoder opened on a lost lent device fails with `DeviceLostException`, under `Auto` too
 
 **A change in behaviour, not a compile error.**
 
@@ -73,7 +101,7 @@ A codec with no hardware configuration for the device's backend still decodes in
 opened on it. Under `Auto` it did not, and a caller who read the loss from a player's failure
 never learned of it while the player went on decoding on the CPU.
 
-### 3. The H.264 encoder converts with BT.709 and tags the stream, and older recordings stay untagged
+### 4. The H.264 encoder converts with BT.709 and tags the stream, and older recordings stay untagged
 
 **No compile error. New recordings hold different samples, and older ones need retagging.**
 

@@ -106,11 +106,14 @@ public sealed class VideoSinkFailureTests
             raised = [.. errors];
         var failure = Assert.Single(failures);
         Assert.Equal(PlaylistItemFailure.FaultedDuringPlayback, failure.Failure);
-        var fault = Assert.IsType<InvalidOperationException>(failure.Error.Inner);
+        var fault = Assert.IsType<SinkFailedException>(failure.Error.Inner);
         Assert.Same(sink.Thrown[^1], fault.InnerException);
+        // The sink failed, not the source or the decoder (#836).
+        Assert.Equal(ErrorCategory.Sink, failure.Error.Category);
         // The first failure is reported, the rest fall inside its interval, and then the item's.
         Assert.Equal(2, raised.Length);
         Assert.Same(sink.Thrown[0], raised[0].Inner);
+        Assert.Equal(ErrorCategory.Sink, raised[0].Category);
         Assert.Same(failure.Error, raised[1]);
         Assert.Equal(SinkFailureRun.MaxConsecutiveFailures + 1, sink.Calls);
     }

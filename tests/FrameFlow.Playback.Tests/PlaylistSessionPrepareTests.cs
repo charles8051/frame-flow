@@ -1,3 +1,5 @@
+using FrameFlow.Media;
+using FrameFlow.Decoding;
 namespace FrameFlow.Playback.Tests;
 
 /// <summary>
@@ -53,6 +55,33 @@ public sealed class PlaylistSessionPrepareTests
             ["a#1.Dispose", "clock.Stop", "b#2.Open", "b#2.WarmUp", "b#2.Play", "ctl.ItemChanged(b)", "transition(b)"],
             rig.TakeLog()
         );
+    }
+
+    [Theory]
+    [InlineData("no decoder", ErrorCategory.Decode)]
+    [InlineData("hardware required", ErrorCategory.Decode)]
+    [InlineData("unrecognised", ErrorCategory.System)]
+    public async Task APreparationThatFails_HasTheCategoryALoadWouldGiveIt(string failure, ErrorCategory expected)
+    {
+        // What a load reports for the same failure (#837): an unrecognised one is System.
+        Exception thrown = failure switch
+        {
+            "no decoder" => new MediaException(
+                "No decoder found for codec ID 1 on stream 0.",
+                -1128613112, // AVERROR_DECODER_NOT_FOUND
+                MediaFailureStage.DecoderOpen
+            ),
+            "hardware required" => new HardwareDecodeUnavailableException(27, "h264", []),
+            _ => new FormatException("unrecognised"),
+        };
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        rig.Fail("b", ItemOp.Open, thrown);
+
+        var prepared = await rig.Session.PrepareAsync(rig.PlaylistItem("b"), CancellationToken.None);
+
+        Assert.False(prepared.IsSuccess);
+        Assert.Equal(expected, prepared.Error.Category);
+        Assert.Same(thrown, prepared.Error.Inner);
     }
 
     [Fact]

@@ -18,7 +18,10 @@ namespace FrameFlow.Media.Core;
 ///   <item><term><c>AVERROR_INVALIDDATA</c> before the first packet</term><description><see cref="ErrorCategory.Source"/></description></item>
 ///   <item><term><c>AVERROR_INVALIDDATA</c> mid-stream</term><description><see cref="ErrorCategory.Decode"/></description></item>
 ///   <item><term>no decodable stream, <c>AVERROR_STREAM_NOT_FOUND</c></term><description><see cref="ErrorCategory.Source"/></description></item>
-///   <item><term>a <see cref="DeviceLostException"/>, or a device-loss HRESULT, anywhere in the chain</term><description><see cref="ErrorCategory.DeviceLost"/></description></item>
+///   <item><term><c>AVERROR_DECODER_NOT_FOUND</c>, or any code while opening a decoder</term><description><see cref="ErrorCategory.Decode"/></description></item>
+///   <item><term><c>HardwareDecodeUnavailableException</c>: hardware decode is required and no backend binds</term><description><see cref="ErrorCategory.Decode"/></description></item>
+///   <item><term>a video sink that threw on too many calls in a row</term><description><see cref="ErrorCategory.Sink"/>, whatever it threw</description></item>
+///   <item><term>a <see cref="DeviceLostException"/>, or a device-loss HRESULT, in the chain and not inside a sink's failure</term><description><see cref="ErrorCategory.DeviceLost"/></description></item>
 ///   <item><term>any other code</term><description><see cref="ErrorCategory.Source"/> while opening or seeking, <see cref="ErrorCategory.Decode"/> while reading or decoding</description></item>
 /// </list>
 /// <para>
@@ -56,6 +59,12 @@ internal static class MediaErrorClassification
     /// </summary>
     internal const int StreamNotFound = -(0xF8 | ('S' << 8) | ('T' << 16) | ('R' << 24));
 
+    /// <summary>
+    /// <c>AVERROR_DECODER_NOT_FOUND</c>: the code a <see cref="MediaFailureStage.DecoderOpen"/>
+    /// failure carries when <c>avcodec_find_decoder</c> finds no decoder for the codec (#837).
+    /// </summary>
+    internal const int DecoderNotFound = -(0xF8 | ('D' << 8) | ('E' << 16) | ('C' << 24));
+
     /// <summary>The category of FFmpeg error <paramref name="errorCode"/> reported at <paramref name="stage"/>.</summary>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="stage"/> is not a defined stage.</exception>
     public static ErrorCategory Categorize(int errorCode, MediaFailureStage stage)
@@ -65,6 +74,7 @@ internal static class MediaErrorClassification
             MediaFailureStage.Open or MediaFailureStage.Probe or MediaFailureStage.StreamResolution => true,
             MediaFailureStage.Seek
             or MediaFailureStage.DemuxRead
+            or MediaFailureStage.DecoderOpen
             or MediaFailureStage.SendPacket
             or MediaFailureStage.ReceiveFrame => false,
             _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "Not a media failure stage."),
@@ -81,6 +91,7 @@ internal static class MediaErrorClassification
             OutOfMemory or Bug or Bug2 => ErrorCategory.System,
             InvalidData => beforeFirstPacket ? ErrorCategory.Source : ErrorCategory.Decode,
             StreamNotFound => ErrorCategory.Source,
+            DecoderNotFound => ErrorCategory.Decode,
             _ when beforeFirstPacket || stage == MediaFailureStage.Seek => ErrorCategory.Source,
             _ => ErrorCategory.Decode,
         };
@@ -97,25 +108,33 @@ internal static class MediaErrorClassification
     /// </param>
     public static ErrorCategory Categorize(Exception? exception, ErrorCategory fallback)
     {
-        // Device loss wins wherever it is in the chain: a decode failure on a lost device is the
-        // loss, not the code FFmpeg returned for it (#759).
-        if (IsDeviceLoss(exception))
-            return ErrorCategory.DeviceLost;
-
+        // The chain is read from the outside in. A device loss wins wherever it is below the
+        // first media or I/O failure: a decode failure on a lost device is the loss, not the code
+        // FFmpeg returned for it (#759). An exception that names the part that failed stops the
+        // search, so a sink's own device loss inside it is the sink's (#836).
+        ErrorCategory? found = null;
         for (var current = exception; current is not null; current = current.InnerException)
         {
+            if (current is DeviceLostException || DeviceLoss.IsDeviceLostCode(current.HResult))
+                return ErrorCategory.DeviceLost;
+
             switch (current)
             {
+                case IFailureOrigin origin:
+                    return found ?? origin.Category;
                 case MediaException media:
-                    return media.Category;
+                    found ??= media.Category;
+                    break;
                 case IOException or UnauthorizedAccessException:
-                    return ErrorCategory.Io;
+                    found ??= ErrorCategory.Io;
+                    break;
                 case OutOfMemoryException:
-                    return ErrorCategory.System;
+                    found ??= ErrorCategory.System;
+                    break;
             }
         }
 
-        return fallback;
+        return found ?? fallback;
     }
 
     /// <summary>

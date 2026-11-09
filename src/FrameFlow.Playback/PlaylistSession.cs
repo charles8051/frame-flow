@@ -875,26 +875,16 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             return Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': the player is disposed.", ex);
         }
-        catch (DeviceLostException ex)
-        {
-            // Before the InvalidOperationException it derives from: the GPU device was lost
-            // (#759).
-            return Result.Fail(ErrorCategory.DeviceLost, $"Preparing '{item}' failed: {ex.Message}", ex);
-        }
-        catch (MediaException ex)
-        {
-            // Before the InvalidOperationException it derives from: the source failed, and the
-            // failure says how (#757).
-            return Result.Fail(ex.Category, $"Preparing '{item}' failed: {ex.Message}", ex);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Result.Fail(ErrorCategory.InvalidOperation, ex.Message, ex);
-        }
         catch (Exception ex)
         {
+            // The same classification a load gives the same failure (#837). A plain
+            // InvalidOperationException is the protocol refusing the request, such as a prepare
+            // after the playlist has ended.
             return Result.Fail(
-                MediaErrorClassification.Categorize(ex, ErrorCategory.Source),
+                MediaErrorClassification.Categorize(
+                    ex,
+                    ex is InvalidOperationException ? ErrorCategory.InvalidOperation : ErrorCategory.System
+                ),
                 $"Preparing '{item}' failed: {ex.Message}",
                 ex
             );

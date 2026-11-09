@@ -19,7 +19,10 @@ public enum ErrorCategory
     /// <summary>A network-related error (timeout, DNS, connection reset).</summary>
     Network,
 
-    /// <summary>A decoding error (corrupt frame, unsupported codec).</summary>
+    /// <summary>
+    /// A decoding error: a corrupt frame, a codec with no decoder, a decoder that cannot open, or
+    /// hardware decode that is required and cannot bind.
+    /// </summary>
     Decode,
 
     /// <summary>An I/O error (file not found, permission denied).</summary>
@@ -34,6 +37,13 @@ public enum ErrorCategory
     /// carries the reason the device reported.
     /// </summary>
     DeviceLost,
+
+    /// <summary>
+    /// A video sink the caller supplied threw (#836). Whatever it threw, its own device's loss or
+    /// a full disk included, is in <see cref="PlaybackError.Inner"/>. The source and the decode
+    /// device are not at fault.
+    /// </summary>
+    Sink,
 }
 
 /// <summary>

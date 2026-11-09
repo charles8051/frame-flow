@@ -9,6 +9,7 @@ using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -210,8 +211,10 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
         // ------------------------------------------------------------------
         nint codec = FFAvCodec.avcodec_find_decoder(codecId);
         if (codec == nint.Zero)
-            throw new InvalidOperationException(
-                $"Audio decoder: no decoder found for codec id {codecId}."
+            throw new MediaException(
+                $"Audio decoder: no decoder found for codec id {codecId}.",
+                MediaErrorClassification.DecoderNotFound,
+                MediaFailureStage.DecoderOpen
             );
 
         nint ctx = FFAvCodec.avcodec_alloc_context3(codec);
@@ -223,14 +226,18 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
 
         int copyResult = FFAvCodec.avcodec_parameters_to_context(ctx, (nint)codecPar);
         if (copyResult < 0)
-            throw new InvalidOperationException(
-                $"Audio decoder: avcodec_parameters_to_context failed ({copyResult})."
+            throw new MediaException(
+                $"Audio decoder: avcodec_parameters_to_context failed ({copyResult}).",
+                copyResult,
+                MediaFailureStage.DecoderOpen
             );
 
         int openResult = FFAvCodec.avcodec_open2(ctx, codec, nint.Zero);
         if (openResult < 0)
-            throw new InvalidOperationException(
-                $"Audio decoder: avcodec_open2 failed ({openResult})."
+            throw new MediaException(
+                $"Audio decoder: avcodec_open2 failed ({openResult}).",
+                openResult,
+                MediaFailureStage.DecoderOpen
             );
 
         // ------------------------------------------------------------------
