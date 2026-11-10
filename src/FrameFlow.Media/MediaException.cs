@@ -32,6 +32,13 @@ public enum MediaFailureStage
 
     /// <summary><c>avcodec_receive_frame</c>: taking a decoded frame from the decoder.</summary>
     ReceiveFrame,
+
+    /// <summary>
+    /// Finding and opening a decoder for a stream: <c>avcodec_find_decoder</c>,
+    /// <c>avcodec_parameters_to_context</c> and <c>avcodec_open2</c> (#837). A codec that has no
+    /// decoder fails here with <c>AVERROR_DECODER_NOT_FOUND</c>.
+    /// </summary>
+    DecoderOpen,
 }
 
 /// <summary>

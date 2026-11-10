@@ -9,6 +9,7 @@ using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Native;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -184,8 +185,10 @@ public sealed partial class VideoDecoder
 
         nint codec = FFAvCodec.avcodec_find_decoder(codecId);
         if (codec == nint.Zero)
-            throw new InvalidOperationException(
-                $"No decoder found for codec ID {codecId} on stream {streamIndex}."
+            throw new MediaException(
+                $"No decoder found for codec ID {codecId} on stream {streamIndex}.",
+                MediaErrorClassification.DecoderNotFound,
+                MediaFailureStage.DecoderOpen
             );
 
         var codecName = FFAvCodec.avcodec_get_name(codecId);
@@ -791,7 +794,11 @@ public sealed partial class VideoDecoder
         if (ret < 0)
         {
             codecCtx.Dispose();
-            throw new InvalidOperationException($"avcodec_open2 failed with code {ret}.");
+            throw new MediaException(
+                $"avcodec_open2 failed with code {ret}.",
+                ret,
+                MediaFailureStage.DecoderOpen
+            );
         }
 
         return codecCtx;
@@ -821,8 +828,10 @@ public sealed partial class VideoDecoder
         if (ret < 0)
         {
             codecCtx.Dispose();
-            throw new InvalidOperationException(
-                $"avcodec_parameters_to_context failed with code {ret}."
+            throw new MediaException(
+                $"avcodec_parameters_to_context failed with code {ret}.",
+                ret,
+                MediaFailureStage.DecoderOpen
             );
         }
 

@@ -187,3 +187,19 @@ again (fails with the `IsLost` check removed from `Borrow`); a decoder opened on
 fails with `DeviceLostException` under `Auto` and `Required` (fails with the check removed: both
 opened on the device). The devices are FFmpeg device contexts allocated and never opened
 (`HardwareDevice.Unopened`), so the tests run without a GPU, and every loss is fed in.
+
+## Amendment (2026-11-09): a sink's device loss is the sink's
+
+This replaces the Consequences line that said a video sink's device-loss exception reports
+`DeviceLost` (#836). A caller's sink that renders, or runs a model, on a device of its own was
+reported as a loss of the decode device. `HardwareDevice.IsLost` stayed false and no event fired, so
+a caller acting on the category disposed a healthy decode device and every player on it.
+
+- `ErrorCategory` gains `Sink`. The pacer reports each sink failure with it, and raises its fault as
+  an exception that names the sink as the origin.
+- `MediaErrorClassification.Categorize` reads the chain from the outside in, and stops at an
+  exception that names its origin. A device-loss HRESULT inside a sink's failure no longer reaches
+  it.
+- A device-loss HRESULT outside such an exception is still `DeviceLost`. Dropping that rule would
+  need every GPU call on the decode side to raise `DeviceLostException` after asking its device,
+  and a readback does not yet (#831).

@@ -1643,7 +1643,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             // The exception goes with the fault, which the session logs as the item's.
             LogSinkFaulted(_logger, sinkType, verdict.InARow);
             RaiseFault(
-                new InvalidOperationException(
+                new SinkFailedException(
                     $"The video sink {sinkType} threw on {verdict.InARow} calls in a row.",
                     ex
                 )
@@ -1664,7 +1664,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         Raise(
             _onSinkFailed,
             new PlaybackError(
-                MediaErrorClassification.Categorize(ex, ErrorCategory.System),
+                ErrorCategory.Sink,
                 $"The video sink {sinkType} threw on a frame, which was dropped{more}: {ex.Message}",
                 ex
             ),

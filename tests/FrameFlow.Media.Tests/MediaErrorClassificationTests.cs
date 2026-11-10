@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FrameFlow.Media.Core;
 
 namespace FrameFlow.Media.Tests;
@@ -22,6 +23,7 @@ public sealed class MediaErrorClassificationTests
     private const int StreamNotFound = -1381258232; // AVERROR_STREAM_NOT_FOUND, FFERRTAG(0xF8,'S','T','R')
     private const int DemuxerNotFound = -1296385272; // AVERROR_DEMUXER_NOT_FOUND, FFERRTAG(0xF8,'D','E','M')
     private const int EndOfFile = -541478725; // AVERROR_EOF, FFERRTAG('E','O','F',' ')
+    private const int DecoderNotFound = -1128613112; // AVERROR_DECODER_NOT_FOUND, FFERRTAG(0xF8,'D','E','C')
 
     private const ErrorCategory Io = ErrorCategory.Io;
     private const ErrorCategory Source = ErrorCategory.Source;
@@ -35,6 +37,7 @@ public sealed class MediaErrorClassificationTests
         Assert.Equal(Bug, MediaErrorClassification.Bug);
         Assert.Equal(Bug2, MediaErrorClassification.Bug2);
         Assert.Equal(StreamNotFound, MediaErrorClassification.StreamNotFound);
+        Assert.Equal(DecoderNotFound, MediaErrorClassification.DecoderNotFound);
         Assert.Equal(Enoent, MediaErrorClassification.NoSuchFile);
         Assert.Equal(Eio, MediaErrorClassification.IoError);
         Assert.Equal(Enomem, MediaErrorClassification.OutOfMemory);
@@ -45,20 +48,21 @@ public sealed class MediaErrorClassificationTests
     {
         var rows = new TheoryData<int, MediaFailureStage, ErrorCategory>();
 
-        //                                Open    Probe   Streams Seek    Read    Send    Receive
-        Row(rows, Enoent,          [Io,     Io,     Io,     Io,     Io,     Io,     Io]);
-        Row(rows, Eacces,          [Io,     Io,     Io,     Io,     Io,     Io,     Io]);
-        Row(rows, Eio,             [Io,     Io,     Io,     Io,     Io,     Io,     Io]);
-        Row(rows, Enomem,          [System, System, System, System, System, System, System]);
-        Row(rows, Bug,             [System, System, System, System, System, System, System]);
-        Row(rows, Bug2,            [System, System, System, System, System, System, System]);
-        Row(rows, InvalidData,     [Source, Source, Source, Decode, Decode, Decode, Decode]);
-        Row(rows, StreamNotFound,  [Source, Source, Source, Source, Source, Source, Source]);
-        Row(rows, DemuxerNotFound, [Source, Source, Source, Source, Decode, Decode, Decode]);
-        Row(rows, EndOfFile,       [Source, Source, Source, Source, Decode, Decode, Decode]);
-        Row(rows, Eperm,           [Source, Source, Source, Source, Decode, Decode, Decode]);
-        Row(rows, 0,               [System, System, System, System, System, System, System]);
-        Row(rows, 1,               [System, System, System, System, System, System, System]);
+        //                                Open    Probe   Streams Seek    Read    Send    Receive DecOpen
+        Row(rows, Enoent,          [Io,     Io,     Io,     Io,     Io,     Io,     Io,     Io]);
+        Row(rows, Eacces,          [Io,     Io,     Io,     Io,     Io,     Io,     Io,     Io]);
+        Row(rows, Eio,             [Io,     Io,     Io,     Io,     Io,     Io,     Io,     Io]);
+        Row(rows, Enomem,          [System, System, System, System, System, System, System, System]);
+        Row(rows, Bug,             [System, System, System, System, System, System, System, System]);
+        Row(rows, Bug2,            [System, System, System, System, System, System, System, System]);
+        Row(rows, InvalidData,     [Source, Source, Source, Decode, Decode, Decode, Decode, Decode]);
+        Row(rows, StreamNotFound,  [Source, Source, Source, Source, Source, Source, Source, Source]);
+        Row(rows, DecoderNotFound, [Decode, Decode, Decode, Decode, Decode, Decode, Decode, Decode]);
+        Row(rows, DemuxerNotFound, [Source, Source, Source, Source, Decode, Decode, Decode, Decode]);
+        Row(rows, EndOfFile,       [Source, Source, Source, Source, Decode, Decode, Decode, Decode]);
+        Row(rows, Eperm,           [Source, Source, Source, Source, Decode, Decode, Decode, Decode]);
+        Row(rows, 0,               [System, System, System, System, System, System, System, System]);
+        Row(rows, 1,               [System, System, System, System, System, System, System, System]);
 
         return rows;
     }
@@ -122,6 +126,28 @@ public sealed class MediaErrorClassificationTests
         Assert.Equal(Io, MediaErrorClassification.Categorize(io, System));
     }
 
+    [Fact]
+    public void CategorizeException_TakesAnOriginsCategory_AndLooksNoDeeper()
+    {
+        // As a caller's sink on a device of its own throws it (#836).
+        var removed = new COMException("The GPU device instance has been suspended.", DeviceRemoved);
+        var full = new IOException("There is not enough space on the disk.");
+
+        Assert.Equal(ErrorCategory.Sink, MediaErrorClassification.Categorize(new Origin(ErrorCategory.Sink, removed), System));
+        Assert.Equal(ErrorCategory.Sink, MediaErrorClassification.Categorize(new Origin(ErrorCategory.Sink, full), System));
+        Assert.Equal(
+            ErrorCategory.Sink,
+            MediaErrorClassification.Categorize(new InvalidOperationException("node faulted", new Origin(ErrorCategory.Sink, removed)), System)
+        );
+    }
+
+    [Fact]
+    public void CategorizeException_StillFindsADeviceLossOutsideAnOrigin() =>
+        Assert.Equal(
+            ErrorCategory.DeviceLost,
+            MediaErrorClassification.Categorize(new DeviceLostException("lost", DeviceRemoved, new Origin(ErrorCategory.Sink, null)), System)
+        );
+
     [Theory]
     [InlineData(typeof(FileNotFoundException))]
     [InlineData(typeof(DirectoryNotFoundException))]
@@ -157,6 +183,15 @@ public sealed class MediaErrorClassificationTests
         Assert.Null(new PlaybackError(System, "no inner").MediaFailure);
     }
 
+    private const int DeviceRemoved = unchecked((int)0x887A0005); // DXGI_ERROR_DEVICE_REMOVED
+
+    private sealed class Origin(ErrorCategory category, Exception? inner)
+        : InvalidOperationException("origin", inner),
+            IFailureOrigin
+    {
+        public ErrorCategory Category => category;
+    }
+
     private static void Row(
         TheoryData<int, MediaFailureStage, ErrorCategory> rows,
         int code,
@@ -172,6 +207,7 @@ public sealed class MediaErrorClassificationTests
             MediaFailureStage.DemuxRead,
             MediaFailureStage.SendPacket,
             MediaFailureStage.ReceiveFrame,
+            MediaFailureStage.DecoderOpen,
         ];
         for (int i = 0; i < stages.Length; i++)
             rows.Add(code, stages[i], byStage[i]);

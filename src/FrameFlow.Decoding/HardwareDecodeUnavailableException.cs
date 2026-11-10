@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 
 namespace FrameFlow.Decoding;
 
@@ -12,18 +13,19 @@ namespace FrameFlow.Decoding;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The playback controller catches this during <c>LoadAsync</c> and surfaces it
-/// as <c>Result.Fail(ErrorCategory.System, "Session initialization failed", ex)</c>
-/// — the inner exception carries the structured detail (which codec, which
-/// backends were tried, and why each failed).
+/// Playback reports it as <see cref="ErrorCategory.Decode"/> (#837), on a load and on
+/// <c>PrepareAsync</c> alike. The playback error's inner exception is this one, which carries
+/// the structured detail: which codec, which backends were tried, and why each failed.
 /// </para>
 /// <para>
 /// In <see cref="HardwareDecodeMode.Auto"/>, the same situation falls through
 /// to software decode without raising — no exception is thrown.
 /// </para>
 /// </remarks>
-public sealed class HardwareDecodeUnavailableException : Exception
+public sealed class HardwareDecodeUnavailableException : Exception, IFailureOrigin
 {
+    ErrorCategory IFailureOrigin.Category => ErrorCategory.Decode;
+
     /// <summary>
     /// The FFmpeg codec ID (<c>AVCodecID</c>) of the stream that failed to bind.
     /// </summary>
