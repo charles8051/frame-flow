@@ -215,6 +215,8 @@ internal enum TriggerFreshness
 /// <b>error routing:</b> <c>FatalError</c> from any non-terminal state routes to
 /// <c>Error</c> with <see cref="PlaybackActionKind.DisposeSession"/> + <see cref="PlaybackActionKind.RaiseError"/>.
 /// <c>Error</c> accepts <c>Reset</c>, and <c>Load</c>, which resets and then loads.
+/// <c>NothingToPlay</c> routes <c>Initializing</c> to <c>Ended</c> with no session: a reload that
+/// found no item it could open, after the player had started one (#857).
 /// </description></item>
 /// <item><description>
 /// <b>replay-from-Ended:</b> handled by the shell's higher-level <c>Play</c>-from-<c>Ended</c>
@@ -283,6 +285,12 @@ internal static class PlaybackProtocol
                 PlaybackTrigger.HeadersReceived => PlaybackDecision.To(
                     InternalPlaybackState.Preparing,
                     PlaybackAction.Fire(PlaybackTrigger.MetadataParsed)
+                ),
+                // A reload of a player that has started an item found nothing it could open. It
+                // ends as a live session ends at the same failure, with no session (#857).
+                PlaybackTrigger.NothingToPlay => PlaybackDecision.To(
+                    InternalPlaybackState.Ended,
+                    PlaybackAction.Of(PlaybackActionKind.DisposeSession)
                 ),
                 PlaybackTrigger.Unload => ToUnloaded(),
                 _ => PlaybackDecision.NotHandled(state),

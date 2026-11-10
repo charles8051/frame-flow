@@ -105,6 +105,17 @@ public class PlaybackProtocolTests
     }
 
     [Fact]
+    public void Initializing_NothingToPlay_EndsWithNoSession_AndRaisesNoError()
+    {
+        // A reload that found no item it could open ends the player, as a live session does at
+        // the same failure (#857). No Error, no ErrorOccurred.
+        var d = Advance(InternalPlaybackState.Initializing, PlaybackTrigger.NothingToPlay);
+
+        Assert.Equal(InternalPlaybackState.Ended, d.NextState);
+        AssertActions(d, PlaybackActionKind.DisposeSession);
+    }
+
+    [Fact]
     public void Preparing_MetadataParsed_EntersInitialBuffering_WarmsThenChainsBufferReady()
     {
         var d = Advance(InternalPlaybackState.Preparing, PlaybackTrigger.MetadataParsed);
@@ -607,6 +618,7 @@ public class PlaybackProtocolTests
         [(InternalPlaybackState.Initializing, PlaybackTrigger.HeadersReceived)] = Always,
         [(InternalPlaybackState.Initializing, PlaybackTrigger.Unload)] = Always,
         [(InternalPlaybackState.Initializing, PlaybackTrigger.FatalError)] = Always,
+        [(InternalPlaybackState.Initializing, PlaybackTrigger.NothingToPlay)] = Always,
 
         [(InternalPlaybackState.Preparing, PlaybackTrigger.MetadataParsed)] = Always,
         [(InternalPlaybackState.Preparing, PlaybackTrigger.Unload)] = Always,

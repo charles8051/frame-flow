@@ -1028,20 +1028,22 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 if (!IsExitPhaseAction(action.Kind))
                     EmitTransitionBoundary();
 
-                var faultError = await ExecuteActionAsync(
+                var fault = await ExecuteActionAsync(
                     action.Kind,
                     pendingSource,
                     pendingError
                 )
                     .ConfigureAwait(false);
-                if (faultError is not null)
+                if (fault is { } f)
                 {
                     // InitializeSession / WarmUp faulted: abandon the rest of this
-                    // decision (including any trailing auto-chain) and route FatalError
-                    // from the destination, carrying the load/buffering failure.
+                    // decision (including any trailing auto-chain) and route the fault's
+                    // trigger from the destination, carrying the load/buffering failure.
+                    // That is FatalError, or NothingToPlay for a reload that found no item
+                    // it could open (#857).
                     faulted = true;
-                    next = PlaybackTrigger.FatalError;
-                    pendingError = faultError;
+                    next = f.Route;
+                    pendingError = f.Error;
                     break;
                 }
             }
@@ -1052,9 +1054,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 EmitTransitionBoundary();
 
             // Payloads are spent once the decision that consumed them has run; the
-            // auto-chain that follows carries none (except the FatalError error we just
-            // set above, which the next iteration's RaiseError consumes).
-            if (next != PlaybackTrigger.FatalError)
+            // auto-chain that follows carries none (except a fault's error we just set
+            // above, which the next iteration's RaiseError or entry log consumes).
+            if (!faulted)
                 pendingError = null;
             pendingSource = null;
         }
@@ -1072,13 +1074,19 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         kind == PlaybackActionKind.StopTicker;
 
     /// <summary>
+    /// An action's failure: the trigger that routes the machine on from it, and the error the
+    /// trigger carries.
+    /// </summary>
+    private readonly record struct ActionFault(PlaybackTrigger Route, PlaybackError Error);
+
+    /// <summary>
     /// Performs the single effect <paramref name="kind"/> names, returning a non-null
-    /// <see cref="PlaybackError"/> when the effect faulted in a way that must route the
-    /// machine to <c>Error</c> (an <see cref="PlaybackActionKind.InitializeSession"/> or
+    /// <see cref="ActionFault"/> when the effect faulted in a way that must route the
+    /// machine on (an <see cref="PlaybackActionKind.InitializeSession"/> or
     /// <see cref="PlaybackActionKind.WarmUp"/> failure), or <see langword="null"/> on
     /// success. This is the one-action-per-call effect surface the pure decision drives.
     /// </summary>
-    private async Task<PlaybackError?> ExecuteActionAsync(
+    private async Task<ActionFault?> ExecuteActionAsync(
         PlaybackActionKind kind,
         IMediaSource? source,
         PlaybackError? error
@@ -1129,7 +1137,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         ex
                     );
                     _pendingLoadFailure = loadFailure;
-                    return loadFailure;
+                    // A reload that found no item it could open ends the player rather than
+                    // failing it, as a live session ends at the same failure (#857).
+                    return new ActionFault(
+                        ex is NoItemCouldStartException
+                            ? PlaybackTrigger.NothingToPlay
+                            : PlaybackTrigger.FatalError,
+                        loadFailure
+                    );
                 }
                 break;
 
@@ -1159,7 +1174,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                                 ex
                             );
                             _pendingLoadFailure = bufferingFailure;
-                            return bufferingFailure;
+                            return new ActionFault(PlaybackTrigger.FatalError, bufferingFailure);
                         }
                     }
                 }
@@ -1335,12 +1350,22 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return false;
         }
 
+        return await TryStartFromQueueAsync(command).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Loads the item the session factory's queue would start with, then plays it. Returns
+    /// <see langword="false"/>, having done nothing, when the factory has no item to start: a
+    /// factory with no queue, or a queue whose items have all failed to start.
+    /// </summary>
+    private async Task<bool> TryStartFromQueueAsync(FireTriggerCommand command)
+    {
         if (_sessionFactory.ReserveStart() is not { } start)
         {
             return false;
         }
 
-        LogFirstPlayFromIdle(start.DisplayName);
+        LogPlayStartsQueue(start.DisplayName);
 
         // The reservation was for this load. Give it back rather than leave the queue marked for
         // a load that will not come, also when a dispose cancels the open (#719).
@@ -1373,8 +1398,16 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return false;
         }
 
+        // A reload that found no item it could open ended the player with no session (#857).
+        // Play starts it from the queue, as a first play from Idle does.
+        if (_session is null && await TryStartFromQueueAsync(command).ConfigureAwait(false))
+        {
+            return true;
+        }
+
         // A session with nothing to replay, such as a playlist whose queue has run out, is
-        // refused here, before the replay unloads it.
+        // refused here, before the replay unloads it. So is an end with no session whose queue
+        // has nothing left that can start.
         if (_session is null || _loadedSource is null || !_session.TryBeginReplay())
         {
             var msg = $"Cannot {command.Trigger} from {_state}";
