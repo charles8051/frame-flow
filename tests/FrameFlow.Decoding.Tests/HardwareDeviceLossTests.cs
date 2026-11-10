@@ -140,7 +140,7 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
     /// The cache replaces a lost device at the next borrow and releases it. Its devices are ones
     /// FFmpeg allocated and nothing opened, so no GPU is needed.
     /// </summary>
-    [RequiresFfmpegFact]
+    [RequiresUnopenedDeviceFact]
     public void ALostCachedDevice_IsNotLentAgain()
     {
         using var cache = new HardwareDeviceCache(logger: null, HardwareDevice.Unopened);
@@ -161,7 +161,7 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
     /// allocated and nothing opened, for the platform's first backend, which H.264 has a hardware
     /// configuration for.
     /// </summary>
-    [RequiresFfmpegAndCorpusTheory]
+    [RequiresUnopenedDeviceAndCorpusTheory]
     [InlineData(HardwareDecodeMode.Auto)]
     [InlineData(HardwareDecodeMode.Required)]
     public async Task ADecoderOpenedOnALostLentDevice_FailsWithTheLoss(HardwareDecodeMode mode)
@@ -182,10 +182,7 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
         Assert.Equal(DeviceReset, error.RemovedReason);
     }
 
-    private static HardwareDecodeBackendKind PlatformBackend =>
-        OperatingSystem.IsWindows() ? HardwareDecodeBackendKind.D3D11Va
-        : OperatingSystem.IsMacOS() ? HardwareDecodeBackendKind.VideoToolbox
-        : HardwareDecodeBackendKind.VaApi;
+    private static HardwareDecodeBackendKind PlatformBackend => UnopenedPlatformDevice.Backend;
 
     // The device the cache lends a decoder binding the platform's backend now. The reference the
     // decoder would own is released at once.
@@ -247,4 +244,48 @@ public sealed class HardwareDeviceLossTests(FfmpegBootstrapFixture fixture)
             FFAvUtil.av_buffer_unref(ref reference);
         }
     }
+}
+
+/// <summary>
+/// Whether FFmpeg here can allocate an unopened device for the platform's first backend. A build
+/// may load and still lack that device type, as the Linux arm64 build lacks VAAPI.
+/// </summary>
+internal static class UnopenedPlatformDevice
+{
+    private static readonly Lazy<bool> Allocatable = new(() =>
+    {
+        try
+        {
+            HardwareDevice.Unopened(Backend).Dispose();
+            return true;
+        }
+        catch (Exception e) when (e is DllNotFoundException or NotSupportedException)
+        {
+            return false;
+        }
+    });
+
+    public static HardwareDecodeBackendKind Backend { get; } =
+        OperatingSystem.IsWindows() ? HardwareDecodeBackendKind.D3D11Va
+        : OperatingSystem.IsMacOS() ? HardwareDecodeBackendKind.VideoToolbox
+        : HardwareDecodeBackendKind.VaApi;
+
+    public static string? SkipReason =>
+        !TestEnvironment.HasFfmpegSharedLibraries ? "FFmpeg shared libraries not available."
+        : !Allocatable.Value ? $"This FFmpeg build has no {Backend} device type."
+        : null;
+}
+
+/// <summary>Skipped unless FFmpeg here can allocate an unopened device for the platform's backend.</summary>
+internal sealed class RequiresUnopenedDeviceFactAttribute : FactAttribute
+{
+    public RequiresUnopenedDeviceFactAttribute() => Skip = UnopenedPlatformDevice.SkipReason;
+}
+
+/// <summary>As <see cref="RequiresUnopenedDeviceFactAttribute"/>, and skipped without the corpus.</summary>
+internal sealed class RequiresUnopenedDeviceAndCorpusTheoryAttribute : TheoryAttribute
+{
+    public RequiresUnopenedDeviceAndCorpusTheoryAttribute() =>
+        Skip = UnopenedPlatformDevice.SkipReason
+            ?? (TestEnvironment.HasCorpusFiles ? null : "Test corpus not generated. Run scripts/generate-test-corpus.cs first.");
 }
