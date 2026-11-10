@@ -47,4 +47,10 @@ internal enum PlaybackTrigger
 
     /// <summary>An unrecoverable error occurred in the pipeline.</summary>
     FatalError,
+
+    /// <summary>
+    /// A load that replays the queue of a player that has started an item found no item it could
+    /// open (#857). The player ends, as it does when a live session reaches the same failure.
+    /// </summary>
+    NothingToPlay,
 }

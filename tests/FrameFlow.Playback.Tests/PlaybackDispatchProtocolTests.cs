@@ -983,6 +983,93 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(initializeCalls, Volatile.Read(ref session.InitializeCalls));
     }
 
+    // #857. A reload of a player that has started an item, which finds no item it could open, ends
+    // the player as a live session does at the same failure, rather than failing it into Error.
+    private static NoItemCouldStartException NoItemOpens() =>
+        new(new IOException("gone"));
+
+    [Fact]
+    public async Task Play_FromEnded_WhenTheReloadOpensNoItem_EndsAgain_WithoutError()
+    {
+        var (controller, session, _) = NewControllerWithFactory(new FakeSession());
+        await using var _d = controller;
+        await PlayToEndedAsync(controller, session);
+        var states = new List<PlaybackState>();
+        var errors = new List<PlaybackError>();
+        using var watch = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t => states.Add(t.Current))
+        );
+        using var errorWatch = controller.ErrorOccurred.Subscribe(new Relay<PlaybackError>(errors.Add));
+        session.InitializeThrows = NoItemOpens();
+
+        var play = await controller.PlayAsync();
+
+        // The play reports why nothing opened, and the player is back where it was.
+        Assert.False(play.IsSuccess);
+        Assert.Equal(ErrorCategory.Io, play.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.DoesNotContain(PlaybackState.Error, states);
+        Assert.Empty(errors);
+        Assert.True(session.Disposed);
+    }
+
+    [Fact]
+    public async Task Play_FromAnEndWithNoSession_StartsTheQueue_AndIsRefusedWhenItHasNothing()
+    {
+        var (controller, session, factory) = NewControllerWithFactory(new FakeSession());
+        await using var _d = controller;
+        await PlayToEndedAsync(controller, session);
+        session.InitializeThrows = NoItemOpens();
+        Assert.False((await controller.PlayAsync()).IsSuccess);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+
+        // Every item has failed to start: the queue reserves nothing, and Play is refused.
+        var refused = await controller.PlayAsync();
+        Assert.False(refused.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, refused.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+
+        // A jump or an enqueue gives the queue an item to start, and Play starts it.
+        session.InitializeThrows = null;
+        factory.Reservable = new FakeSource();
+        var play = await controller.PlayAsync();
+
+        Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.Equal(1, factory.Reserved);
+        Assert.Equal(0, factory.Released);
+    }
+
+    [Fact]
+    public async Task AnItemRecordedByTheHandlerOfTheFailureThatEndedTheQueue_ThatOpensNoItem_Ends()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var states = new List<PlaybackState>();
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watch = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t =>
+            {
+                states.Add(t.Current);
+                if (t.Current is PlaybackState.Ended or PlaybackState.Error)
+                    ended.TrySetResult();
+            })
+        );
+        using var replace = ReplaceOnFailure(controller, session);
+        session.InitializeThrows = NoItemOpens();
+
+        session.RaiseRecoverableError(ItemFailure);
+        session.RaiseEndOfStream();
+        await ended.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.DoesNotContain(PlaybackState.Error, states);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(2, session.InitializeCalls);
+    }
+
     [Fact]
     public async Task Seek_FromEnded_WhenTheSessionHoldsNothingToSeek_IsRefused_AndStaysEnded()
     {

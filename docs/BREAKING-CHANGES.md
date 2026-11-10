@@ -35,6 +35,11 @@ up, and no `Error` follows it.
 - **A jump recorded before the player handles the end of its queue is now taken** (#809). That includes
   a `ReplaceAsync` from an `ItemFailed` handler, which used to return `Ok` and leave the player in
   `Error`.
+- **A reload that finds no item it can open also ends in `Ended`** (#857). That is a `PlayAsync` after
+  a jump or an enqueue from `Ended`, or a replace from an `ItemFailed` handler, whose items all fail
+  to open. It used to enter `Error`. `PlayAsync` returns the failure with the last item's category,
+  and the player stays in `Ended`. Only a player that has never started an item still fails its load
+  into `Error`.
 
 **Who hits this.**
 - Code that waits for `Error`, or looks for "gave up" in an error message, after a run of failures.

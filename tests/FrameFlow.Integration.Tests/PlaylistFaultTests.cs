@@ -156,6 +156,30 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task PlayAfterAJumpFromEndedToAnItemThatCannotOpen_EndsAgain_WithoutError()
+    {
+        // #857. The play reloads onto the jump, and the reload finds no item it could open. A live
+        // session ends at the same failure, so the reload does too, rather than entering Error.
+        var faults = new FaultInjector(breaks: _ => true);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+        await run.PlayAsync();
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
+
+        var dead = run.Coordinator.Enqueue(MediaSource.FromFile("/nonexistent/path/playlist-dead.mp4"));
+        Assert.Equal(JumpRequest.Pending, run.Coordinator.RequestJump(dead));
+        var states = new List<PlaybackState>();
+        using var watch = run.Controller.PlaybackStateChanged.Subscribe(
+            new ActionObserver<StateTransition<PlaybackState>>(t => states.Add(t.Current))
+        );
+
+        var play = await run.Controller.PlayAsync();
+
+        Assert.False(play.IsSuccess);
+        Assert.Equal(PlaybackState.Ended, run.Controller.State);
+        Assert.DoesNotContain(PlaybackState.Error, states);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task SkippingAnItemThatPlays_ResetsTheCount()
     {
         // A rotation driven by skips never lets an item reach its end. The item between two

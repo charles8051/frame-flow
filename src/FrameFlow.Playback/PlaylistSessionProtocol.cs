@@ -698,11 +698,10 @@ internal static class PlaylistSessionProtocol
             Queue = next;
             if (decision.Kind == PlaylistQueue.NextKind.End)
             {
+                // The player ends here, as a live session ends at the same failure (#857).
                 Complete(
                     work.Command,
-                    PlaylistCommandResult.Failed(
-                        new InvalidOperationException("No playlist item could be opened.", failure.Error)
-                    )
+                    PlaylistCommandResult.Failed(new NoItemCouldStartException(failure.Error))
                 );
                 return;
             }

@@ -977,12 +977,12 @@ public sealed class PlaylistSessionProtocolTests
                 break;
             case LoadFailure.NothingLeft:
                 Assert.Equal(PlaylistOutcome.Failed, result.Kind);
-                Assert.Equal("No playlist item could be opened.", result.Error?.Message);
+                Assert.IsType<NoItemCouldStartException>(result.Error);
                 Assert.Same(boom, result.Error?.InnerException);
                 break;
             case LoadFailure.AtTheFailureLimit:
                 Assert.Equal(PlaylistOutcome.Failed, result.Kind);
-                Assert.Equal("No playlist item could be opened.", result.Error?.Message);
+                Assert.IsType<NoItemCouldStartException>(result.Error);
                 Assert.Same(boom, result.Error?.InnerException);
                 break;
         }

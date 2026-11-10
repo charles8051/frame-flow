@@ -105,9 +105,9 @@ internal sealed partial class PlaybackControllerCore
 
     [LoggerMessage(
         Level = LogLevel.Debug,
-        Message = "First play on a player built with nothing loaded — source: {SourceName}"
+        Message = "Play starts the queue on a player with no session — source: {SourceName}"
     )]
-    private partial void LogFirstPlayFromIdle(string sourceName);
+    private partial void LogPlayStartsQueue(string sourceName);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Session resumed from pause")]
     private partial void LogSessionResumed();
