@@ -106,30 +106,36 @@ internal static class UnopenedDevices
             HardwareDevice.Unopened(Backend).Dispose();
             return true;
         }
-        catch (DllNotFoundException)
+        catch (Exception e) when (e is DllNotFoundException or NotSupportedException)
         {
             return false;
         }
     });
 
-    /// <summary>The platform's first backend, which its FFmpeg build always has a device type for.</summary>
+    /// <summary>
+    /// The platform's first backend. A build may load and still lack its device type, as the Linux
+    /// arm64 build lacks VAAPI.
+    /// </summary>
     public static HardwareDecodeBackendKind Backend { get; } =
         OperatingSystem.IsWindows() ? HardwareDecodeBackendKind.D3D11Va
         : OperatingSystem.IsMacOS() ? HardwareDecodeBackendKind.VideoToolbox
         : HardwareDecodeBackendKind.VaApi;
 
-    /// <summary>Whether FFmpeg's libraries load here.</summary>
+    /// <summary>Whether FFmpeg's libraries load here and can allocate the backend's device.</summary>
     public static bool Available => Loadable.Value;
 
     public static HardwareDeviceCache Cache() => new(logger: null, HardwareDevice.Unopened);
 }
 
-/// <summary>Skipped when FFmpeg's libraries do not load here: the test holds real device contexts.</summary>
+/// <summary>
+/// Skipped when FFmpeg's libraries do not load here, or have no device type for the platform's
+/// backend: the test holds real device contexts.
+/// </summary>
 internal sealed class RequiresFfmpegFactAttribute : FactAttribute
 {
     public RequiresFfmpegFactAttribute()
     {
         if (!UnopenedDevices.Available)
-            Skip = "FFmpeg shared libraries not available. Run scripts/fetch-ffmpeg.cs.";
+            Skip = $"FFmpeg shared libraries not available, or no {UnopenedDevices.Backend} device type. Run scripts/fetch-ffmpeg.cs.";
     }
 }
