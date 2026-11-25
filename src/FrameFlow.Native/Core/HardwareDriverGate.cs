@@ -60,7 +60,11 @@ internal sealed record DriverHost(
 /// <para>
 /// <b>VAAPI needs the X11 libraries only when DRM finds nothing.</b> FFmpeg's
 /// <c>vaapi_device_create</c> walks <c>/dev/dri/renderD128</c> to <c>renderD135</c> and uses
-/// the first that opens through <c>vaGetDisplayDRM</c>. Only when none opens does it try X11:
+/// the first that opens (and is not passed over, see <see cref="HardwareDriverGate.RenderNodeKeepsVaapiOnDrm"/>)
+/// through <c>vaGetDisplayDRM</c>. Once a node is chosen there is no way back to X11: a
+/// <see langword="null"/> display from <c>vaGetDisplayDRM</c> returns <c>AVERROR_EXTERNAL</c>,
+/// and a failing <c>vaInitialize</c> returns <c>AVERROR(EIO)</c>, both straight out of the
+/// function. Only when no node is chosen does it try X11:
 /// <c>XOpenDisplay</c> from <c>libX11.so.6</c>, then <c>vaGetDisplay</c> from
 /// <c>libva-x11.so.2</c>. The Linux FFmpeg builds bind all four libva and X11 libraries through
 /// <c>implib.so</c> stubs that abort when the library is missing, so the X11 pair is required
@@ -79,16 +83,25 @@ internal static class HardwareDriverGate
         [.. Enumerable.Range(128, 8).Select(n => $"/dev/dri/renderD{n}")];
 
     /// <summary>
-    /// Whether FFmpeg's VAAPI device creation would pass over a render node whose kernel
-    /// driver is <paramref name="kernelDriver"/>.
+    /// Whether an openable render node whose kernel driver is <paramref name="kernelDriver"/>
+    /// is evidence that FFmpeg's VAAPI device creation stays on the DRM path.
     /// </summary>
     /// <remarks>
-    /// <c>vgem</c> is a virtual GEM provider with no video engine; FFmpeg skips it by name.
-    /// An unknown driver (<see langword="null"/>) is treated as usable, as FFmpeg would only
-    /// find out by asking the node itself.
+    /// <para>
+    /// FFmpeg names the driver with <c>drmGetVersion</c> and passes over <c>vgem</c>, a
+    /// virtual GEM provider with no video engine, and over any node whose version it cannot
+    /// read. Either way it moves on, and with no other node, to X11.
+    /// </para>
+    /// <para>
+    /// An unknown driver (<see langword="null"/>) is therefore not evidence: counting it
+    /// would drop the X11 requirement on a host where FFmpeg may still take the X11 path,
+    /// and that path aborts when its libraries are missing. The cost of the conservative
+    /// answer is a host whose driver cannot be read and that lacks X11 losing VAAPI, which is
+    /// recoverable where the abort is not.
+    /// </para>
     /// </remarks>
-    internal static bool VaapiSkipsRenderNode(string? kernelDriver) =>
-        string.Equals(kernelDriver, "vgem", StringComparison.Ordinal);
+    internal static bool RenderNodeKeepsVaapiOnDrm(string? kernelDriver) =>
+        kernelDriver is not null && !string.Equals(kernelDriver, "vgem", StringComparison.Ordinal);
 
     private const string X11Fallback =
         "no DRM render node can be opened, so FFmpeg's VAAPI device creation falls back to X11";

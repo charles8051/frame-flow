@@ -175,13 +175,15 @@ public sealed class HardwareDriverGateTests
     }
 
     [Theory]
+    [InlineData("i915", true)]
+    [InlineData("amdgpu", true)]
+    [InlineData("nvidia", true)]
+    // FFmpeg passes over vgem by name.
+    [InlineData("vgem", false)]
+    // FFmpeg passes over a node it cannot name, so an unknown driver is no evidence either.
     [InlineData(null, false)]
-    [InlineData("i915", false)]
-    [InlineData("amdgpu", false)]
-    [InlineData("nvidia", false)]
-    [InlineData("vgem", true)]
-    public void VaapiPassesOverVgemOnly(string? driver, bool skipped) =>
-        Assert.Equal(skipped, HardwareDriverGate.VaapiSkipsRenderNode(driver));
+    public void OnlyANamedNonVgemNodeKeepsVaapiOnDrm(string? driver, bool keepsDrm) =>
+        Assert.Equal(keepsDrm, HardwareDriverGate.RenderNodeKeepsVaapiOnDrm(driver));
 
     [Fact]
     public void TheRenderNodesAreTheEightFfmpegWalks() =>

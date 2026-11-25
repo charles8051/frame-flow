@@ -312,7 +312,7 @@ internal static partial class HardwareDecodeProbe
             if (!File.Exists(path))
                 continue;
 
-            if (HardwareDriverGate.VaapiSkipsRenderNode(KernelDriverOf(path)))
+            if (!HardwareDriverGate.RenderNodeKeepsVaapiOnDrm(KernelDriverOf(path)))
                 continue;
 
             try
