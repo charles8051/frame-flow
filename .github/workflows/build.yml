@@ -382,6 +382,10 @@ jobs:
       # Windows the package's own DirectML.dll beside onnxruntime.dll in an app
       # built without a runtime identifier (#433), and OpenVINO's plugins and TBB
       # beside Intel's onnxruntime.dll, running on OpenVINO's CPU device (#523).
+      # On Windows and Linux it also packs FrameFlow.Decoding, FrameFlow.Encoding
+      # and FrameFlow.Native.Runtime (with the host RID's FFmpeg, fetched above)
+      # and runs a software H.264 encode and decode round trip, from the app's
+      # build output and again after `dotnet publish -r <host rid>`.
       # See scripts/package-smoke.cs. This and the Avalonia 12 steps are about
       # what ships, which is Release, so the Debug leg skips them.
       - name: Package smoke test
