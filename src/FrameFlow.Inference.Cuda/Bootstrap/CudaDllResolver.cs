@@ -8,10 +8,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Inference.Cuda;
 
 /// <summary>
-/// One-shot helper that makes ORT's CUDA execution provider loadable
-/// on Windows by ensuring the directories containing <c>cudart</c>,
-/// <c>cublas</c>, and <c>cuDNN</c> are on the process PATH at the time
-/// <c>SessionOptions.AppendExecutionProvider_CUDA</c> is called.
+/// One-shot helper that makes ORT's CUDA execution provider loadable.
+/// On Windows it puts the directories containing <c>cudart</c>,
+/// <c>cublas</c>, and <c>cuDNN</c> on the process PATH before
+/// <c>SessionOptions.AppendExecutionProvider_CUDA</c> is called; on
+/// Linux x64 it loads those libraries into the process, app-local
+/// copies first.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -47,12 +49,17 @@ namespace FrameFlow.Inference.Cuda;
 ///   </item>
 /// </list>
 /// <para>
-/// Non-Windows platforms are a no-op for activation. Linux's
-/// <c>ld.so</c> reads <c>LD_LIBRARY_PATH</c> only at process startup,
-/// so mid-process PATH-style mutation does not work; the cross-
-/// platform activation strategy described in ADR-0011 is
-/// <c>NativeLibrary.Load</c> with absolute paths, which is a different
-/// mechanism and lands when the Linux port begins.
+/// <b>Linux.</b> <c>ld.so</c> reads <c>LD_LIBRARY_PATH</c> only at
+/// process startup, so a PATH-style edit in process does nothing.
+/// Activation there is <c>NativeLibrary.Load</c>: copies in
+/// <c>runtimes/linux-x64/native</c> are loaded by absolute path, and the
+/// rest by soname through the loader's own search path. Once a library
+/// with a given soname is in the process, ORT's provider library
+/// resolves its dependency to that copy. <see cref="LinuxCudaResolution"/>
+/// holds the decision; this type gathers its inputs and passes it the
+/// loader. <see cref="TryFindCudaToolkitBin"/> and
+/// <see cref="TryFindCudnnBin"/> stay Windows-only. Other platforms are
+/// a no-op.
 /// </para>
 /// </remarks>
 public static partial class CudaDllResolver
@@ -63,7 +70,7 @@ public static partial class CudaDllResolver
     /// <summary>
     /// Ensures CUDA runtime + cuDNN are loadable from the current
     /// process. Safe to call repeatedly; only the first call does
-    /// work. On non-Windows hosts this is a no-op.
+    /// work. Windows and Linux x64 only; elsewhere this is a no-op.
     /// </summary>
     public static void EnsureLoadable(ILogger? logger = null)
     {
@@ -76,10 +83,16 @@ public static partial class CudaDllResolver
 
         var log = logger ?? NullLogger.Instance;
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        switch (CurrentPlatform())
         {
-            LogSkippedNonWindows(log);
-            return;
+            case CudaBootstrapPlatform.Windows:
+                break;
+            case CudaBootstrapPlatform.LinuxX64:
+                ResolveLinux(log);
+                return;
+            default:
+                LogSkippedUnsupportedPlatform(log);
+                return;
         }
 
         // CUDA toolkit's bin is normally already on PATH (the toolkit
@@ -317,16 +330,104 @@ public static partial class CudaDllResolver
     }
 
     /// <summary>
+    /// Loads the CUDA, cuDNN and driver libraries ORT's CUDA provider
+    /// needs on Linux x64, app-local copies first, and reports which
+    /// layers are missing. Every call loads again; a library already in
+    /// the process only gains a reference, so repeating it is cheap.
+    /// </summary>
+    internal static LinuxCudaVerdict ResolveLinux(ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+
+        // ── Shell: gather the app-local directory and its file names ──
+        var appLocalNativeDir = AppLocalRuntimesNativeDir();
+        var appLocalFiles = new HashSet<string>(StringComparer.Ordinal);
+        if (appLocalNativeDir is not null)
+        {
+            foreach (var file in Directory.EnumerateFiles(appLocalNativeDir))
+                appLocalFiles.Add(Path.GetFileName(file));
+        }
+
+        // ── Core: the pure decision, with the real loader passed in ──
+        var verdict = LinuxCudaResolution.Resolve(appLocalNativeDir, appLocalFiles, LoadNative);
+
+        // ── Shell: emit the verdict-matching diagnostics ────────────
+        foreach (var load in verdict.Loaded)
+            LogLinuxLibraryLoaded(log, load.Library.Soname, load.LoadedFrom);
+        foreach (var failure in verdict.Failed)
+        {
+            var error = failure.Error ?? "no loader message";
+            if (failure.Library.Required)
+                LogLinuxLibraryMissing(log, failure.Library.Soname, error);
+            else
+                LogLinuxAppLocalLibraryFailed(log, failure.Library.Soname, error);
+        }
+
+        return verdict;
+    }
+
+    /// <summary>
+    /// The directory the loaded <paramref name="soname"/> was mapped
+    /// from, read from <c>/proc/self/maps</c>, or <see langword="null"/>
+    /// when it is not mapped or the file cannot be read.
+    /// </summary>
+    internal static string? LoadedLibraryDirectory(string soname)
+    {
+        try
+        {
+            return LinuxCudaResolution.DirectoryOfLoaded(
+                File.ReadLines("/proc/self/maps"),
+                soname
+            );
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The bootstrapper's view of the running platform.</summary>
+    internal static CudaBootstrapPlatform CurrentPlatform() =>
+        LinuxCudaResolution.ClassifyPlatform(
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            RuntimeInformation.ProcessArchitecture
+        );
+
+    private static NativeLoadAttempt LoadNative(string nameOrPath)
+    {
+        // NativeLibrary.Load rather than TryLoad: its exception carries
+        // the loader's message (dlerror), which names the dependency that
+        // is actually missing.
+        try
+        {
+            NativeLibrary.Load(nameOrPath);
+            return NativeLoadAttempt.Success;
+        }
+        catch (DllNotFoundException ex)
+        {
+            return NativeLoadAttempt.Failed(ex.Message);
+        }
+        catch (BadImageFormatException ex)
+        {
+            return NativeLoadAttempt.Failed(ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Computes the app-local <c>AppContext.BaseDirectory/runtimes/{rid}/native/</c>
-    /// directory to probe for the bootstrap sentinel DLLs, or
-    /// <see langword="null"/> when <c>BaseDirectory</c> is empty or the
-    /// directory does not exist. The RID is fixed to <c>win-x64</c>
-    /// today — this is the only path the dev-time fetch script targets,
-    /// and the only path the future Stage-2 NuGet package will produce on
-    /// Windows. When Linux support arrives, this method grows a
-    /// platform-keyed RID. The sentinel-presence check is the pure
-    /// decision's <c>isPresent</c> probe (see
-    /// <see cref="CudaPathResolution"/>); this shell helper only resolves
+    /// directory to probe, or <see langword="null"/> when
+    /// <c>BaseDirectory</c> is empty, the platform has no such directory,
+    /// or the directory does not exist. The RID is the running process's
+    /// (<c>win-x64</c>, <c>linux-x64</c>, ...), from
+    /// <see cref="LinuxCudaResolution.AppLocalRid"/>. Checking for the
+    /// libraries in it is the pure decisions' job (see
+    /// <see cref="CudaPathResolution"/> and
+    /// <see cref="LinuxCudaResolution"/>); this shell helper only resolves
     /// the directory.
     /// </summary>
     private static string? AppLocalRuntimesNativeDir()
@@ -334,7 +435,14 @@ public static partial class CudaDllResolver
         var baseDir = AppContext.BaseDirectory;
         if (string.IsNullOrEmpty(baseDir))
             return null;
-        var candidate = Path.Combine(baseDir, "runtimes", "win-x64", "native");
+        var rid = LinuxCudaResolution.AppLocalRid(
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            RuntimeInformation.ProcessArchitecture
+        );
+        if (rid is null)
+            return null;
+        var candidate = Path.Combine(baseDir, "runtimes", rid, "native");
         return Directory.Exists(candidate) ? candidate : null;
     }
 
@@ -366,9 +474,27 @@ public static partial class CudaDllResolver
 
     [LoggerMessage(
         Level = LogLevel.Debug,
-        Message = "CudaDllResolver: skipping (non-Windows host)"
+        Message = "CudaDllResolver: skipping (no CUDA build of ONNX Runtime for this platform)"
     )]
-    private static partial void LogSkippedNonWindows(ILogger logger);
+    private static partial void LogSkippedUnsupportedPlatform(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "CudaDllResolver: loaded {Soname} from {LoadedFrom}"
+    )]
+    private static partial void LogLinuxLibraryLoaded(ILogger logger, string soname, string loadedFrom);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "CudaDllResolver: {Soname} could not be loaded; ORT CUDA EP will fail: {Error}"
+    )]
+    private static partial void LogLinuxLibraryMissing(ILogger logger, string soname, string error);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "CudaDllResolver: app-local {Soname} is present but could not be loaded: {Error}"
+    )]
+    private static partial void LogLinuxAppLocalLibraryFailed(ILogger logger, string soname, string error);
 
     [LoggerMessage(
         Level = LogLevel.Information,

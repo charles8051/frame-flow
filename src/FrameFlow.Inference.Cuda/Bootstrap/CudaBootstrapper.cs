@@ -1,8 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Runtime.InteropServices;
-
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -24,8 +22,9 @@ namespace FrameFlow.Inference.Cuda;
 /// job — it only diagnoses and reports. Second, the result is
 /// structured per-layer with a flag enum, because each layer has its
 /// own remediation path (driver from NVIDIA's installer; toolkit and
-/// cuDNN from winget; ORT-EP from re-installing earlier layers in the
-/// right combination).
+/// cuDNN from NVIDIA's installers on Windows or its apt repository on
+/// Linux; ORT-EP from re-installing earlier layers in the right
+/// combination).
 /// </para>
 /// <para>
 /// ADR-0011 §"Stage 1 details" defines this surface; Stages 2 and 3
@@ -46,9 +45,8 @@ public sealed class CudaBootstrapper
 
     /// <summary>
     /// Creates a bootstrapper using the auto-detected install
-    /// instruction provider for the current platform (Windows today;
-    /// other platforms return <see langword="null"/> until their ports
-    /// land).
+    /// instruction provider for the current platform (Windows or Linux;
+    /// none elsewhere).
     /// </summary>
     /// <param name="logger">
     /// Optional logger for the underlying <see cref="CudaDllResolver"/>
@@ -75,94 +73,196 @@ public sealed class CudaBootstrapper
     /// structured diagnostic record.
     /// </summary>
     /// <remarks>
-    /// As a side effect, this invokes
-    /// <see cref="CudaDllResolver.EnsureLoadable"/> on Windows, which
-    /// prepends discovered CUDA Toolkit and cuDNN <c>bin</c>
-    /// directories to the process PATH. Subsequent ORT EP loads in the
-    /// same process will see those directories. The resolver is
-    /// idempotent.
+    /// <para>
+    /// On Windows, as a side effect, this invokes
+    /// <see cref="CudaDllResolver.EnsureLoadable"/>, which prepends
+    /// discovered CUDA Toolkit and cuDNN <c>bin</c> directories to the
+    /// process PATH. Subsequent ORT EP loads in the same process will see
+    /// those directories. The resolver is idempotent.
+    /// </para>
+    /// <para>
+    /// On Linux x64 the probe is the load itself: <c>libcuda.so.1</c>,
+    /// the CUDA 12 runtime libraries and cuDNN 9 are loaded into the
+    /// process, from <c>runtimes/linux-x64/native</c> under the app's base
+    /// directory when present there and by soname otherwise, so they stay
+    /// loaded for ORT's CUDA provider. A missing driver sets
+    /// <see cref="MissingNativeComponent.GpuDriver"/> and carries the
+    /// loader's message in <see cref="CudaBootstrapResult.DriverFailure"/>.
+    /// </para>
+    /// <para>
+    /// Other platforms return
+    /// <see cref="CudaBootstrapStatus.UnsupportedPlatform"/>.
+    /// </para>
     /// </remarks>
     /// <returns>
     /// A <see cref="CudaBootstrapResult"/> describing what was found
     /// and, when applicable, what's missing and how to fix it.
     /// </returns>
-    public CudaBootstrapResult Probe()
-    {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+    public CudaBootstrapResult Probe() =>
+        CudaDllResolver.CurrentPlatform() switch
         {
-            return new CudaBootstrapResult(
-                Status: CudaBootstrapStatus.UnsupportedPlatform,
-                Missing: MissingNativeComponent.None,
-                Instructions: Array.Empty<CudaBootstrapInstruction>(),
-                DetectedCudaToolkitBin: null,
-                DetectedCudnnBin: null,
-                OrtVersion: null,
-                DetectedDeviceCount: 0,
-                DriverFailure: null,
-                OrtFailure: null
-            );
-        }
+            CudaBootstrapPlatform.Windows => ProbeWindows(),
+            CudaBootstrapPlatform.LinuxX64 => ProbeLinux(),
+            _ => UnsupportedPlatform,
+        };
 
-        // Discover + activate. EnsureLoadable is idempotent — even if
-        // a previous probe in this process already ran, the underlying
-        // probes (CudaProbe, OnnxProbe) cached their results from that
-        // first call, and re-running discovery here is cheap.
+    private static CudaBootstrapResult UnsupportedPlatform { get; } =
+        new(
+            Status: CudaBootstrapStatus.UnsupportedPlatform,
+            Missing: MissingNativeComponent.None,
+            Instructions: Array.Empty<CudaBootstrapInstruction>(),
+            DetectedCudaToolkitBin: null,
+            DetectedCudnnBin: null,
+            OrtVersion: null,
+            DetectedDeviceCount: 0,
+            DriverFailure: null,
+            OrtFailure: null
+        );
+
+    private CudaBootstrapResult ProbeLinux()
+    {
+        // ── Shell: load what can be loaded (app-local first), then ask ORT ──
+        var verdict = CudaDllResolver.ResolveLinux(_logger);
+
+        // A library loaded by soname came from wherever the loader found
+        // it; /proc/self/maps names that file.
+        string? DirectoryOf(string soname) =>
+            verdict.Find(soname) switch
+            {
+                { Source: CudaLibrarySource.AppLocal } load => Path.GetDirectoryName(load.LoadedFrom),
+                { Source: CudaLibrarySource.LoaderSearchPath } => CudaDllResolver.LoadedLibraryDirectory(soname),
+                _ => null,
+            };
+
+        // ── Core: the pure composition of the gathered facts ──
+        return Compose(
+            LinuxFacts(
+                verdict,
+                DirectoryOf(LinuxCudaResolution.CudaRuntimeSoname),
+                DirectoryOf(LinuxCudaResolution.CudnnSoname),
+                new OrtProbeFacts(
+                    OnnxProbe.CudaExecutionProviderAvailable,
+                    OnnxProbe.OrtVersion,
+                    OnnxProbe.Failure
+                )
+            ),
+            _instructions
+        );
+    }
+
+    /// <summary>
+    /// The facts a probe gathered, before they are composed into a
+    /// <see cref="CudaBootstrapResult"/>.
+    /// </summary>
+    internal sealed record ProbeFacts(
+        MissingNativeComponent MissingLibraries,
+        string? CudaToolkitDir,
+        string? CudnnDir,
+        Exception? DriverFailure,
+        OrtProbeFacts Ort
+    );
+
+    /// <summary>What <see cref="OnnxProbe"/> reported.</summary>
+    internal readonly record struct OrtProbeFacts(bool CudaAvailable, string? Version, Exception? Failure);
+
+    /// <summary>
+    /// Turns a Linux library verdict into probe facts. A driver that did
+    /// not load is reported with the loader's message, which says whether
+    /// the file is absent or present but unusable.
+    /// </summary>
+    internal static ProbeFacts LinuxFacts(
+        LinuxCudaVerdict verdict,
+        string? cudaToolkitDir,
+        string? cudnnDir,
+        OrtProbeFacts ort
+    )
+    {
+        ArgumentNullException.ThrowIfNull(verdict);
+        var driverError = verdict.FirstErrorFor(MissingNativeComponent.GpuDriver);
+        return new ProbeFacts(
+            verdict.Missing,
+            (verdict.Missing & MissingNativeComponent.CudaToolkit) == 0 ? cudaToolkitDir : null,
+            (verdict.Missing & MissingNativeComponent.CuDnn) == 0 ? cudnnDir : null,
+            driverError is null ? null : new DllNotFoundException(driverError),
+            ort
+        );
+    }
+
+    /// <summary>
+    /// Composes gathered probe facts into the result: adds the ORT
+    /// provider flag, orders the instructions, and decides the status.
+    /// Pure; the same composition serves every platform.
+    /// </summary>
+    internal static CudaBootstrapResult Compose(
+        ProbeFacts facts,
+        ICudaInstallInstructionProvider? instructions
+    )
+    {
+        ArgumentNullException.ThrowIfNull(facts);
+
+        var missing = facts.MissingLibraries;
+        if (!facts.Ort.CudaAvailable)
+            missing |= MissingNativeComponent.OrtCudaProvider;
+
+        return new CudaBootstrapResult(
+            Status: missing == MissingNativeComponent.None
+                ? CudaBootstrapStatus.Ready
+                : CudaBootstrapStatus.MissingComponents,
+            Missing: missing,
+            Instructions: BuildInstructions(missing, instructions),
+            DetectedCudaToolkitBin: facts.CudaToolkitDir,
+            DetectedCudnnBin: facts.CudnnDir,
+            OrtVersion: facts.Ort.Version,
+            DetectedDeviceCount: 0,
+            DriverFailure: facts.DriverFailure,
+            OrtFailure: facts.Ort.Failure
+        );
+    }
+
+    private CudaBootstrapResult ProbeWindows()
+    {
+        // Discover + activate. EnsureLoadable is idempotent: only the first
+        // call in a process prepends to PATH, and re-running discovery
+        // here is cheap.
         CudaDllResolver.EnsureLoadable(_logger);
         var cudaToolkitBin = CudaDllResolver.TryFindCudaToolkitBin(_logger);
         var cudnnBin = CudaDllResolver.TryFindCudnnBin(cudaToolkitBin, _logger);
 
         var missing = MissingNativeComponent.None;
 
-        // Driver-level probe deferred. The pre-fork architecture used
-        // Crossbar.Cuda.CudaProbe (ManagedCuda-backed) for granular
-        // "is the NVIDIA driver loadable" detection. After the
-        // FrameFlow fork (ADR-0049), FrameFlow.Inference.Cuda does
-        // not depend on Crossbar.Cuda — driver detection collapses
-        // into the ORT-EP loadability check below. A future ADR can
-        // re-add granular driver probing via P/Invoke to nvcuda.dll
-        // if the diagnostic gap matters in practice.
-        Exception? driverFailure = null;
-        const int deviceCount = 0;
-        // MissingNativeComponent.GpuDriver flag intentionally not set
-        // — see comment above. ORT-EP failure surfaces driver issues
-        // less specifically but still as actionable diagnostics.
-
+        // No driver-level probe on Windows. FrameFlow.Inference.Cuda does
+        // not depend on a CUDA driver binding (ADR-0049), so driver
+        // detection collapses into the ORT-EP loadability check, and the
+        // GpuDriver flag is never set here. ORT-EP failure surfaces
+        // driver issues less specifically but still as actionable
+        // diagnostics. (Linux loads libcuda.so.1 and does set the flag.)
         if (cudaToolkitBin is null)
             missing |= MissingNativeComponent.CudaToolkit;
         if (cudnnBin is null)
             missing |= MissingNativeComponent.CuDnn;
 
-        var ortAvailable = OnnxProbe.CudaExecutionProviderAvailable;
-        var ortFailure = OnnxProbe.Failure;
-        var ortVersion = OnnxProbe.OrtVersion;
-        if (!ortAvailable)
-            missing |= MissingNativeComponent.OrtCudaProvider;
-
-        var instructions = BuildInstructions(missing);
-
-        var status =
-            missing == MissingNativeComponent.None
-                ? CudaBootstrapStatus.Ready
-                : CudaBootstrapStatus.MissingComponents;
-
-        return new CudaBootstrapResult(
-            Status: status,
-            Missing: missing,
-            Instructions: instructions,
-            DetectedCudaToolkitBin: cudaToolkitBin,
-            DetectedCudnnBin: cudnnBin,
-            OrtVersion: ortVersion,
-            DetectedDeviceCount: deviceCount,
-            DriverFailure: driverFailure,
-            OrtFailure: ortFailure
+        return Compose(
+            new ProbeFacts(
+                missing,
+                cudaToolkitBin,
+                cudnnBin,
+                DriverFailure: null,
+                new OrtProbeFacts(
+                    OnnxProbe.CudaExecutionProviderAvailable,
+                    OnnxProbe.OrtVersion,
+                    OnnxProbe.Failure
+                )
+            ),
+            _instructions
         );
     }
 
-    private IReadOnlyList<CudaBootstrapInstruction> BuildInstructions(
-        MissingNativeComponent missing
+    private static IReadOnlyList<CudaBootstrapInstruction> BuildInstructions(
+        MissingNativeComponent missing,
+        ICudaInstallInstructionProvider? instructions
     )
     {
-        if (missing == MissingNativeComponent.None || _instructions is null)
+        if (missing == MissingNativeComponent.None || instructions is null)
             return Array.Empty<CudaBootstrapInstruction>();
 
         // Emit in dependency order: driver → toolkit → cuDNN → ORT-EP.
@@ -181,7 +281,7 @@ public sealed class CudaBootstrapper
         foreach (var component in order)
         {
             if ((missing & component) == component)
-                list.Add(_instructions.GetInstruction(component));
+                list.Add(instructions.GetInstruction(component));
         }
         return list;
     }
