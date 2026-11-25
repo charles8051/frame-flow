@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using FrameFlow.Media;
+using FrameFlow.Native.Core;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -238,106 +239,113 @@ internal static partial class HardwareDecodeProbe
     }
 
     /// <summary>
-    /// The driver libraries a backend needs before <c>av_hwdevice_ctx_create</c> could
-    /// possibly succeed. Empty when the OS supplies the backend and there is nothing
-    /// separate to check.
+    /// The driver libraries a backend needs on this host before <c>av_hwdevice_ctx_create</c>,
+    /// and decoding on the device it makes, could succeed. Empty when nothing is catalogued.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Skipping a backend whose driver will not load costs nothing: the create could not
-    /// have succeeded either way. What it buys is not aborting while finding that out.
+    /// The decision is <see cref="HardwareDriverGate.RequirementsFor"/>; this is the shell
+    /// that hands it the real host. Skipping a backend whose driver will not load costs
+    /// nothing: the create could not have succeeded either way, or (CUDA without
+    /// <c>libnvcuvid</c>) the device would have opened and then failed every stream. What it
+    /// buys is not aborting, or not picking a backend that cannot decode, while finding out.
     /// </para>
     /// <para>
     /// <b>Every library a backend needs is listed, not just its headline one.</b> VAAPI is
     /// the reason: <c>libva.so.2</c> is present on hosts that lack <c>libva-drm.so.2</c>,
-    /// and it was the latter that aborted. A host carrying the X11 backend but not the DRM
-    /// one is therefore skipped when it might have worked — the diagnostic names which
-    /// library was missing, and not running is recoverable where aborting is not.
+    /// and it was the latter that aborted. CUDA is the other: device creation needs only
+    /// <c>libcuda.so.1</c>, and NVDEC needs <c>libnvcuvid.so.1</c> as well.
     /// </para>
     /// <para>
     /// Windows and macOS backends that the OS integrates (D3D11VA, DXVA2, VideoToolbox)
     /// have nothing separate to load, so they keep the plain attempt-and-report path.
     /// </para>
     /// </remarks>
-    internal static IReadOnlyList<string> DriverLibrariesFor(HardwareDecodeBackendKind kind)
-    {
-        if (OperatingSystem.IsLinux())
-        {
-            return kind switch
-            {
-                HardwareDecodeBackendKind.Cuda => ["libcuda.so.1"],
-                HardwareDecodeBackendKind.VaApi => ["libva.so.2", "libva-drm.so.2"],
-                HardwareDecodeBackendKind.Vdpau => ["libvdpau.so.1"],
-                HardwareDecodeBackendKind.Vulkan => ["libvulkan.so.1"],
-                HardwareDecodeBackendKind.OpenCl => ["libOpenCL.so.1"],
-                HardwareDecodeBackendKind.Drm => ["libdrm.so.2"],
-                _ => [],
-            };
-        }
-
-        if (OperatingSystem.IsWindows())
-        {
-            return kind switch
-            {
-                HardwareDecodeBackendKind.Cuda => ["nvcuda.dll"],
-                HardwareDecodeBackendKind.Vulkan => ["vulkan-1.dll"],
-                _ => [],
-            };
-        }
-
-        // macOS: VideoToolbox is part of the OS, and CUDA has not existed since 10.14.
-        return [];
-    }
+    internal static IReadOnlyList<string> DriverLibrariesFor(HardwareDecodeBackendKind kind) =>
+        [.. HardwareDriverGate.RequirementsFor(kind, ThisHost).Select(r => r.Library)];
 
     /// <summary>
     /// Why <paramref name="kind"/> must not be attempted on this host, or
-    /// <see langword="null"/> to attempt it.
+    /// <see langword="null"/> to attempt it. See <see cref="HardwareDriverGate.SkipReason"/>.
     /// </summary>
     /// <param name="kind">The backend under consideration.</param>
     /// <param name="probeUncatalogued">
     /// When <see langword="true"/>, a backend with no catalogued drivers is attempted
     /// anyway. Off by default on Linux, where that is how the process dies.
     /// </param>
-    internal static string? SkipReason(HardwareDecodeBackendKind kind, bool probeUncatalogued)
-    {
-        var libraries = DriverLibrariesFor(kind);
+    internal static string? SkipReason(HardwareDecodeBackendKind kind, bool probeUncatalogued) =>
+        HardwareDriverGate.SkipReason(kind, ThisHost, probeUncatalogued);
 
-        if (libraries.Count == 0)
-        {
-            // Nothing catalogued. On Windows and macOS that means the OS supplies it and
-            // there is nothing to check. On Linux it means we cannot know whether the
-            // attempt aborts, and the attempt is the thing that kills the process.
-            return OperatingSystem.IsLinux() && !probeUncatalogued
-                ? "no catalogued driver libraries, and an uncatalogued backend cannot be "
-                    + "attempted safely on this platform (see ProbeUncataloguedBackends)"
-                : null;
-        }
+    /// <summary>The real host, as <see cref="HardwareDriverGate"/> observes it.</summary>
+    private static DriverHost ThisHost { get; } =
+        new(
+            OperatingSystem.IsLinux() ? DriverHostOs.Linux
+            : OperatingSystem.IsWindows() ? DriverHostOs.Windows
+            : DriverHostOs.MacOs,
+            CanLoadLibrary,
+            HasOpenableRenderNode
+        );
 
-        return FirstMissingDriver(libraries) is { } missing
-            ? $"driver library '{missing}' is not loadable on this host"
-            : null;
-    }
-
-    /// <summary>
-    /// The first of <paramref name="libraries"/> that will not load here, or
-    /// <see langword="null"/> if they all load.
-    /// </summary>
+    /// <summary>Whether <paramref name="library"/> loads here.</summary>
     /// <remarks>
-    /// Each handle is released immediately — this asks a question, it does not take a
+    /// Each handle is released immediately: this asks a question, it does not take a
     /// dependency. FFmpeg loads its own afterwards, and <c>dlopen</c> is reference counted,
     /// so the probe and FFmpeg do not interfere.
     /// </remarks>
-    private static string? FirstMissingDriver(IReadOnlyList<string> libraries)
+    private static bool CanLoadLibrary(string library)
     {
-        foreach (var library in libraries)
-        {
-            if (!NativeLibrary.TryLoad(library, out var handle))
-                return library;
+        if (!NativeLibrary.TryLoad(library, out var handle))
+            return false;
 
-            NativeLibrary.Free(handle);
+        NativeLibrary.Free(handle);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether one of the render nodes FFmpeg's VAAPI device creation walks opens for
+    /// read and write here, as FFmpeg opens it.
+    /// </summary>
+    private static bool HasOpenableRenderNode()
+    {
+        foreach (var path in HardwareDriverGate.VaapiRenderNodePaths)
+        {
+            if (!File.Exists(path))
+                continue;
+
+            if (HardwareDriverGate.VaapiSkipsRenderNode(KernelDriverOf(path)))
+                continue;
+
+            try
+            {
+                using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // FFmpeg moves on to the next node when one will not open; so does this.
+            }
         }
 
-        return null;
+        return false;
+    }
+
+    /// <summary>
+    /// The kernel driver behind a render node, read from sysfs, or <see langword="null"/>
+    /// when it cannot be read.
+    /// </summary>
+    private static string? KernelDriverOf(string renderNodePath)
+    {
+        try
+        {
+            var link = new FileInfo(
+                $"/sys/class/drm/{Path.GetFileName(renderNodePath)}/device/driver"
+            ).ResolveLinkTarget(returnFinalTarget: true);
+            return link is null ? null : Path.GetFileName(link.FullName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

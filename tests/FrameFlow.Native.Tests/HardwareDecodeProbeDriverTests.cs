@@ -140,6 +140,20 @@ public sealed class HardwareDecodeProbeDriverTests
     }
 
     [Fact]
+    public void Cuda_ListsTheNvdecLibrary_NotJustTheDeviceOne()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+            return;
+
+        // Device creation loads only libcuda; NVDEC loads libnvcuvid as well, and fails every
+        // stream without it. The real host's catalogue has to carry both.
+        var libraries = HardwareDecodeProbe.DriverLibrariesFor(HardwareDecodeBackendKind.Cuda);
+
+        Assert.Contains(OperatingSystem.IsLinux() ? "libcuda.so.1" : "nvcuda.dll", libraries);
+        Assert.Contains(OperatingSystem.IsLinux() ? "libnvcuvid.so.1" : "nvcuvid.dll", libraries);
+    }
+
+    [Fact]
     public void EveryCataloguedLibrary_LooksLikeAPlatformLoaderName()
     {
         // A typo silently disables a working backend, since a name that cannot load is
