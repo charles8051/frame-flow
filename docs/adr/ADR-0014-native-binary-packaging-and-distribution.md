@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Superseded in part by [FFmpeg 9, shipped as one runtime package for every RID](ffmpeg-9-and-one-native-runtime-package.md): the per-RID `FrameFlow.Native.runtime.<rid>` packages were never built. One package, `FrameFlow.Native.Runtime`, carries every RID; the pin is FFmpeg 9; osx-x64 is not supported; and a system FFmpeg is not a supported source. Keeping binaries out of git and fetching them with a script stand.
 
 ## Context
 

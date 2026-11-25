@@ -4,6 +4,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FrameFlow.Media;
+using FrameFlow.Native.Core;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 
@@ -213,16 +214,11 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
 
                 if (!TryLoadLibrary(lib, searchPath, out var handle))
                 {
-                    var candidates = string.Join(
-                        ", ",
-                        FFmpegLibraryResolver.CandidatePaths(lib, searchPath)
-                    );
-
                     var failure = FfmpegLoadResult.Failure(
-                        $"Failed to load FFmpeg library '{lib}'. "
-                            + $"Searched: [{candidates}]. "
-                            + $"Ensure FFmpeg {GetExpectedVersionHint()} is installed "
-                            + $"or configure FrameFlowNativeOptions.CustomFfmpegPath."
+                        FfmpegLoadFailure.Describe(
+                            lib,
+                            FFmpegLibraryResolver.CandidatePaths(lib, searchPath)
+                        )
                     );
 
                     return failure; // Do not cache failure — allow retry with different path.
@@ -570,6 +566,4 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             return _implicitBootstrapResult;
         }
     }
-
-    private static string GetExpectedVersionHint() => "7.x";
 }

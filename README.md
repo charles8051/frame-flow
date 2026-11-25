@@ -242,8 +242,22 @@ and live camera and multicast sources.
 | Presenters | `FrameFlow.Avalonia`, `FrameFlow.Avalonia.Windows`, `FrameFlow.Sdl` |
 | Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cpu`, `.Cuda`, `.Dml`, `.WinML`, `.OpenVino` (Windows x64), `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
 
-`FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
-reference it — add it yourself, or supply the natives another way.
+`FrameFlow.Native.Runtime` carries the FFmpeg binaries, a pinned LGPL FFmpeg 9
+build for win-x64, win-arm64, linux-x64, linux-arm64 and osx-arm64. The
+libraries do not reference it — add it yourself, or supply the natives another
+way.
+
+**On Linux, add `FrameFlow.Native.Runtime`.** `FrameFlow.Native`'s own package
+carries win-x64 libraries only, and a distribution's FFmpeg is no substitute:
+FrameFlow loads FFmpeg 9 by its versioned names (`libavcodec.so.63`,
+`libavutil.so.61` and the rest), and distributions ship older majors — Ubuntu
+24.04 has FFmpeg 6.1. The same holds on macOS and Windows Arm64. Without it the
+app builds and starts, and the first decode fails with `Failed to load FFmpeg
+library`, naming the versions it wanted. Nothing in your build warns you first:
+the `FFNATIVE001` check in this repository's `Directory.Build.targets` fires only
+at `dotnet publish`, and only for projects built inside this repository; it
+does not ship in any package. To use an FFmpeg 9 build of your own instead, set
+`FrameFlowNativeOptions.CustomFfmpegPath` to its directory.
 
 An app references one of `FrameFlow.Inference.Cpu`, `.Dml`, `.Cuda`, `.WinML`
 and `.OpenVino`. Each carries its own ONNX Runtime native library, and two in one

@@ -1,6 +1,6 @@
 # ADR-0046: Native Runtime Acquisition Strategy
 
-**Status:** Accepted
+**Status:** Accepted. Its FFmpeg premises (version 7.1, a Homebrew-based macOS path) are superseded in part by [FFmpeg 9, shipped as one runtime package for every RID](ffmpeg-9-and-one-native-runtime-package.md); the decision framework stands.
 **Date:** 2026-05-15
 **Supersedes:** None
 **Related:** ADR-0002 (FFmpeg bootstrap strategy), ADR-0014 (native binary packaging), ADR-0019 (SDL native bootstrap seam)
