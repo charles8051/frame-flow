@@ -196,8 +196,10 @@ internal static class FfmpegAbiCheck
         sb.Append(
             ". FFmpeg struct layouts change across major versions, so continuing would read "
                 + "frame, packet and stream fields at the wrong offsets and return wrong values "
-                + "rather than fail. Install a single matching FFmpeg major version, or point "
-                + "FrameFlowNativeOptions.CustomFfmpegPath at one."
+                + "rather than fail. Every library has to come from one "
+                + RequiredRelease()
+                + " build. "
+                + FfmpegLoadFailure.Remedy
         );
 
         return sb.ToString();
@@ -212,18 +214,59 @@ internal static class FfmpegAbiCheck
     /// from the table costs the reader an aside rather than the diagnosis.
     /// </remarks>
     private static string DescribeRelease(FfmpegLibrary library, int major) =>
+        ReleaseName(library, major) is { } release ? $" ({release})" : string.Empty;
+
+    /// <summary>
+    /// The FFmpeg release a library major belongs to, such as <c>"FFmpeg 9.x"</c>, or
+    /// <see langword="null"/> for a major this table does not know.
+    /// </summary>
+    /// <remarks>
+    /// For diagnostics only. The per-library majors do not match FFmpeg's own release number,
+    /// so a message that names only one of them leaves the reader to translate it.
+    /// </remarks>
+    internal static string? ReleaseName(FfmpegLibrary library, int major) =>
         (library, major) switch
         {
-            (FfmpegLibrary.AvUtil, 58) => " (FFmpeg 6.x)",
-            (FfmpegLibrary.AvUtil, 59) => " (FFmpeg 7.x)",
-            (FfmpegLibrary.AvUtil, 60) => " (FFmpeg 8.x)",
-            (FfmpegLibrary.AvUtil, 61) => " (FFmpeg 9.x)",
-            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 60) => " (FFmpeg 6.x)",
-            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 61) => " (FFmpeg 7.x)",
-            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 62) => " (FFmpeg 8.x)",
-            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 63) => " (FFmpeg 9.x)",
-            _ => string.Empty,
+            (FfmpegLibrary.AvUtil, 58) => "FFmpeg 6.x",
+            (FfmpegLibrary.AvUtil, 59) => "FFmpeg 7.x",
+            (FfmpegLibrary.AvUtil, 60) => "FFmpeg 8.x",
+            (FfmpegLibrary.AvUtil, 61) => "FFmpeg 9.x",
+            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 60) => "FFmpeg 6.x",
+            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 61) => "FFmpeg 7.x",
+            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 62) => "FFmpeg 8.x",
+            (FfmpegLibrary.AvCodec or FfmpegLibrary.AvFormat, 63) => "FFmpeg 9.x",
+            _ => null,
         };
+
+    /// <summary>
+    /// The FFmpeg this build requires, as a reader can match it against what is installed:
+    /// the release and every required library's major, for example
+    /// <c>"FFmpeg 9.x (libavutil 61, libswresample 7, libswscale 10, libavcodec 63, libavformat 63)"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Built from <see cref="ExpectedMajor"/>, so it moves with the binding package and cannot
+    /// name a release the loader would refuse. A release this table does not know yet falls
+    /// back to the libavutil major alone.
+    /// </remarks>
+    internal static string DescribeRequiredFfmpeg()
+    {
+        var majors = string.Join(
+            ", ",
+            RequiredLibraries.Select(lib => $"{Name(lib)} {ExpectedMajor(lib)}")
+        );
+
+        return $"{RequiredRelease()} ({majors})";
+    }
+
+    /// <summary>
+    /// The FFmpeg release this build requires, such as <c>"FFmpeg 9.x"</c>.
+    /// </summary>
+    /// <remarks>
+    /// Falls back to naming the libavutil major when the release table does not know it yet.
+    /// </remarks>
+    internal static string RequiredRelease() =>
+        ReleaseName(FfmpegLibrary.AvUtil, ExpectedAvutilMajor)
+        ?? $"FFmpeg with libavutil {ExpectedAvutilMajor}";
 }
 
 /// <summary>

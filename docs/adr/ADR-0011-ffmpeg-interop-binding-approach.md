@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Superseded in part by [FFmpeg 9, shipped as one runtime package for every RID](ffmpeg-9-and-one-native-runtime-package.md): the pinned major is FFmpeg 9, not 7.x. The single-major rule stands.
 
 ## Context
 

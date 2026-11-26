@@ -76,26 +76,12 @@ weights are fetched at runtime rather than redistributed.
   That writes `runtimes/{rid}/native/`, which `Directory.Build.targets` copies into
   every project's output. Nothing decoding-related works before you run it.
 
-**Seven projects cannot restore from a public clone yet.** They reference
-`FrameFlow.Native.Runtime`, which packages the FFmpeg binaries and has only ever
-been published to a private feed:
-
-```
-error NU1100: Unable to resolve 'FrameFlow.Native.Runtime (>= 0.1.1-alpha)' for 'net10.0'.
-PackageSourceMapping is enabled, the following source(s) were not considered: nuget.org.
-```
-
-nuget.org is excluded deliberately. Nobody has registered any `frameflow.*` id
-there, so letting it serve that pattern would let a stranger's package win the
-floating version range instead.
-
-`FrameFlow.MotionClip` and its tests, and the `AvaloniaPlayer`,
-`Camera.Inference.Dml`, `DualPlayer`, `Multicast.Dml` and `ZeroCopyInterop`
-examples. Everything else — all 21 libraries and the rest of the tests and
-examples — restores from nuget.org alone. Build a project or a test project
-directly rather than the whole `.slnx` if you hit this.
-
-It goes away when that package reaches nuget.org.
+Everything restores from nuget.org, `FrameFlow.Native.Runtime` included. That
+package carries the pinned FFmpeg 9 build for every supported RID, and
+`nuget.config` maps its exact id to nuget.org. The rest of the `frameflow.*`
+prefix stays off nuget.org deliberately: a prefix mapping would let a stranger
+who registered an unpublished sibling id win the floating version range.
+`nuget.config` has the details.
 
 ## Build and test
 
@@ -188,12 +174,26 @@ each move gets written up for consumers.
 
 ## Continuous integration
 
-`Build and Test` runs on every pull request — `ubuntu-latest` and
-`windows-latest`, the two platforms `FrameFlow.Native.Runtime` ships a RID for.
-macOS is reachable only by `workflow_dispatch`, which still picks any subset of
-the three; it is the 10x-billed runner and its FFmpeg comes from a Homebrew keg
-rather than the pinned build, so a green macOS leg answers a weaker question for
-ten times the price.
+`Build and Test` (`.github/workflows/build.yml`) runs on every pull request,
+in three legs:
+
+- **Windows x64 and Linux x64, Release.** Each fetches the pinned FFmpeg for its
+  own RID, generates the test corpus, builds the solution and runs every test
+  project. The leg fails if the corpus tests did not actually run, so a lost
+  FFmpeg or corpus cannot pass as a skip. It then runs the package smoke test
+  (`scripts/package-smoke.cs`) and the Avalonia 12 binary and source checks.
+- **Linux x64, Debug.** Builds the solution in Debug and runs the Decoding,
+  Playback, Player and Media tests, because some checks (the use counters,
+  ADR-0086) exist only in a Debug build.
+
+A pull request from a fork runs those legs on GitHub's hosted `windows-latest`
+and `ubuntu-latest`; others run on self-hosted runners.
+
+linux-arm64 is not built on a pull request; `publish.yml` tests it before each
+release. macOS (osx-arm64) runs only by `workflow_dispatch`, which picks any
+subset of the three platforms, because it is the 10x-billed runner. It tests the
+same pinned FFmpeg artifact the package ships, but generates no corpus, so the
+corpus tests skip there.
 
 One failure mode worth knowing, because it looks exactly like a broken runner:
 **a pull request with merge conflicts gets no checks at all.** GitHub builds
@@ -236,7 +236,8 @@ the closest thing to a design record for changes too small to earn an ADR.
 
 ## Architecture decisions
 
-`docs/adr/` holds 72 decision records, indexed in
+`docs/adr/` holds the numbered decision records and the drafts awaiting a
+number, indexed in
 [docs/adr/README.md](docs/adr/README.md). Read the relevant one before changing a
 subsystem's shape — several explain why an obvious-looking simplification was
 already tried and rejected.

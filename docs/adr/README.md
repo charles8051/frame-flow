@@ -310,6 +310,13 @@ land.
   (ADR-0084's optional slice 4). The settle loses its backstop and its cap (#746). #671 is left
   open, with the record leaning to a master clock that keeps advancing after the audio's end. No
   public type changes.
+- [FFmpeg 9, shipped as one runtime package for every RID](ffmpeg-9-and-one-native-runtime-package.md)
+  — records what ships in place of three stale records. The interop pins FFmpeg 9 (libavutil 61,
+  libavcodec 63) rather than ADR-0011's 7.x, with the binding package as the single source of the
+  majors. `FrameFlow.Native.Runtime` carries win-x64, win-arm64, linux-x64, linux-arm64 and
+  osx-arm64 in one package, replacing ADR-0014's per-RID packages, which were never built. A
+  system FFmpeg is not a supported source, since distributions ship older majors. Supersedes those
+  parts of ADR-0011, ADR-0014 and ADR-0046.
 
 ## Recently numbered
 
