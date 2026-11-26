@@ -302,8 +302,9 @@ internal static partial class HardwareDecodeProbe
     }
 
     /// <summary>
-    /// Whether one of the render nodes FFmpeg's VAAPI device creation walks opens for
-    /// read and write here, as FFmpeg opens it.
+    /// Whether one of the render nodes FFmpeg's VAAPI device creation walks would be chosen
+    /// by it here: it opens for read and write, as FFmpeg opens it, and FFmpeg's own
+    /// <c>drmGetVersion</c> question names a driver it does not pass over.
     /// </summary>
     private static bool HasOpenableRenderNode()
     {
@@ -312,13 +313,11 @@ internal static partial class HardwareDecodeProbe
             if (!File.Exists(path))
                 continue;
 
-            if (!HardwareDriverGate.RenderNodeKeepsVaapiOnDrm(KernelDriverOf(path)))
-                continue;
-
             try
             {
                 using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
-                return true;
+                if (HardwareDriverGate.RenderNodeKeepsVaapiOnDrm(DrmDriverNameOf(handle)))
+                    return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -330,23 +329,53 @@ internal static partial class HardwareDecodeProbe
     }
 
     /// <summary>
-    /// The kernel driver behind a render node, read from sysfs, or <see langword="null"/>
-    /// when it cannot be read.
+    /// The DRM driver name of an open render node, asked the way libdrm's
+    /// <c>drmGetVersion</c> asks it (<c>DRM_IOCTL_VERSION</c>), or <see langword="null"/>
+    /// when the query fails, which is when FFmpeg passes over the node.
     /// </summary>
-    private static string? KernelDriverOf(string renderNodePath)
+    /// <remarks>
+    /// The ioctl is issued directly rather than through libdrm so the probe does not take a
+    /// dependency on a library it is only asking about. Like <c>drmGetVersion</c>, it asks
+    /// once for the lengths and once more with a buffer for the name.
+    /// </remarks>
+    private static unsafe string? DrmDriverNameOf(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
     {
-        try
-        {
-            var link = new FileInfo(
-                $"/sys/class/drm/{Path.GetFileName(renderNodePath)}/device/driver"
-            ).ResolveLinkTarget(returnFinalTarget: true);
-            return link is null ? null : Path.GetFileName(link.FullName);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
+        int fd = (int)handle.DangerousGetHandle();
+        var version = default(DrmVersion);
+        nuint request = HardwareDriverGate.DrmIoctlVersionRequest(sizeof(DrmVersion));
+
+        if (Ioctl(fd, request, &version) != 0)
             return null;
+
+        int length = checked((int)version.NameLength);
+        var name = new byte[length + 1];
+        fixed (byte* buffer = name)
+        {
+            version = new DrmVersion { NameLength = (nuint)length, Name = buffer };
+            if (Ioctl(fd, request, &version) != 0)
+                return null;
         }
+
+        return System.Text.Encoding.ASCII.GetString(name, 0, Math.Min(length, (int)version.NameLength));
     }
+
+    /// <summary><c>struct drm_version</c> from the kernel's <c>drm.h</c>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct DrmVersion
+    {
+        public int VersionMajor;
+        public int VersionMinor;
+        public int VersionPatchLevel;
+        public nuint NameLength;
+        public byte* Name;
+        public nuint DateLength;
+        public byte* Date;
+        public nuint DescriptionLength;
+        public byte* Description;
+    }
+
+    [LibraryImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static unsafe partial int Ioctl(int fd, nuint request, DrmVersion* argument);
 
     /// <summary>
     /// Maps an FFmpeg <c>AVHWDeviceType</c> integer onto FrameFlow's

@@ -180,10 +180,27 @@ public sealed class HardwareDriverGateTests
     [InlineData("nvidia", true)]
     // FFmpeg passes over vgem by name.
     [InlineData("vgem", false)]
-    // FFmpeg passes over a node it cannot name, so an unknown driver is no evidence either.
+    // FFmpeg passes over a node whose version query fails, so a failed query is no evidence.
     [InlineData(null, false)]
     public void OnlyANamedNonVgemNodeKeepsVaapiOnDrm(string? driver, bool keepsDrm) =>
         Assert.Equal(keepsDrm, HardwareDriverGate.RenderNodeKeepsVaapiOnDrm(driver));
+
+    [Theory]
+    // 64-bit: the value libdrm's headers give for DRM_IOCTL_VERSION on x86_64 and arm64.
+    [InlineData(64, 0xC0406400u)]
+    // 32-bit: three ints and six 4-byte fields.
+    [InlineData(36, 0xC0246400u)]
+    public void TheDrmVersionRequestIsTheKernelsEncoding(int structSize, uint expected) =>
+        Assert.Equal((nuint)expected, HardwareDriverGate.DrmIoctlVersionRequest(structSize));
+
+    [Fact]
+    public void TheDrmVersionStructIsTheKernelsSize() =>
+        // struct drm_version: three ints, then three (size_t, char*) pairs, each pair
+        // pointer-aligned.
+        Assert.Equal(
+            nint.Size == 8 ? 64 : 36,
+            System.Runtime.CompilerServices.Unsafe.SizeOf<HardwareDecodeProbe.DrmVersion>()
+        );
 
     [Fact]
     public void TheRenderNodesAreTheEightFfmpegWalks() =>

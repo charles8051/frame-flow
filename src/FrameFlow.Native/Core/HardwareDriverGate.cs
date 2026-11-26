@@ -83,25 +83,40 @@ internal static class HardwareDriverGate
         [.. Enumerable.Range(128, 8).Select(n => $"/dev/dri/renderD{n}")];
 
     /// <summary>
-    /// Whether an openable render node whose kernel driver is <paramref name="kernelDriver"/>
-    /// is evidence that FFmpeg's VAAPI device creation stays on the DRM path.
+    /// Whether an openable render node whose DRM version query answered
+    /// <paramref name="kernelDriver"/> is one FFmpeg's VAAPI device creation would choose,
+    /// and so stay on the DRM path.
     /// </summary>
+    /// <param name="kernelDriver">
+    /// The driver name <c>DRM_IOCTL_VERSION</c> returned on the open node, the question
+    /// FFmpeg asks through <c>drmGetVersion</c>; <see langword="null"/> when that query failed.
+    /// </param>
     /// <remarks>
     /// <para>
-    /// FFmpeg names the driver with <c>drmGetVersion</c> and passes over <c>vgem</c>, a
-    /// virtual GEM provider with no video engine, and over any node whose version it cannot
-    /// read. Either way it moves on, and with no other node, to X11.
+    /// FFmpeg passes over <c>vgem</c>, a virtual GEM provider with no video engine, and over
+    /// any node whose version query fails. Either way it moves on, and with no other node, to
+    /// X11.
     /// </para>
     /// <para>
-    /// An unknown driver (<see langword="null"/>) is therefore not evidence: counting it
-    /// would drop the X11 requirement on a host where FFmpeg may still take the X11 path,
-    /// and that path aborts when its libraries are missing. The cost of the conservative
-    /// answer is a host whose driver cannot be read and that lacks X11 losing VAAPI, which is
-    /// recoverable where the abort is not.
+    /// A failed query (<see langword="null"/>) is therefore not evidence: counting it would
+    /// drop the X11 requirement on a host where FFmpeg takes the X11 path, and that path
+    /// aborts when its libraries are missing.
     /// </para>
     /// </remarks>
     internal static bool RenderNodeKeepsVaapiOnDrm(string? kernelDriver) =>
         kernelDriver is not null && !string.Equals(kernelDriver, "vgem", StringComparison.Ordinal);
+
+    /// <summary>
+    /// <c>DRM_IOCTL_VERSION</c>, <c>_IOWR('d', 0x00, struct drm_version)</c>, for a
+    /// <c>struct drm_version</c> of <paramref name="structSize"/> bytes.
+    /// </summary>
+    /// <remarks>
+    /// The Linux <c>_IOC</c> encoding: direction in bits 30-31 (read and write is 3), size in
+    /// bits 16-29, type in bits 8-15, number in bits 0-7. The struct holds pointers, so its
+    /// size, and with it the request number, depends on the process's pointer width.
+    /// </remarks>
+    internal static nuint DrmIoctlVersionRequest(int structSize) =>
+        (3u << 30) | ((uint)structSize << 16) | ((uint)'d' << 8) | 0x00u;
 
     private const string X11Fallback =
         "no DRM render node can be opened, so FFmpeg's VAAPI device creation falls back to X11";
