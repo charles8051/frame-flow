@@ -22,9 +22,8 @@ public enum CudaBootstrapStatus
     MissingComponents,
 
     /// <summary>
-    /// The current OS platform is not yet supported. The bootstrapper
-    /// is Windows-first; Linux and macOS providers will land as those
-    /// ports begin (see ADR-0011 §"Staging").
+    /// The current platform has no CUDA build of ONNX Runtime: anything
+    /// other than Windows and Linux x64, macOS included.
     /// </summary>
     UnsupportedPlatform,
 }
@@ -42,25 +41,30 @@ public enum MissingNativeComponent
     None = 0,
 
     /// <summary>
-    /// The NVIDIA GPU driver is not loaded — <c>nvcuda.dll</c> is
-    /// missing, no CUDA-capable device is visible, or
-    /// the CUDA probe is otherwise
-    /// false. Cannot be resolved by package installs; the user must
-    /// install or update the GPU driver.
+    /// The NVIDIA GPU driver is not loaded. On Linux,
+    /// <c>libcuda.so.1</c> could not be loaded. Windows does not probe
+    /// the driver separately and never sets this flag; a missing driver
+    /// shows there as <see cref="OrtCudaProvider"/>. Cannot be resolved
+    /// by package installs; the user must install or update the GPU
+    /// driver.
     /// </summary>
     GpuDriver = 1 << 0,
 
     /// <summary>
-    /// CUDA Toolkit 12.x is not discoverable. Specifically,
+    /// CUDA Toolkit 12.x is not discoverable. On Windows,
     /// <c>cudart64_12.dll</c> was not found via <c>%CUDA_PATH%</c>
-    /// or the canonical install root.
+    /// or the canonical install root. On Linux, one of
+    /// <c>libcudart.so.12</c>, <c>libcublas.so.12</c>,
+    /// <c>libcublasLt.so.12</c>, <c>libcufft.so.11</c> or
+    /// <c>libcurand.so.10</c> could not be loaded.
     /// </summary>
     CudaToolkit = 1 << 1,
 
     /// <summary>
-    /// cuDNN 9.x is not discoverable. Specifically,
+    /// cuDNN 9.x is not discoverable. On Windows,
     /// <c>cudnn64_9.dll</c> was not found in any of the standard
-    /// cuDNN install locations.
+    /// cuDNN install locations. On Linux, <c>libcudnn.so.9</c> could not
+    /// be loaded.
     /// </summary>
     CuDnn = 1 << 2,
 
@@ -91,26 +95,34 @@ public enum MissingNativeComponent
 /// nothing is missing.
 /// </param>
 /// <param name="DetectedCudaToolkitBin">
-/// Absolute path of the CUDA Toolkit <c>bin</c> directory that was
-/// discovered and added to the process PATH, or <see langword="null"/>
-/// if not found.
+/// Absolute path of the directory the CUDA runtime came from, or
+/// <see langword="null"/> if not found. On Windows, the CUDA Toolkit
+/// <c>bin</c> directory that was discovered and added to the process
+/// PATH. On Linux, the directory <c>libcudart.so.12</c> was loaded from;
+/// also <see langword="null"/> when it loaded but its file could not be
+/// located.
 /// </param>
 /// <param name="DetectedCudnnBin">
-/// Absolute path of the cuDNN <c>x64</c> directory that was discovered
-/// and added to the process PATH, or <see langword="null"/> if not
-/// found.
+/// Absolute path of the directory cuDNN came from, or
+/// <see langword="null"/> if not found. On Windows, the cuDNN
+/// <c>x64</c> directory that was discovered and added to the process
+/// PATH. On Linux, the directory <c>libcudnn.so.9</c> was loaded from;
+/// also <see langword="null"/> when it loaded but its file could not be
+/// located.
 /// </param>
 /// <param name="OrtVersion">
 /// ONNX Runtime version string reported by the library, or
 /// <see langword="null"/> if ORT itself could not be loaded.
 /// </param>
 /// <param name="DetectedDeviceCount">
-/// Number of CUDA-capable devices visible to the driver. Zero when the
-/// driver is unavailable.
+/// Number of CUDA-capable devices visible to the driver. Not probed
+/// yet: the bootstrapper loads the driver library but does not
+/// initialise it, so this is zero.
 /// </param>
 /// <param name="DriverFailure">
-/// Exception raised by the CUDA driver probe, or
-/// <see langword="null"/> if the driver loaded successfully.
+/// Exception describing why the CUDA driver library did not load, with
+/// the loader's message, or <see langword="null"/> if it loaded or was
+/// not probed (Windows).
 /// </param>
 /// <param name="OrtFailure">
 /// Exception raised when appending the ORT CUDA execution provider, or

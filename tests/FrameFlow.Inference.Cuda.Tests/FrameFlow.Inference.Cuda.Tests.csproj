@@ -16,6 +16,13 @@
     is internal; visibility is granted via InternalsVisibleTo in the Cuda
     project's AssemblyInfo.cs.
 
+    The Linux side (LinuxCudaResolution) is tested the same way, over a
+    fake loader instead of dlopen, so it runs on every OS.
+
+    CudaSessionGpuTests is the one test that needs a GPU. It is gated by
+    CudaBootstrapper.Probe and skips wherever the CUDA stack is not ready;
+    FRAMEFLOW_CUDA_TESTS=0 skips it without probing.
+
     Build with -p:FrameFlowLocalFeedDisable=true to avoid racing the shared
     local NuGet feed when concurrent agents build.
   -->
@@ -31,5 +38,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Inference.Cuda\FrameFlow.Inference.Cuda.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The tiny ONNX models the GPU-gated session test runs, encoded in source. -->
+    <Compile Include="..\FrameFlow.Inference.Dml.Tests\OnnxModel.cs" Link="Shared\OnnxModel.cs" />
   </ItemGroup>
 </Project>

@@ -52,6 +52,10 @@ FrameFlow.Inference.Cuda.CudaInstallInstructionProviders
 FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider
 FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider.GetInstruction(FrameFlow.Inference.Cuda.MissingNativeComponent component) -> FrameFlow.Inference.Cuda.CudaBootstrapInstruction!
 FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider.IsSupportedOnCurrentPlatform.get -> bool
+FrameFlow.Inference.Cuda.LinuxCudaInstallInstructionProvider
+FrameFlow.Inference.Cuda.LinuxCudaInstallInstructionProvider.GetInstruction(FrameFlow.Inference.Cuda.MissingNativeComponent component) -> FrameFlow.Inference.Cuda.CudaBootstrapInstruction!
+FrameFlow.Inference.Cuda.LinuxCudaInstallInstructionProvider.IsSupportedOnCurrentPlatform.get -> bool
+FrameFlow.Inference.Cuda.LinuxCudaInstallInstructionProvider.LinuxCudaInstallInstructionProvider() -> void
 FrameFlow.Inference.Cuda.MissingNativeComponent
 FrameFlow.Inference.Cuda.MissingNativeComponent.CudaToolkit = 2 -> FrameFlow.Inference.Cuda.MissingNativeComponent
 FrameFlow.Inference.Cuda.MissingNativeComponent.CuDnn = 4 -> FrameFlow.Inference.Cuda.MissingNativeComponent

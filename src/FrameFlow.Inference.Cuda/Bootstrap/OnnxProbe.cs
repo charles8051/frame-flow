@@ -8,18 +8,25 @@ namespace FrameFlow.Inference.Cuda;
 /// <summary>
 /// One-shot probe verifying ONNX Runtime is loadable and the CUDA
 /// execution provider can be appended to a fresh
-/// <see cref="SessionOptions"/>. Mirrors the role of
-/// the driver-level CUDA probe: a process-cached check that the
-/// test harness uses to skip GPU-dependent tests on machines without
-/// the right native dependencies.
+/// <see cref="SessionOptions"/>. A process-cached check that
+/// <see cref="CudaBootstrapper"/> reports as
+/// <see cref="MissingNativeComponent.OrtCudaProvider"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// ORT-Gpu bundles its own CUDA runtime libraries — this probe doesn't
-/// require the toolkit to be installed system-wide. It does require the
-/// NVIDIA driver to be present (which is what
-/// the driver-level CUDA probe verifies separately). For
-/// inference-running tests, both probes must succeed.
+/// ORT-Gpu does <em>not</em> bundle the CUDA or cuDNN libraries. Its
+/// native packages carry ONNX Runtime and the CUDA provider library
+/// (<c>onnxruntime_providers_cuda.dll</c> on Windows,
+/// <c>libonnxruntime_providers_cuda.so</c> from
+/// <c>Microsoft.ML.OnnxRuntime.Gpu.Linux</c> on Linux), and that provider
+/// links against the CUDA 12 runtime, cuBLAS, cuFFT, cuRAND and cuDNN 9,
+/// which have to come from a system install or the app-local
+/// <c>runtimes/{rid}/native</c> directory, plus the NVIDIA driver.
+/// Appending the provider loads it, so this probe fails when any of those
+/// is missing. Call <see cref="CudaDllResolver.EnsureLoadable"/> first, or
+/// read <see cref="CudaBootstrapper.Probe"/>, which does, so that the
+/// libraries the resolver can find are in place before the result is
+/// cached.
 /// </para>
 /// <para>
 /// The probe is intentionally narrow: it constructs a

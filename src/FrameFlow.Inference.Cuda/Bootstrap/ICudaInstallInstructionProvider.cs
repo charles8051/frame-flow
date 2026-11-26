@@ -13,10 +13,9 @@ namespace FrameFlow.Inference.Cuda;
 /// </summary>
 /// <remarks>
 /// Separating the instructions from the bootstrapper itself keeps the
-/// per-platform install-command database isolated. Adding a Linux or
-/// macOS provider — with its own package-manager-specific phrasing —
-/// is a new file, not a modification to the bootstrapper. ADR-0011
-/// §"Cross-platform readiness" describes the staging.
+/// per-platform install-command database isolated. Each platform's
+/// provider, with its own package-manager-specific phrasing, is its own
+/// file, not a modification to the bootstrapper.
 /// </remarks>
 public interface ICudaInstallInstructionProvider
 {
@@ -55,15 +54,17 @@ public static class CudaInstallInstructionProviders
     /// <see langword="null"/> if no provider is implemented for it yet.
     /// </summary>
     /// <remarks>
-    /// Today this returns a
-    /// <see cref="WindowsCudaInstallInstructionProvider"/> on Windows
-    /// and <see langword="null"/> elsewhere. Linux and macOS providers
-    /// will land as those ports begin.
+    /// Returns a <see cref="WindowsCudaInstallInstructionProvider"/> on
+    /// Windows, a <see cref="LinuxCudaInstallInstructionProvider"/> on
+    /// Linux, and <see langword="null"/> elsewhere: ONNX Runtime ships no
+    /// CUDA build for macOS.
     /// </remarks>
     public static ICudaInstallInstructionProvider? ForCurrentPlatform()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             return new WindowsCudaInstallInstructionProvider();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return new LinuxCudaInstallInstructionProvider();
         return null;
     }
 }
