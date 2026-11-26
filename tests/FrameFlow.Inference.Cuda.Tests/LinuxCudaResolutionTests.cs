@@ -256,12 +256,99 @@ public sealed class LinuxCudaResolutionTests
             AppLocal,
             Files(first.Soname, second.Soname),
             Load,
-            [first, second]
+            libraries: [first, second]
         );
 
         Assert.Equal(MissingNativeComponent.None, verdict.Missing);
         Assert.Equal([second.Soname, first.Soname], verdict.Loaded.Select(l => l.Library.Soname));
         Assert.All(verdict.Loaded, l => Assert.Equal(CudaLibrarySource.AppLocal, l.Source));
+    }
+
+    [Fact]
+    public void AppLocalCublasLt_LoadsBecauseAppLocalNvJitLinkIsPreloaded()
+    {
+        // An app-local libcublasLt.so.12 that needs libnvJitLink.so.12, with
+        // neither on the loader path. Loaded by absolute path, cublasLt does
+        // not search its own directory, so nvJitLink has to be in the
+        // process first.
+        var inProcess = new HashSet<string>(StringComparer.Ordinal);
+        var onLoaderPath = RequiredSonames.Where(s => s != "libcublasLt.so.12").ToHashSet();
+        NativeLoadAttempt Load(string path)
+        {
+            if (!path.StartsWith(AppLocal, StringComparison.Ordinal))
+                return onLoaderPath.Contains(path) ? NativeLoadAttempt.Success : NativeLoadAttempt.Failed("not found");
+            var soname = path[(AppLocal.Length + 1)..];
+            if (soname == "libcublasLt.so.12" && !inProcess.Contains("libnvJitLink.so.12"))
+                return NativeLoadAttempt.Failed("libnvJitLink.so.12: cannot open shared object file");
+            inProcess.Add(soname);
+            return NativeLoadAttempt.Success;
+        }
+
+        var verdict = LinuxCudaResolution.Resolve(
+            AppLocal,
+            Files("libcublasLt.so.12", "libnvJitLink.so.12"),
+            Load
+        );
+
+        Assert.Equal(MissingNativeComponent.None, verdict.Missing);
+        Assert.Equal(CudaLibrarySource.AppLocal, verdict.Find("libcublasLt.so.12")!.Value.Source);
+    }
+
+    // ── Libraries already in the process ─────────────────────────────────
+
+    [Fact]
+    public void SonameAlreadyLoadedFromElsewhere_IsReportedAsThatCopy_AndTheAppLocalCopyIsNotLoaded()
+    {
+        // Another component loaded the system libcudart.so.12 first. The
+        // provider's dependency binds to that copy, so the app-local one must
+        // not be loaded or reported.
+        var loader = new FakeLoader([.. RequiredSonames, AppLocalPath("libcudart.so.12")]);
+
+        var verdict = LinuxCudaResolution.Resolve(
+            AppLocal,
+            Files("libcudart.so.12"),
+            loader.Load,
+            inProcess: new Dictionary<string, string> { ["libcudart.so.12"] = "/usr/lib/x86_64-linux-gnu" }
+        );
+
+        var cudart = verdict.Find("libcudart.so.12")!.Value;
+        Assert.Equal(CudaLibrarySource.AlreadyInProcess, cudart.Source);
+        Assert.Equal("/usr/lib/x86_64-linux-gnu/libcudart.so.12", cudart.LoadedFrom);
+        Assert.DoesNotContain(AppLocalPath("libcudart.so.12"), loader.Calls);
+        Assert.DoesNotContain("libcudart.so.12", loader.Calls);
+        Assert.Equal(MissingNativeComponent.None, verdict.Missing);
+    }
+
+    [Fact]
+    public void SonameAlreadyLoadedFromAppLocal_IsReportedAsAppLocal_WithoutLoadingAgain()
+    {
+        var loader = new FakeLoader(RequiredSonames);
+
+        var verdict = LinuxCudaResolution.Resolve(
+            AppLocal + "/",
+            Files("libcudnn.so.9"),
+            loader.Load,
+            inProcess: new Dictionary<string, string> { ["libcudnn.so.9"] = AppLocal }
+        );
+
+        Assert.Equal(CudaLibrarySource.AppLocal, verdict.Find("libcudnn.so.9")!.Value.Source);
+        Assert.DoesNotContain(loader.Calls, c => c.EndsWith("libcudnn.so.9", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InProcessDirectories_ReadsEveryTabledLibraryFromMaps()
+    {
+        var directories = LinuxCudaResolution.InProcessDirectories(Maps);
+
+        Assert.Equal(
+            new Dictionary<string, string>
+            {
+                ["libcudart.so.12"] = "/usr/local/cuda-12.9/targets/x86_64-linux/lib",
+                ["libcublasLt.so.12"] = "/usr/local/cuda-12.9/targets/x86_64-linux/lib",
+                ["libcudnn.so.9"] = "/opt/my libs/cudnn/lib",
+            },
+            directories
+        );
     }
 
     [Fact]

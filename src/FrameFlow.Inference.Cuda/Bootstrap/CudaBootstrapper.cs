@@ -129,7 +129,8 @@ public sealed class CudaBootstrapper
         string? DirectoryOf(string soname) =>
             verdict.Find(soname) switch
             {
-                { Source: CudaLibrarySource.AppLocal } load => Path.GetDirectoryName(load.LoadedFrom),
+                { Source: CudaLibrarySource.AppLocal or CudaLibrarySource.AlreadyInProcess } load =>
+                    Path.GetDirectoryName(load.LoadedFrom),
                 { Source: CudaLibrarySource.LoaderSearchPath } => CudaDllResolver.LoadedLibraryDirectory(soname),
                 _ => null,
             };

@@ -348,8 +348,18 @@ public static partial class CudaDllResolver
                 appLocalFiles.Add(Path.GetFileName(file));
         }
 
+        // What is mapped already: a soname loaded before this call (by
+        // another component, or by an earlier probe) is what the loader
+        // will bind ORT's provider to.
+        var inProcess = LinuxCudaResolution.InProcessDirectories(ReadProcMaps());
+
         // ── Core: the pure decision, with the real loader passed in ──
-        var verdict = LinuxCudaResolution.Resolve(appLocalNativeDir, appLocalFiles, LoadNative);
+        var verdict = LinuxCudaResolution.Resolve(
+            appLocalNativeDir,
+            appLocalFiles,
+            LoadNative,
+            inProcess
+        );
 
         // ── Shell: emit the verdict-matching diagnostics ────────────
         foreach (var load in verdict.Loaded)
@@ -371,22 +381,23 @@ public static partial class CudaDllResolver
     /// from, read from <c>/proc/self/maps</c>, or <see langword="null"/>
     /// when it is not mapped or the file cannot be read.
     /// </summary>
-    internal static string? LoadedLibraryDirectory(string soname)
+    internal static string? LoadedLibraryDirectory(string soname) =>
+        LinuxCudaResolution.DirectoryOfLoaded(ReadProcMaps(), soname);
+
+    /// <summary>The lines of <c>/proc/self/maps</c>, or none when it cannot be read.</summary>
+    private static string[] ReadProcMaps()
     {
         try
         {
-            return LinuxCudaResolution.DirectoryOfLoaded(
-                File.ReadLines("/proc/self/maps"),
-                soname
-            );
+            return File.ReadAllLines("/proc/self/maps");
         }
         catch (IOException)
         {
-            return null;
+            return [];
         }
         catch (UnauthorizedAccessException)
         {
-            return null;
+            return [];
         }
     }
 

@@ -52,12 +52,22 @@ internal enum CudaLibrarySource
 
     /// <summary>Loaded by soname through the system loader's search path.</summary>
     LoaderSearchPath,
+
+    /// <summary>
+    /// Already in the process, from somewhere other than the app-local
+    /// directory, before the resolver ran. The loader binds that soname
+    /// to the copy already loaded, so the resolver loads nothing for it.
+    /// </summary>
+    AlreadyInProcess,
 }
 
 /// <summary>A library that loaded, and from where.</summary>
 /// <param name="Library">The library.</param>
-/// <param name="LoadedFrom">The absolute path or soname that was passed to the loader.</param>
-/// <param name="Source">Whether it came from the app-local directory or the loader's search path.</param>
+/// <param name="LoadedFrom">
+/// The absolute path or soname that was passed to the loader; for a
+/// library already in the process, its directory joined with its soname.
+/// </param>
+/// <param name="Source">Where the copy the process uses came from.</param>
 internal readonly record struct CudaLibraryLoad(
     CudaNativeLibrary Library,
     string LoadedFrom,
@@ -163,15 +173,19 @@ internal static class LinuxCudaResolution
     /// The libraries the ONNX Runtime 1.26 CUDA execution provider needs on
     /// Linux, in an order where each one's dependencies come before it.
     /// The required ones are the provider's direct dependencies, plus the
-    /// driver. The cuDNN 9 sub-libraries are loaded at run time by
-    /// <c>libcudnn.so.9</c> itself; they are preloaded from the app-local
-    /// directory when present so that an app-local cuDNN finds them, and
-    /// are left to the loader otherwise.
+    /// driver. The optional ones are dependencies of those, direct or
+    /// loaded at run time: <c>libnvJitLink.so.12</c> and
+    /// <c>libnvrtc.so.12</c> for the CUDA math libraries, and the cuDNN 9
+    /// sub-libraries that <c>libcudnn.so.9</c> loads itself. A library
+    /// loaded by absolute path does not search its own directory for its
+    /// dependencies, so these are preloaded from the app-local directory
+    /// when present there, and are left to the loader otherwise.
     /// </summary>
     internal static IReadOnlyList<CudaNativeLibrary> Libraries { get; } =
     [
         new(DriverSoname, MissingNativeComponent.GpuDriver, Required: true, AppLocalAllowed: false),
         new(CudaRuntimeSoname, MissingNativeComponent.CudaToolkit, Required: true),
+        new("libnvJitLink.so.12", MissingNativeComponent.CudaToolkit, Required: false),
         new("libcublasLt.so.12", MissingNativeComponent.CudaToolkit, Required: true),
         new("libcublas.so.12", MissingNativeComponent.CudaToolkit, Required: true),
         new("libcufft.so.11", MissingNativeComponent.CudaToolkit, Required: true),
@@ -238,6 +252,16 @@ internal static class LinuxCudaResolution
     /// directories.
     /// </para>
     /// <para>
+    /// A soname already in the process when the resolver runs is taken as
+    /// it is and nothing is loaded for it. Loading a different copy by
+    /// absolute path would succeed, but the provider's dependency on that
+    /// soname binds to the copy loaded first, so reporting the app-local
+    /// one would name a library ORT does not use. Such a library is
+    /// reported as <see cref="CudaLibrarySource.AlreadyInProcess"/>, or as
+    /// <see cref="CudaLibrarySource.AppLocal"/> when the copy in the
+    /// process is the app-local one (a repeated probe).
+    /// </para>
+    /// <para>
     /// A layer is missing when any of its required libraries did not load.
     /// </para>
     /// </remarks>
@@ -247,11 +271,16 @@ internal static class LinuxCudaResolution
     /// </param>
     /// <param name="appLocalFiles">The file names in <paramref name="appLocalNativeDir"/>.</param>
     /// <param name="load">The loader: an absolute path or a soname in, the outcome out.</param>
+    /// <param name="inProcess">
+    /// The directory of each library already in the process, by soname
+    /// (see <see cref="InProcessDirectories"/>). Empty when omitted.
+    /// </param>
     /// <param name="libraries">The library table. Defaults to <see cref="Libraries"/>.</param>
     internal static LinuxCudaVerdict Resolve(
         string? appLocalNativeDir,
         IReadOnlySet<string> appLocalFiles,
         Func<string, NativeLoadAttempt> load,
+        IReadOnlyDictionary<string, string>? inProcess = null,
         IReadOnlyList<CudaNativeLibrary>? libraries = null
     )
     {
@@ -263,14 +292,40 @@ internal static class LinuxCudaResolution
         var order = new List<CudaNativeLibrary>();
         var lastError = new Dictionary<CudaNativeLibrary, string?>();
 
+        // 0. Sonames already in the process: the loader binds to those copies.
+        if (inProcess is not null)
+        {
+            var appLocalTrimmed = appLocalNativeDir?.TrimEnd('/');
+            foreach (var library in libraries)
+            {
+                if (!inProcess.TryGetValue(library.Soname, out var directory))
+                    continue;
+                var source = string.Equals(directory, appLocalTrimmed, StringComparison.Ordinal)
+                    ? CudaLibrarySource.AppLocal
+                    : CudaLibrarySource.AlreadyInProcess;
+                loaded[library] = new CudaLibraryLoad(
+                    library,
+                    JoinLinuxPath(directory, library.Soname),
+                    source
+                );
+                order.Add(library);
+            }
+        }
+
         // 1. App-local copies, retried while a pass makes progress.
         var pending = new List<CudaNativeLibrary>();
         if (appLocalNativeDir is not null)
         {
             foreach (var library in libraries)
             {
-                if (library.AppLocalAllowed && appLocalFiles.Contains(library.Soname))
+                if (
+                    library.AppLocalAllowed
+                    && !loaded.ContainsKey(library)
+                    && appLocalFiles.Contains(library.Soname)
+                )
+                {
                     pending.Add(library);
+                }
             }
         }
 
@@ -368,6 +423,29 @@ internal static class LinuxCudaResolution
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// The directory of each library in <paramref name="libraries"/> that
+    /// is already mapped, by soname, read from the lines of
+    /// <c>/proc/self/maps</c>.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> InProcessDirectories(
+        IReadOnlyList<string> mapsLines,
+        IReadOnlyList<CudaNativeLibrary>? libraries = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(mapsLines);
+        libraries ??= Libraries;
+
+        var directories = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var library in libraries)
+        {
+            var directory = DirectoryOfLoaded(mapsLines, library.Soname);
+            if (directory is not null)
+                directories[library.Soname] = directory;
+        }
+        return directories;
     }
 
     /// <summary>
