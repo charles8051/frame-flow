@@ -132,7 +132,7 @@ public sealed class PlaybackModelCheckTests(ITestOutputHelper output)
                             trail
                         );
 
-                    CheckState(after, seen, trail);
+                    CheckState(after, trail);
                     if (visited.TryAdd(after.Key, trail))
                         next.Add((after, trail));
                 }
@@ -268,7 +268,7 @@ public sealed class PlaybackModelCheckTests(ITestOutputHelper output)
         return world;
     }
 
-    private static void CheckState(World world, HashSet<InternalPlaybackState> seen, string trail)
+    private static void CheckState(World world, string trail)
     {
         Check(
             world.State != InternalPlaybackState.Ended || world.Clock != Clock.Running,
@@ -277,11 +277,13 @@ public sealed class PlaybackModelCheckTests(ITestOutputHelper output)
         );
 
         // Nothing has to reset the player: an unload where the state allows one, and a load that
-        // opens, reach Paused from every state.
+        // opens, reach Paused from every state. The probe's states are not the walk's, so they are
+        // kept out of its coverage.
+        var probed = new HashSet<InternalPlaybackState>();
         var recovered = world;
         if (PlaybackProtocol.Advance(recovered.State, PlaybackTrigger.Unload, new PlaybackInputs(recovered.HasSession)).Handled)
-            recovered = Run(recovered, PlaybackTrigger.Unload, Opens.Opens, seen, trail);
-        recovered = Run(recovered, PlaybackTrigger.Load, Opens.Opens, seen, trail);
+            recovered = Run(recovered, PlaybackTrigger.Unload, Opens.Opens, probed, trail);
+        recovered = Run(recovered, PlaybackTrigger.Load, Opens.Opens, probed, trail);
         Check(
             recovered.State == InternalPlaybackState.Paused,
             $"An unload and a load recover {world.State} without a reset",
